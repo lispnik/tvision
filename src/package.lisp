@@ -1,0 +1,149 @@
+;;;; package.lisp --- Package definition for the Turbo Vision port.
+
+(defpackage #:tvision
+  (:nicknames #:tv)
+  (:use #:common-lisp)
+  (:export
+   ;; geometry
+   #:tpoint #:make-tpoint #:point-x #:point-y #:point-equal-p #:copy-point
+   #:trect #:make-trect #:rect-ax #:rect-ay #:rect-bx #:rect-by
+   #:rect-width #:rect-height #:rect-empty-p #:rect-contains-p
+   #:rect-move #:rect-grow #:rect-intersect #:rect-union #:rect-equal-p
+   #:copy-rect #:rect-assign
+   ;; colors
+   #:attr #:make-attr #:attr-fg #:attr-bg #:attr->ansi
+   #:tpalette #:make-palette #:palette-ref
+   ;; draw buffer
+   #:draw-buffer #:make-draw-buffer #:db-width
+   #:db-move-char #:db-move-str #:db-move-cstr #:db-put-attribute
+   #:db-put-char #:db-move-buf #:db-fill
+   ;; events
+   #:event #:make-event #:event-type #:event-key-code #:event-char-code
+   #:event-mouse-where #:event-mouse-buttons #:event-command #:event-info
+   #:event-modifiers #:event-double #:event-wheel
+   #:clear-event
+   #:+ev-nothing+ #:+ev-mouse-down+ #:+ev-mouse-up+ #:+ev-mouse-move+
+   #:+ev-mouse-auto+ #:+ev-key-down+ #:+ev-mouse-wheel+ #:+ev-command+ #:+ev-broadcast+
+   #:+ev-mouse+ #:+ev-keyboard+ #:+ev-message+
+   #:+mb-left+ #:+mb-right+ #:+md-shift+ #:+md-ctrl+ #:+md-alt+ #:+mw-up+ #:+mw-down+
+   #:+kb-esc+ #:+kb-enter+ #:+kb-tab+ #:+kb-back+ #:+kb-up+ #:+kb-down+
+   #:+kb-left+ #:+kb-right+ #:+kb-home+ #:+kb-end+ #:+kb-pgup+ #:+kb-pgdn+
+   #:+kb-ins+ #:+kb-del+ #:+kb-f1+ #:+kb-f2+ #:+kb-f3+ #:+kb-f4+ #:+kb-f5+
+   #:+kb-f6+ #:+kb-f7+ #:+kb-f8+ #:+kb-f9+ #:+kb-f10+ #:+kb-shift-tab+
+   #:+kb-alt-x+ #:+kb-ctrl-w+ #:+kb-space+
+   ;; commands
+   #:+cm-quit+ #:+cm-close+ #:+cm-zoom+ #:+cm-ok+ #:+cm-cancel+ #:+cm-yes+
+   #:+cm-no+ #:+cm-next+ #:+cm-prev+ #:+cm-default+ #:+cm-cut+ #:+cm-copy+
+   #:+cm-paste+ #:+cm-menu+ #:+cm-valid+ #:+cm-released+ #:+cm-receivedfocus+
+   #:+cm-command-set-changed+ #:*command-set-changed*
+   ;; command set
+   #:command-enabled-p #:enable-command #:disable-command
+   #:enable-commands #:disable-commands #:set-command-enabled #:reset-commands
+   ;; state / option / growmode flags
+   #:+sf-visible+ #:+sf-cursor-vis+ #:+sf-cursor-ins+ #:+sf-shadow+
+   #:+sf-active+ #:+sf-selected+ #:+sf-focused+ #:+sf-dragging+
+   #:+sf-disabled+ #:+sf-modal+ #:+sf-exposed+
+   #:+of-selectable+ #:+of-top-select+ #:+of-first-click+ #:+of-framed+
+   #:+of-pre-process+ #:+of-post-process+ #:+of-centerx+ #:+of-centery+
+   #:+of-center+
+   #:+gf-grow-lox+ #:+gf-grow-loy+ #:+gf-grow-hix+ #:+gf-grow-hiy+
+   #:+gf-grow-all+ #:+gf-grow-rel+
+   #:+hc-no-context+
+   ;; screen driver
+   #:init-screen #:done-screen #:with-screen #:screen-width #:screen-height
+   #:flush-screen #:screen-back-buffer #:screen-cell-set #:screen-resize
+   #:show-cursor #:hide-cursor #:set-cursor-pos #:*screen*
+   ;; view
+   #:tview #:view-origin #:view-size #:view-cursor #:view-owner #:view-next
+   #:view-state #:view-options #:view-grow-mode #:view-drag-mode #:view-help-ctx
+   #:get-rect #:get-bounds #:get-extent #:get-clip-rect #:size-limits
+   #:set-bounds #:change-bounds #:calc-bounds #:grow-to #:move-to #:locate
+   #:draw #:draw-view #:get-color #:get-palette #:default-palette
+   #:set-state #:get-state #:handle-event #:put-event #:clear-event*
+   #:write-buf #:write-line* #:write-char* #:write-str #:exposed-p
+   #:show #:hide #:set-cursor #:show-cursor* #:hide-cursor* #:normal-cursor
+   #:block-cursor #:make-global #:make-local #:mouse-in-view-p
+   #:valid-p #:data-size #:get-data #:set-data #:focus #:select
+   #:event-error #:end-modal #:owner-group
+   ;; group
+   #:tgroup #:group-last #:group-current #:group-buffer #:group-phase
+   #:insert #:insert-before #:remove-view #:group-draw-subviews
+   #:select-next #:set-current #:exec-view #:redraw #:focus-next
+   #:first-that #:for-each #:foreach-view #:exec #:end-exec #:data-views
+   #:+phase-pre+ #:+phase-focused+ #:+phase-post+
+   ;; frame / scrollbar
+   #:tframe #:tscrollbar #:sb-value #:sb-set-params #:sb-set-value
+   ;; scroller
+   #:tscroller #:scroller-delta #:scroller-limit #:scroller-hscroll
+   #:scroller-vscroll #:scroll-to #:scroll-draw #:set-scroller-limit
+   #:attach-scrollbars #:scroll-from-scrollbars #:scrollbar-event-p
+   ;; collection
+   #:tcollection #:tsorted-collection #:make-collection #:make-sorted-collection
+   #:string-collection #:collection-count #:at #:insert-item #:at-insert
+   #:at-remove #:delete-item #:index-of #:collection-for-each #:collection-list
+   #:collection-clear
+   ;; listbox
+   #:tlist-box #:list-focused #:list-count #:list-item #:list-set-items
+   #:list-focus-item #:list-select #:list-command
+   #:+cm-list-item-selected+ #:+cm-list-focus-changed+
+   ;; window
+   #:twindow #:window-title #:window-number #:window-flags #:window-frame
+   #:close-window #:zoom-window #:standard-scrollbar
+   #:+wf-move+ #:+wf-grow+ #:+wf-close+ #:+wf-zoom+ #:+wn-no-number+
+   ;; desktop
+   #:tdesktop #:desktop-background #:tbackground #:tile #:cascade #:desktop-windows
+   ;; widgets
+   #:tstatic-text #:tlabel #:tbutton #:tinputline #:tparam-text #:set-param-text
+   #:button-title #:button-command #:input-data #:make-button
+   ;; cluster / radio / checkboxes
+   #:tcluster #:tcheck-boxes #:tradio-buttons #:cluster-labels #:cluster-value
+   #:cluster-mark #:cluster-press #:multi-state-p #:checkbox-value
+   ;; validators
+   #:tvalidator #:tfilter-validator #:trange-validator #:tpicture-validator
+   #:make-filter-validator #:make-range-validator #:make-picture-validator
+   #:is-valid #:is-valid-input #:validator-error-message #:input-validator
+   ;; history
+   #:thistory-input #:history-id #:history-add #:history-list #:history-clear
+   #:history-record
+   ;; dialog
+   #:tdialog #:message-box #:input-box
+   #:+mf-warning+ #:+mf-error+ #:+mf-information+ #:+mf-confirmation+
+   #:+mf-yes-button+ #:+mf-no-button+ #:+mf-ok-button+ #:+mf-cancel-button+
+   ;; statusline
+   #:tstatus-line #:tstatus-item #:tstatus-def #:make-status-item
+   #:make-status-def #:status-defs #:set-status-context
+   ;; file dialog
+   #:tfile-dialog #:make-file-dialog #:file-open-dialog #:file-save-dialog
+   ;; help
+   #:register-help #:help-text #:open-help #:current-help-ctx #:refresh-status-context
+   ;; persistence
+   #:externalize #:internalize #:save-desktop #:load-desktop
+   ;; repl
+   #:trepl-view #:make-repl-window #:repl-eval #:repl-package #:repl-print
+   #:ensure-repl-package
+   ;; menu
+   #:tmenu-bar #:menu #:menu-item #:new-menu #:sub-menu #:menu-separator
+   #:menu-items #:menu-bar-menu #:track-menu #:application-menu #:init-menu-bar
+   #:program-menu-bar #:find-shortcut #:popup-menu
+   ;; text view
+   #:ttext-view #:text-lines #:text-string #:set-text #:append-text
+   #:text-cur-line #:text-cur-col #:text-return #:text-read-only
+   #:line-count #:nth-line #:current-line-string #:ensure-visible
+   #:text-attach-scrollbars #:text-update-limit
+   #:set-protect-boundary #:text-protect #:insert-string #:selected-string
+   #:copy-selection #:cut-selection #:paste-clipboard #:*clipboard*
+   #:text-snapshot #:text-undo! #:text-redo! #:text-anchor #:set-lines
+   #:text-modified #:text-overwrite #:text-goto #:word-left #:word-right
+   #:text-find #:text-find-and-select #:text-select-match #:text-replace-all
+   #:text-replace-selection #:text-load-file #:text-save-file
+   #:tindicator #:indicator-source
+   ;; resize
+   #:apply-resize #:install-resize-handler
+   ;; program / application
+   #:tprogram #:tapplication #:program-desktop #:program-status-line
+   #:*application* #:run #:init-desktop #:init-status-line #:init-screen-program
+   #:get-event #:idle #:program-loop #:suspend #:resume #:set-screen-mode
+   ;; palette modes / window management
+   #:set-palette-mode #:program-palette-mode #:select-window-by-number
+   #:move-size-window #:resize-window #:drag-window
+   #:+cm-resize+))

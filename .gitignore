@@ -1,0 +1,5 @@
+*.fasl
+*.o
+.cache/
+/tvision-demo
+/textedit

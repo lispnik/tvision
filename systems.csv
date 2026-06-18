@@ -1,0 +1,10 @@
+cffi, ghcr.io/ocicl/cffi@sha256:1fb4c2e6810f2a7ac79414ceef3157340558fb1fc33ed1760229a233a6bc6eec, cffi-20260613-8e2928e/cffi.asd
+cffi-examples, ghcr.io/ocicl/cffi@sha256:1fb4c2e6810f2a7ac79414ceef3157340558fb1fc33ed1760229a233a6bc6eec, cffi-20260613-8e2928e/cffi-examples.asd
+cffi-grovel, ghcr.io/ocicl/cffi@sha256:1fb4c2e6810f2a7ac79414ceef3157340558fb1fc33ed1760229a233a6bc6eec, cffi-20260613-8e2928e/cffi-grovel.asd
+cffi-libffi, ghcr.io/ocicl/cffi@sha256:1fb4c2e6810f2a7ac79414ceef3157340558fb1fc33ed1760229a233a6bc6eec, cffi-20260613-8e2928e/cffi-libffi.asd
+cffi-tests, ghcr.io/ocicl/cffi@sha256:1fb4c2e6810f2a7ac79414ceef3157340558fb1fc33ed1760229a233a6bc6eec, cffi-20260613-8e2928e/cffi-tests.asd
+cffi-toolchain, ghcr.io/ocicl/cffi@sha256:1fb4c2e6810f2a7ac79414ceef3157340558fb1fc33ed1760229a233a6bc6eec, cffi-20260613-8e2928e/cffi-toolchain.asd
+cffi-uffi-compat, ghcr.io/ocicl/cffi@sha256:1fb4c2e6810f2a7ac79414ceef3157340558fb1fc33ed1760229a233a6bc6eec, cffi-20260613-8e2928e/cffi-uffi-compat.asd
+drakma, ghcr.io/ocicl/drakma@sha256:31c746295d1308c7133f0b7cb64648513bc63c96db02ea8a36be37e32ee5ffe5, drakma-2.0.10/drakma.asd
+drakma-test, ghcr.io/ocicl/drakma@sha256:31c746295d1308c7133f0b7cb64648513bc63c96db02ea8a36be37e32ee5ffe5, drakma-2.0.10/drakma-test.asd
+uffi, ghcr.io/ocicl/cffi@sha256:1fb4c2e6810f2a7ac79414ceef3157340558fb1fc33ed1760229a233a6bc6eec, cffi-20260613-8e2928e/uffi-compat/uffi.asd
