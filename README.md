@@ -78,8 +78,10 @@ the running TUI *is* the Lisp image being driven:
   dialog listing the live `compute-restarts`; pick one to invoke it (Abort
   returns you to a fresh prompt).
 - **History variables & sticky package** — `*`/`**`/`***`, `/`/`//`/`///`, and
-  `+`/`++`/`+++` follow standard CL REPL semantics; `(in-package …)` sticks for
-  subsequent forms (the prompt reflects the current package).
+  `+`/`++`/`+++` follow standard CL REPL semantics and are **per-listener**
+  (each window keeps its own, bound with `progv` around evaluation so concurrent
+  REPLs never clobber one another or the global `cl:*`); `(in-package …)` sticks
+  for subsequent forms (the prompt reflects the current package).
 - **Persistent history & transcript** — input history is saved to
   `~/.tvlisp_history` across sessions; Up/Down recall it. `F7` (File ▸ Load
   file) loads a `.lisp` file with captured output, and File ▸ Save transcript

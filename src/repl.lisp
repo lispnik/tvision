@@ -21,6 +21,11 @@ SLIME/micros debugger); when nil, the error is just reported and aborted.")
 thread so the UI never blocks and output streams in live.  When nil, evaluation
 runs inline on the UI thread (used by headless tests).")
 
+(defparameter +repl-hist-symbols+ '(* ** *** / // /// + ++ +++ -)
+  "The CL REPL history variables, in shift order.  Each listener keeps its own
+values (in the view) and binds these symbols with PROGV around evaluation, so
+concurrent listeners never clobber one another's `*'/`+'/`/'.")
+
 (defun ensure-repl-package ()
   (or (find-package :tv-repl-user)
       (make-package :tv-repl-user :use '(:common-lisp) :nicknames '("REPL"))))
@@ -74,32 +79,43 @@ completions).  Handles `pkg:name' / `pkg::name' qualified tokens."
                 (when (%prefixp lc n) (collect s n)))))))
     (sort (remove-duplicates out :test #'string=) #'string<)))
 
-(defun repl-backend-eval (input package error-handler)
+(defmacro with-repl-history ((hist new-hist) &body body)
+  "Bind the CL history variables to the values in HIST (a list aligned with
++repl-hist-symbols+, or NIL for a fresh set) for the dynamic extent of BODY,
+then capture their resulting values into NEW-HIST.  PROGV makes the binding
+thread-local, so concurrent listeners never share `*'/`+'/`/'."
+  `(progv +repl-hist-symbols+ (copy-list (or ,hist (make-list 10)))
+     (multiple-value-prog1 (progn ,@body)
+       (setf ,new-hist (mapcar #'symbol-value +repl-hist-symbols+)))))
+
+(defun repl-backend-eval (input package error-handler &optional hist)
   "Read+eval all forms in INPUT under PACKAGE, capturing output.  Maintains the
-standard history vars (-, +/++/+++, */**/***, ///).  ERROR-HANDLER is invoked
-with the condition inside HANDLER-BIND (it must transfer control).  Return
-(values output-string results package errored)."
-  (let ((*package* package) (results '()) (errored nil) (last nil))
+standard history vars (-, +/++/+++, */**/***, ///) starting from HIST (the
+listener's prior values).  ERROR-HANDLER is invoked with the condition inside
+HANDLER-BIND (it must transfer control).  Return (values output-string results
+package errored new-hist)."
+  (let ((*package* package) (results '()) (errored nil) (last nil) (new-hist hist))
     (let ((output
             (with-output-to-string (out)
               (let ((*standard-output* out) (*error-output* out) (*trace-output* out))
-                (restart-case
-                    (handler-bind ((error (lambda (e) (setf last e)
-                                            (funcall error-handler e))))
-                      (with-input-from-string (in input)
-                        (loop for form = (read in nil :repl-eof)
-                              until (eq form :repl-eof)
-                              do (setf - form)
-                                 (let ((vals (multiple-value-list (eval form))))
-                                   (push vals results)
-                                   ;; shift the CL history variables
-                                   (setf +++ ++  ++ +  + form
-                                         /// //  // /  / vals
-                                         *** **  ** *  * (first vals))))))
-                  (repl-abort () (setf errored t)))
+                (with-repl-history (hist new-hist)
+                  (restart-case
+                      (handler-bind ((error (lambda (e) (setf last e)
+                                              (funcall error-handler e))))
+                        (with-input-from-string (in input)
+                          (loop for form = (read in nil :repl-eof)
+                                until (eq form :repl-eof)
+                                do (setf - form)
+                                   (let ((vals (multiple-value-list (eval form))))
+                                     (push vals results)
+                                     ;; shift the CL history variables
+                                     (setf +++ ++  ++ +  + form
+                                           /// //  // /  / vals
+                                           *** **  ** *  * (first vals))))))
+                    (repl-abort () (setf errored t))))
                 (when (and errored last)
                   (format out "~&;; ~(~a~): ~a~%" (type-of last) last))))))
-      (values output (nreverse results) *package* errored))))
+      (values output (nreverse results) *package* errored new-hist))))
 
 ;;; ===========================================================================
 ;;; The REPL view
@@ -110,6 +126,8 @@ with the condition inside HANDLER-BIND (it must transfer control).  Return
    (history      :initform '() :accessor repl-history)      ; most-recent first
    (hist-pos     :initform nil :accessor repl-hist-pos)
    (history-file :initarg :history-file :initform nil :accessor repl-history-file)
+   ;; per-listener CL history vars (*/+//-, aligned with +repl-hist-symbols+)
+   (hist-vars    :initform (make-list 10) :accessor repl-hist-vars)
    ;; --- background evaluation (one worker thread per listener) ---
    (worker       :initform nil :accessor repl-worker)       ; sb-thread:thread
    (to-worker    :initform nil :accessor repl-to-worker)    ; mailbox of jobs
@@ -120,6 +138,12 @@ with the condition inside HANDLER-BIND (it must transfer control).  Return
   (when (repl-history-file r) (load-repl-history r))
   (repl-print r (repl-banner r))
   (repl-fresh-prompt r))
+
+(defun repl-hvar (r sym)
+  "Value of R's per-listener history variable SYM (one of +repl-hist-symbols+,
+e.g. '*, '+, '/).  Reads listener-local storage, not the global CL specials."
+  (let ((i (position sym +repl-hist-symbols+)))
+    (and i (nth i (repl-hist-vars r)))))
 
 (defun repl-banner (r)
   (declare (ignore r))
@@ -216,9 +240,10 @@ Used by the synchronous (inline) evaluation path."
 ;;; --- evaluation + printing -------------------------------------------------
 
 (defun repl-eval (r input)
-  (multiple-value-bind (output results new-package errored)
-      (repl-backend-eval input (repl-package r) #'repl-error-handler)
-    (setf (repl-package r) new-package)        ; sticky in-package
+  (multiple-value-bind (output results new-package errored new-hist)
+      (repl-backend-eval input (repl-package r) #'repl-error-handler (repl-hist-vars r))
+    (setf (repl-package r) new-package          ; sticky in-package
+          (repl-hist-vars r) new-hist)          ; per-listener history vars
     (values output results errored)))
 
 (defun repl-print-results (r results)
@@ -348,30 +373,32 @@ stack/dynamic extent of the error is intact).  Never returns normally."
 routing errors through the cross-thread debugger.  Posts the final results back
 to the UI thread."
   (let ((out (make-instance 'repl-output-stream :view r))
-        (results '()) (errored nil) (last nil))
+        (results '()) (errored nil) (last nil) (new-hist (repl-hist-vars r)))
     (let ((*standard-output* out) (*error-output* out) (*trace-output* out)
           (*package* (repl-package r)))
       (unwind-protect
-           (restart-case
-               (handler-bind ((error (lambda (e) (setf last e) (repl-worker-debug r e))))
-                 (with-input-from-string (in input)
-                   (loop for form = (read in nil :repl-eof)
-                         until (eq form :repl-eof)
-                         do (setf - form)
-                            (let ((vals (multiple-value-list (eval form))))
-                              (push vals results)
-                              (setf +++ ++  ++ +  + form
-                                    /// //  // /  / vals
-                                    *** **  ** *  * (first vals))))))
-             (repl-abort () (setf errored t)))
+           (with-repl-history ((repl-hist-vars r) new-hist)
+             (restart-case
+                 (handler-bind ((error (lambda (e) (setf last e) (repl-worker-debug r e))))
+                   (with-input-from-string (in input)
+                     (loop for form = (read in nil :repl-eof)
+                           until (eq form :repl-eof)
+                           do (setf - form)
+                              (let ((vals (multiple-value-list (eval form))))
+                                (push vals results)
+                                (setf +++ ++  ++ +  + form
+                                      /// //  // /  / vals
+                                      *** **  ** *  * (first vals))))))
+               (repl-abort () (setf errored t))))
         (finish-output out))
       (let ((results (nreverse results)) (pkg *package*)
-            (errored errored) (last last))
-        (run-on-ui (lambda () (repl-finish-eval r results pkg errored last)))))))
+            (errored errored) (last last) (new-hist new-hist))
+        (run-on-ui (lambda () (repl-finish-eval r results pkg errored last new-hist)))))))
 
-(defun repl-finish-eval (r results pkg errored last)
+(defun repl-finish-eval (r results pkg errored last new-hist)
   "UI thread: print results/error summary and re-prompt after a worker eval."
-  (setf (repl-package r) pkg)            ; sticky in-package
+  (setf (repl-package r) pkg             ; sticky in-package
+        (repl-hist-vars r) new-hist)     ; per-listener history vars
   (repl-ensure-fresh-line r)
   (cond
     ((and errored last)

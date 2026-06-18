@@ -108,7 +108,7 @@
           ((= c +cm-copy+)     (with-repl #'copy-selection) (clear-event event))
           ((= c +cm-paste+)    (with-repl #'paste-clipboard) (clear-event event))
           ((= c +cm-inspect+)
-           (when rv (repl-inspect (symbol-value (intern "*" (repl-package rv))) "*"))
+           (when rv (repl-inspect (repl-hvar rv '*) "*"))
            (clear-event event))
           ((= c +cm-interrupt+)
            (when rv (repl-interrupt rv)) (clear-event event))
