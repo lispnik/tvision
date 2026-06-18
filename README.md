@@ -59,17 +59,51 @@ a file to open).  Keys: F2 save, F3 open, F7 find, F5 find-next, F8 replace, F6 
 F9 next window, Ctrl-Z/Y undo/redo, Ctrl-X/C/V clipboard, Ctrl-A select-all,
 Ctrl+Left/Right word movement, Shift+arrows select, F10 menu, Alt-X exit.
 
+### tvlisp — a standalone REPL app
+
+`tvlisp` is a dedicated Lisp REPL application: a full-window REPL with menus for
+opening more REPL windows, clipboard, clear (F3), and window tiling.
+
+It uses an in-process, micros-style backend (the same operation set Lem gets
+from micros, but built directly on SBCL built-ins with zero external deps), so
+the running TUI *is* the Lisp image being driven:
+
+- **Tab completion** — `Tab` completes the symbol before the cursor against the
+  current package; multiple candidates pop up in a selectable list, a common
+  prefix is filled in, and `pkg:`/`pkg::` qualified tokens are supported.
+- **Object inspector** — `F8` (Edit ▸ Inspect *) opens a `TOutline` tree of the
+  last value `*`: structs/objects expand by slot (via `sb-mop`), conses,
+  vectors, and hash-tables by element/entry, depth-limited.
+- **Restart menu on error** — a signalled error pops an "Error — pick a restart"
+  dialog listing the live `compute-restarts`; pick one to invoke it (Abort
+  returns you to a fresh prompt).
+- **History variables & sticky package** — `*`/`**`/`***`, `/`/`//`/`///`, and
+  `+`/`++`/`+++` follow standard CL REPL semantics; `(in-package …)` sticks for
+  subsequent forms (the prompt reflects the current package).
+- **Persistent history & transcript** — input history is saved to
+  `~/.tvlisp_history` across sessions; Up/Down recall it. `F7` (File ▸ Load
+  file) loads a `.lisp` file with captured output, and File ▸ Save transcript
+  writes the whole REPL buffer to a file.
+
+```sh
+make tvlisp && ./tvlisp
+# or: sbcl --eval '(asdf:make :tvision/examples/tvlisp)' --quit  (-> ./tvlisp)
+# or from Lisp: (asdf:load-system :tvision/examples/tvlisp) (tvision-tvlisp:main)
+```
+
 ### Standalone executables
 
 ```sh
-make                 # build both: ./tvision-demo and ./textedit
+make                 # build all three: ./tvision-demo, ./textedit, ./tvlisp
 make textedit        # build just the editor
+make tvlisp          # build just the REPL app
 make run-demo        # build and launch the demo
 make clean           # remove the binaries and this project's fasl cache
 
 # or directly, without make:
-sbcl --eval '(asdf:make :tvision/examples)' --quit          # -> ./tvision-demo
-sbcl --eval '(asdf:make :tvision/examples/textedit)' --quit # -> ./textedit  [file...]
+sbcl --eval '(asdf:make :tvision/examples)' --quit            # -> ./tvision-demo
+sbcl --eval '(asdf:make :tvision/examples/textedit)' --quit   # -> ./textedit  [file...]
+sbcl --eval '(asdf:make :tvision/examples/tvlisp)' --quit     # -> ./tvlisp
 ```
 
 `asdf:make` uses the `program-op`/`build-pathname`/`entry-point` settings in

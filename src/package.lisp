@@ -67,7 +67,7 @@
    #:valid-p #:data-size #:get-data #:set-data #:focus #:select
    #:event-error #:end-modal #:owner-group
    ;; group
-   #:tgroup #:group-last #:group-current #:group-buffer #:group-phase
+   #:tgroup #:group-last #:group-current #:group-subviews #:group-buffer #:group-phase
    #:insert #:insert-before #:remove-view #:group-draw-subviews
    #:select-next #:set-current #:exec-view #:redraw #:focus-next
    #:first-that #:for-each #:foreach-view #:exec #:end-exec #:data-views
@@ -137,7 +137,10 @@
    #:save-resource-file #:load-resource-file
    ;; repl
    #:trepl-view #:make-repl-window #:repl-eval #:repl-package #:repl-print
-   #:ensure-repl-package
+   #:ensure-repl-package #:repl-clear #:repl-history #:repl-history-file
+   #:repl-complete #:repl-inspect #:object->outline #:repl-load-file
+   #:save-repl-history #:load-repl-history #:*repl-debugger* #:popup-list
+   #:repl-backend-completions #:repl-backend-eval #:longest-common-prefix
    ;; menu
    #:tmenu-bar #:menu #:menu-item #:new-menu #:sub-menu #:menu-separator
    #:menu-items #:menu-bar-menu #:track-menu #:application-menu #:init-menu-bar

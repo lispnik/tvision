@@ -27,9 +27,9 @@ endef
 FRAMEWORK := tvision.asd $(wildcard src/*.lisp)
 
 .DEFAULT_GOAL := all
-.PHONY: all clean run-demo run-textedit help
+.PHONY: all clean run-demo run-textedit run-tvlisp help
 
-all: tvision-demo textedit
+all: tvision-demo textedit tvlisp
 
 tvision-demo: $(FRAMEWORK) examples/demo.lisp
 	$(call asdf-make,tvision/examples)
@@ -37,15 +37,21 @@ tvision-demo: $(FRAMEWORK) examples/demo.lisp
 textedit: $(FRAMEWORK) examples/textedit.lisp
 	$(call asdf-make,tvision/examples/textedit)
 
+tvlisp: $(FRAMEWORK) examples/tvlisp.lisp
+	$(call asdf-make,tvision/examples/tvlisp)
+
 run-demo: tvision-demo
 	./tvision-demo
 
 run-textedit: textedit
 	./textedit
 
+run-tvlisp: tvlisp
+	./tvlisp
+
 clean:
-	rm -f tvision-demo textedit
+	rm -f tvision-demo textedit tvlisp
 	rm -rf $(HOME)/.cache/common-lisp/*tvision* 2>/dev/null || true
 
 help:
-	@echo "Targets: all (default), tvision-demo, textedit, run-demo, run-textedit, clean"
+	@echo "Targets: all (default), tvision-demo, textedit, tvlisp, run-*, clean"
