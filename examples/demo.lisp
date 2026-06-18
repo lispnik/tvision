@@ -21,6 +21,8 @@
 (defparameter +cm-pal-bw+     112)
 (defparameter +cm-pal-mono+   113)
 (defparameter +cm-repl+       114)
+(defparameter +cm-tree+       115)
+(defparameter +cm-coldef+     116)
 
 ;; help contexts (see SETUP for the registered topics)
 (defparameter +hc-desktop+ 1000)
@@ -43,6 +45,7 @@
       (menu-item "~N~ew window"  +cm-new-window+)
       (menu-item "~E~ditor"      +cm-editor+     :key-code +kb-f7+ :key-text "F7")
       (menu-item "~S~croller"    +cm-scroller+   :key-code +kb-f9+ :key-text "F9")
+      (menu-item "~T~ree view"   +cm-tree+)
       (menu-item "~L~ist box..." +cm-listbox+)
       (menu-separator)
       (menu-item "Sa~v~e desktop" +cm-save+)
@@ -67,7 +70,9 @@
      (new-menu
       (menu-item "~C~olor"       +cm-pal-color+)
       (menu-item "~B~lack && white" +cm-pal-bw+)
-      (menu-item "~M~onochrome"  +cm-pal-mono+)))))
+      (menu-item "~M~onochrome"  +cm-pal-mono+)
+      (menu-separator)
+      (menu-item "~D~esktop color..." +cm-coldef+)))))
 
 ;;; --- status line (context-sensitive via help context) ----------------------
 
@@ -262,6 +267,35 @@ field, check boxes, radio buttons, and group-level data exchange."
     (insert (program-desktop app) w)
     (focus rv)))
 
+(defun open-tree (app)
+  (let* ((desk (program-desktop app))
+         (w (make-instance 'twindow :title "Outline" :bounds (make-trect 6 3 46 19)))
+         (vsb (standard-scrollbar w t))
+         (ol (make-instance 'toutline
+                            :bounds (make-trect 1 1 (1- (point-x (view-size w)))
+                                                (1- (point-y (view-size w))))
+                            :roots (list (outline-node "Fruits"
+                                                       (make-outline-node "Apple")
+                                                       (make-outline-node "Banana")
+                                                       (make-outline-node "Cherry"))
+                                         (outline-node "Vegetables"
+                                                       (make-outline-node "Carrot")
+                                                       (make-outline-node "Potato"))
+                                         (outline-node "Grains"
+                                                       (make-outline-node "Rice")
+                                                       (make-outline-node "Wheat"))))))
+    (insert w ol)
+    (attach-scrollbars ol :vscroll vsb)
+    (insert desk w)
+    (focus ol)))
+
+(defun do-coldef (app)
+  "Pick a colour for the desktop background with the colour dialog."
+  (multiple-value-bind (ok fg bg) (color-dialog :title "Desktop color" :fg 7 :bg 1)
+    (when ok
+      (setf (aref tvision::+app-palette-color+ 38) (make-attr fg bg))
+      (draw-view app))))
+
 (defun do-save (app)
   (save-desktop +desktop-file+ app)
   (message-box (format nil "Saved ~d window(s) to~%~a"
@@ -314,6 +348,8 @@ field, check boxes, radio buttons, and group-level data exchange."
         ((= c +cm-new-window+) (open-window app) (clear-event event))
         ((= c +cm-editor+)     (open-editor app) (clear-event event))
         ((= c +cm-scroller+)   (open-scroller app) (clear-event event))
+        ((= c +cm-tree+)       (open-tree app) (clear-event event))
+        ((= c +cm-coldef+)     (do-coldef app) (clear-event event))
         ((= c +cm-listbox+)    (open-listbox app) (clear-event event))
         ((= c +cm-form+)       (do-form app) (clear-event event))
         ((= c +cm-about+)      (do-about) (clear-event event))
@@ -329,12 +365,21 @@ field, check boxes, radio buttons, and group-level data exchange."
 ;;; --- entry point -----------------------------------------------------------
 
 (defun register-demo-help ()
-  (register-help +hc-desktop+
-                 (format nil "Turbo Vision demo~%~%~
+  (let ((desktop-help
+          (format nil "Turbo Vision demo~%~%~
 F2 new window, F7 editor, F9 scroller.~%~
 F10 opens the menu; Alt+letter opens a menu directly.~%~
 Alt+1..9 selects a window by number.~%~
-Resize the terminal and the UI reflows."))
+Resize the terminal and the UI reflows.~%~%~
+Press Tab to a link and Enter to follow: {Keyboard Shortcuts|Keys}.")))
+    (register-help +hc-desktop+ desktop-help)
+    (register-help-topic "Turbo Vision demo" desktop-help))
+  (register-help-topic "Keys"
+                 (format nil "Keyboard shortcuts~%~%~
+F1 help, F10 menu, Alt-X quit.~%~
+F2 REPL, F7 editor, F9 scroller, F8 form.~%~
+F5 tile, F6 cycle windows, Ctrl-W close.~%~%~
+Backspace here returns to the {previous topic|Turbo Vision demo}."))
   (register-help +hc-editor+
                  (format nil "Editor help~%~%~
 Arrows/Home/End/PgUp/PgDn move the cursor.~%~

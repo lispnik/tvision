@@ -318,6 +318,14 @@ subclass overrides this to evaluate the current input instead.")
         (text-cur-col tv)  (min (max 0 (text-cur-col tv))
                                 (length (current-line-string tv)))))
 
+(defun %mouse-to-cursor (tv event)
+  "Move the cursor to the click/drag position of EVENT."
+  (let ((lp (make-local tv (event-mouse-where event))))
+    (setf (text-cur-line tv) (min (1- (line-count tv))
+                                  (+ (text-top-line tv) (max 0 (point-y lp))))
+          (text-cur-col tv) (+ (text-left-col tv) (max 0 (point-x lp))))
+    (clamp-cursor tv)))
+
 (defun %move-cursor (tv k)
   "Apply a navigation key K to the cursor (no selection / redraw side effects)."
   (cond
@@ -385,13 +393,22 @@ subclass overrides this to evaluate the current input instead.")
      (scroll-to tv (point-x (scroller-delta tv))
                 (+ (point-y (scroller-delta tv)) (* 3 (event-wheel event))))
      (clear-event event))
+    ;; mouse down: position the cursor and begin a (possible) selection
     ((and (= (event-type event) +ev-mouse-down+) (mouse-in-view-p tv event))
-     (let ((lp (make-local tv (event-mouse-where event))))
-       (setf (text-anchor tv) nil
-             (text-cur-line tv) (min (1- (line-count tv))
-                                     (+ (text-top-line tv) (max 0 (point-y lp))))
-             (text-cur-col tv) (+ (text-left-col tv) (max 0 (point-x lp))))
-       (clamp-cursor tv) (ensure-visible tv) (draw-view tv))
+     (%mouse-to-cursor tv event)
+     (setf (text-anchor tv) (text-pos tv))   ; drag from here; click w/o drag = no sel
+     (ensure-visible tv) (draw-view tv)
+     (clear-event event))
+    ;; mouse drag: extend the selection to the pointer
+    ((= (event-type event) +ev-mouse-move+)
+     (when (text-anchor tv)
+       (%mouse-to-cursor tv event)
+       (ensure-visible tv) (draw-view tv))
+     (clear-event event))
+    ;; mouse up: a click with no drag leaves no selection
+    ((= (event-type event) +ev-mouse-up+)
+     (when (and (text-anchor tv) (pos= (text-anchor tv) (text-pos tv)))
+       (setf (text-anchor tv) nil) (draw-view tv))
      (clear-event event))
     ((and (= (event-type event) +ev-key-down+)
           (logtest (view-state tv) +sf-focused+))

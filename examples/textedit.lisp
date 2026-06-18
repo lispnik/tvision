@@ -23,6 +23,7 @@
 (defparameter +cm-findnext+ 221)
 (defparameter +cm-replace+  222)
 (defparameter +cm-goto+     223)
+(defparameter +cm-isearch+  224)
 (defparameter +cm-tile+     230)
 (defparameter +cm-cascade+  231)
 
@@ -73,6 +74,7 @@
    (sub-menu "~S~earch"
      (new-menu
       (menu-item "~F~ind..."     +cm-find+     :key-code +kb-f7+ :key-text "F7")
+      (menu-item "~I~ncremental" +cm-isearch+  :key-code 6 :key-text "Ctrl-F")
       (menu-item "Find ~N~ext"   +cm-findnext+ :key-code +kb-f5+ :key-text "F5")
       (menu-item "~R~eplace..."  +cm-replace+  :key-code +kb-f8+ :key-text "F8")
       (menu-item "~G~oto line..." +cm-goto+    :key-code +kb-f6+ :key-text "F6")))
@@ -281,6 +283,48 @@
           (let ((n (parse-integer s :junk-allowed t)))
             (when n (text-goto ed n 0))))))))
 
+(defun ed-isearch (app)
+  "Emacs-style incremental search: type to jump, Down for next, Esc cancels."
+  (let* ((w (current-window app)) (ed (and w (ew-editor w))))
+    (when ed
+      (let ((query (make-array 0 :element-type 'character :adjustable t :fill-pointer 0))
+            (from (cons (text-cur-line ed) (text-cur-col ed)))
+            (found t))
+        (flet ((prompt ()
+                 (setf (window-title w)
+                       (format nil "~:[(not found) ~;~]I-search: ~a"
+                               found (coerce query 'string))))
+               (jump ()
+                 (let ((q (coerce query 'string)))
+                   (if (zerop (length q))
+                       (setf found t)
+                       (let ((m (text-find ed q :from-line (car from) :from-col (cdr from))))
+                         (if m (progn (text-select-match ed m q) (setf found t))
+                             (setf found nil)))))))
+          (prompt)
+          (block search
+            (loop
+              (draw-view app) (when tvision:*screen* (flush-screen tvision:*screen*))
+              (let ((e (get-event app)))
+                (when (= (event-type e) +ev-key-down+)
+                  (let ((k (event-key-code e)) (ch (event-char-code e)))
+                    (cond
+                      ((= k +kb-esc+)
+                       (setf (text-cur-line ed) (car from) (text-cur-col ed) (cdr from)
+                             (text-anchor ed) nil)
+                       (return-from search))
+                      ((= k +kb-enter+) (return-from search))
+                      ((= k +kb-back+)
+                       (when (plusp (fill-pointer query)) (decf (fill-pointer query)))
+                       (jump) (prompt))
+                      ((= k +kb-down+)            ; find next occurrence
+                       (setf from (cons (text-cur-line ed) (text-cur-col ed)))
+                       (jump) (prompt))
+                      ((and (>= ch 32) (< ch 127))
+                       (vector-push-extend (code-char ch) query)
+                       (jump) (prompt))))))))
+          (update-title w))))))
+
 ;;; --- exit handling ---------------------------------------------------------
 
 (defun can-quit-p (app)
@@ -326,6 +370,7 @@
           ((= c +cm-findnext+) (ed-find-next app) (clear-event event))
           ((= c +cm-replace+)  (ed-replace app) (clear-event event))
           ((= c +cm-goto+)     (ed-goto app) (clear-event event))
+          ((= c +cm-isearch+)  (ed-isearch app) (clear-event event))
           ((= c +cm-tile+)     (tile (program-desktop app)) (clear-event event))
           ((= c +cm-cascade+)  (cascade (program-desktop app)) (clear-event event)))))))
 

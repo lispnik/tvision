@@ -20,8 +20,8 @@
    ;; events
    #:event #:make-event #:event-type #:event-key-code #:event-char-code
    #:event-mouse-where #:event-mouse-buttons #:event-command #:event-info
-   #:event-modifiers #:event-double #:event-wheel
-   #:clear-event
+   #:event-modifiers #:event-double #:event-triple #:event-wheel
+   #:clear-event #:set-double-click-time
    #:+ev-nothing+ #:+ev-mouse-down+ #:+ev-mouse-up+ #:+ev-mouse-move+
    #:+ev-mouse-auto+ #:+ev-key-down+ #:+ev-mouse-wheel+ #:+ev-command+ #:+ev-broadcast+
    #:+ev-mouse+ #:+ev-keyboard+ #:+ev-message+
@@ -52,7 +52,7 @@
    ;; screen driver
    #:init-screen #:done-screen #:with-screen #:screen-width #:screen-height
    #:flush-screen #:screen-back-buffer #:screen-cell-set #:screen-resize
-   #:show-cursor #:hide-cursor #:set-cursor-pos #:*screen*
+   #:show-cursor #:hide-cursor #:set-cursor-pos #:set-cursor-shape #:*screen*
    ;; view
    #:tview #:view-origin #:view-size #:view-cursor #:view-owner #:view-next
    #:view-state #:view-options #:view-grow-mode #:view-drag-mode #:view-help-ctx
@@ -63,6 +63,7 @@
    #:write-buf #:write-line* #:write-char* #:write-str #:exposed-p
    #:show #:hide #:set-cursor #:show-cursor* #:hide-cursor* #:normal-cursor
    #:block-cursor #:make-global #:make-local #:mouse-in-view-p
+   #:view-event-mask #:wants-event-p #:view-disabled-p #:disable-view #:enable-view
    #:valid-p #:data-size #:get-data #:set-data #:focus #:select
    #:event-error #:end-modal #:owner-group
    ;; group
@@ -84,8 +85,13 @@
    #:collection-clear
    ;; listbox
    #:tlist-box #:list-focused #:list-count #:list-item #:list-set-items
-   #:list-focus-item #:list-select #:list-command
+   #:list-focus-item #:list-select #:list-command #:list-columns
    #:+cm-list-item-selected+ #:+cm-list-focus-changed+
+   ;; outline (tree view)
+   #:toutline #:outline-node #:make-outline-node #:outline-node-text
+   #:outline-node-children #:outline-node-expanded #:outline-node-data
+   #:outline-roots #:outline-current #:outline-focus #:outline-toggle
+   #:outline-select #:outline-command #:+cm-outline-item-selected+
    ;; window
    #:twindow #:window-title #:window-number #:window-flags #:window-frame
    #:close-window #:zoom-window #:standard-scrollbar
@@ -100,8 +106,10 @@
    #:cluster-mark #:cluster-press #:multi-state-p #:checkbox-value
    ;; validators
    #:tvalidator #:tfilter-validator #:trange-validator #:tpicture-validator
+   #:tstring-lookup-validator #:make-string-lookup-validator
    #:make-filter-validator #:make-range-validator #:make-picture-validator
    #:is-valid #:is-valid-input #:validator-error-message #:input-validator
+   #:picture-match
    ;; history
    #:thistory-input #:history-id #:history-add #:history-list #:history-clear
    #:history-record
@@ -114,10 +122,19 @@
    #:make-status-def #:status-defs #:set-status-context
    ;; file dialog
    #:tfile-dialog #:make-file-dialog #:file-open-dialog #:file-save-dialog
+   ;; color dialog
+   #:color-dialog #:color-preview #:+color-names+
    ;; help
-   #:register-help #:help-text #:open-help #:current-help-ctx #:refresh-status-context
+   #:register-help #:register-help-topic #:help-text #:help-topic #:open-help
+   #:current-help-ctx #:refresh-status-context #:thelp-viewer #:parse-help-links
    ;; persistence
    #:externalize #:internalize #:save-desktop #:load-desktop
+   ;; binary streams / resource files
+   #:stream-write-value #:stream-read-value #:stream-write-view #:stream-read-view
+   #:write-u8 #:read-u8 #:write-u32 #:read-u32 #:write-bstring #:read-bstring
+   #:tresource-file #:make-resource-file #:resource-put #:resource-get
+   #:resource-names #:resource-put-object #:resource-get-object
+   #:save-resource-file #:load-resource-file
    ;; repl
    #:trepl-view #:make-repl-window #:repl-eval #:repl-package #:repl-print
    #:ensure-repl-package

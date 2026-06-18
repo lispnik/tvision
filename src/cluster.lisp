@@ -31,7 +31,9 @@
 
 (defmethod draw ((c tcluster))
   (let* ((w (point-x (view-size c)))
-         (normal (get-color c 1)) (selc (get-color c 2))
+         (disabled (view-disabled-p c))
+         (normal (if disabled (make-attr 8 (attr-bg (get-color c 1))) (get-color c 1)))
+         (selc (if disabled normal (get-color c 2)))
          (focused (logtest (view-state c) +sf-focused+))
          (db (make-draw-buffer w)))
     (loop for label in (cluster-labels c)

@@ -158,6 +158,7 @@
   (mouse-where (make-tpoint) :type tpoint)
   (mouse-buttons 0 :type fixnum)
   (double nil)                      ; double-click
+  (triple nil)                      ; triple-click
   (wheel 0 :type fixnum)            ; -1 up / +1 down for ev-mouse-wheel
   ;; message / command
   (command 0 :type fixnum)

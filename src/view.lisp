@@ -50,6 +50,9 @@
    (grow-mode :initform 0             :accessor view-grow-mode)
    (drag-mode :initform 0             :accessor view-drag-mode)
    (help-ctx  :initform +hc-no-context+ :accessor view-help-ctx)
+   ;; which event classes this view's HANDLE-EVENT is willing to receive
+   (event-mask :initform (logior +ev-mouse+ +ev-keyboard+ +ev-message+)
+               :accessor view-event-mask)
    (owner     :initform nil           :accessor view-owner)
    (next      :initform nil           :accessor view-next)))
 
@@ -166,6 +169,15 @@ the intersection of V's bounds with every ancestor's bounds."
 
 (defun visible-p (v) (logtest (view-state v) +sf-visible+))
 
+(defun view-disabled-p (v) (logtest (view-state v) +sf-disabled+))
+
+(defun disable-view (v) (set-state v +sf-disabled+ t))
+(defun enable-view (v)  (set-state v +sf-disabled+ nil))
+
+(defun wants-event-p (v event)
+  "True when V's event mask accepts EVENT's class (TView::eventMask)."
+  (logtest (view-event-mask v) (event-type event)))
+
 (defun exposed-p (v)
   "True when V and all of its owners are visible and V has a non-empty clip.
 (Sibling occlusion is handled implicitly by back-to-front draw order.)"
@@ -262,6 +274,7 @@ repeating it on each of the H lines.  This is the workhorse used by `draw'."
     (multiple-value-bind (gx gy) (view-global-origin v)
       (set-cursor-pos *screen* (+ gx (point-x (view-cursor v)))
                                (+ gy (point-y (view-cursor v))))
+      (set-cursor-shape (if (logtest (view-state v) +sf-cursor-ins+) :block :underline) *screen*)
       (show-cursor *screen*))))
 
 ;;; --- drawing ---------------------------------------------------------------

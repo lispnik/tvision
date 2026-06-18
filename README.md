@@ -144,11 +144,14 @@ recognisable part of the original framework:
 | `src/cluster.lisp`     | `TCluster`/`TRadioButtons`/`TCheckBoxes` | labelled option clusters |
 | `src/validator.lisp`   | `TValidator` family     | filter / range / picture input validators |
 | `src/collection.lisp`  | `TCollection`           | dynamic + sorted collections |
-| `src/listbox.lisp`     | `TListViewer`/`TListBox`| scrollable, selectable list |
+| `src/listbox.lisp`     | `TListViewer`/`TListBox`| scrollable, selectable list (multi-column) |
+| `src/outline.lisp`     | `TOutline`              | collapsible tree view |
 | `src/history.lisp`     | `THistory`              | input line with a recallable value history |
 | `src/filedialog.lisp`  | `TFileDialog`           | file open/save dialog with a directory browser |
-| `src/help.lisp`        | help system             | help topics by context, context-switched status line |
-| `src/persist.lisp`     | `TStream`/resources     | S-expression save/load of the desktop |
+| `src/colordialog.lisp` | `TColorDialog`          | foreground/background colour picker with live preview |
+| `src/help.lisp`        | help system / `THelpFile` | hypertext topics with links + navigable viewer |
+| `src/persist.lisp`     | streams                 | S-expression save/load of the desktop |
+| `src/stream.lisp`      | `TStream`/`TResourceFile` | binary object streaming + named resource files |
 | `src/repl.lisp`        | (new)                   | `trepl-view` — a Lisp REPL built on the text view |
 
 The text view (`src/textview.lisp`) carries the editor engine: selection,
@@ -193,16 +196,20 @@ lines, labels, static/param text, scroll bars, modal execution, Tab/Shift-Tab
 focus cycling, a command set
 (enable/disable with greying), window drag/close/zoom/**resize**/keyboard
 move-size/**cycling (F6)**/**Alt-1..9 selection**, **drop shadows**, tiling/
-cascading, group-level data exchange, a **help system** with a context-switched
-status line, **colour / black-white / monochrome palettes**, desktop
-save/load persistence, full mouse (incl. **double-click, wheel, auto-repeat**)
-and keyboard (incl. **Alt/Ctrl/Shift modifiers**), **live terminal resize**,
-and a diffing ANSI renderer.
+cascading, group-level data exchange, a **tree view (`TOutline`)**, a
+**colour-picker dialog**, **per-view event masks** and **per-control
+disable/grey**, **hypertext help** (linked topics) with a context-switched
+status line, **colour / black-white / monochrome palettes**, S-expression
+*and* **binary** persistence (`TResourceFile`), full mouse (incl.
+**double/triple-click, wheel, auto-repeat**) and keyboard (incl.
+**Alt/Ctrl/Shift modifiers**), configurable cursor shapes, **live terminal
+resize**, and a diffing ANSI renderer.
 
-The one deliberate omission is Turbo Vision's per-group buffer + cover-list
-occlusion model: this port composites a single back buffer in z-order each
-frame (correct on screen, just not the original's partial-repaint
-optimization).
+Deliberately not implemented (invasive core rewrites for little visible gain):
+Turbo Vision's per-group buffer + cover-list occlusion model (this port
+composites a single back buffer in z-order each frame — correct on screen, just
+not the original's partial-repaint optimization); 256-/true-colour (the cell
+attribute is a 16-colour DOS byte); and editor word-wrap.
 
 `Tab`/`Shift-Tab` cycle the focus among a group's controls in layout order
 (consumed at the innermost group that holds leaf controls, so the desktop never
@@ -234,9 +241,8 @@ incomplete form (unbalanced parens) continues on the next line instead of
 evaluating, and Up/Down recall input history.  `(make-repl-window bounds)`
 returns a ready-to-insert window with the REPL and a scroll bar.
 
-Remaining gaps are narrow: in-editor search/replace and word-wrap, a separate
-non-modal popup-menu widget, and the per-group-buffer occlusion model noted
-above.
+The only remaining gaps are the three deliberate omissions noted above
+(per-group occlusion, 256-colour, editor word-wrap).
 
 ## License
 

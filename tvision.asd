@@ -35,10 +35,13 @@
                              (:file "textview")
                              (:file "collection")
                              (:file "listbox")
+                             (:file "outline")
                              (:file "history")
                              (:file "filedialog")
+                             (:file "colordialog")
                              (:file "help")
                              (:file "persist")
+                             (:file "stream")
                              (:file "repl")))))
 
 (asdf:defsystem "tvision/examples"

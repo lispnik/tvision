@@ -28,7 +28,9 @@
   (last-click-time 0 :type fixnum)
   (last-click-x -1 :type fixnum)
   (last-click-y -1 :type fixnum)
-  (last-auto-time 0 :type fixnum))
+  (click-count 0 :type fixnum)
+  (last-auto-time 0 :type fixnum)
+  (cursor-shape :underline))
 
 (defvar *screen* nil "The active terminal screen, or NIL when not initialised.")
 
@@ -182,12 +184,17 @@ silently ignored, which lets views draw without bounds-checking."
             (incf cx)))))
     ;; place the hardware cursor where a focused view asked for it
     (when (screen-cursor-visible s)
+      (write-string (ctl "~d q" (ecase (screen-cursor-shape s)
+                                  (:block 1) (:underline 3) (:bar 5))) out)
       (write-string (ctl "~d;~dH" (1+ (screen-cursor-y s)) (1+ (screen-cursor-x s))) out)
       (write-string (ctl "?25h") out))
     (%flush-out s)))
 
 (defun set-cursor-pos (s x y)
   (setf (screen-cursor-x s) x (screen-cursor-y s) y))
+(defun set-cursor-shape (shape &optional (s *screen*))
+  "SHAPE is :block, :underline, or :bar."
+  (when s (setf (screen-cursor-shape s) shape)))
 (defun show-cursor (&optional (s *screen*)) (setf (screen-cursor-visible s) t))
 (defun hide-cursor (&optional (s *screen*)) (setf (screen-cursor-visible s) nil))
 
@@ -210,9 +217,13 @@ silently ignored, which lets views draw without bounds-checking."
 (defparameter +auto-repeat-ticks+
   (max 1 (round (* 0.10 internal-time-units-per-second)))
   "Interval between synthesized ev-mouse-auto events while a button is held.")
-(defparameter +double-click-ticks+
+(defvar *double-click-ticks*
   (max 1 (round (* 0.40 internal-time-units-per-second)))
-  "Maximum gap between two clicks to count as a double-click.")
+  "Maximum gap between successive clicks to count as a multi-click.")
+
+(defun set-double-click-time (seconds)
+  "Configure the maximum gap (in seconds) for double/triple-click detection."
+  (setf *double-click-ticks* (max 1 (round (* seconds internal-time-units-per-second)))))
 
 (defun pump-input (s timeout)
   "Wait up to TIMEOUT seconds for input, decode it, and queue events.  If a
@@ -242,10 +253,13 @@ mouse button is held with nothing else pending, synthesize ev-mouse-auto."
              (screen-mouse-x s) (point-x p) (screen-mouse-y s) (point-y p))
        (let ((now (get-internal-real-time)))
          (setf (screen-last-auto-time s) now)
-         (when (and (<= (- now (screen-last-click-time s)) +double-click-ticks+)
-                    (= (point-x p) (screen-last-click-x s))
-                    (= (point-y p) (screen-last-click-y s)))
-           (setf (event-double e) t))
+         (if (and (<= (- now (screen-last-click-time s)) *double-click-ticks*)
+                  (= (point-x p) (screen-last-click-x s))
+                  (= (point-y p) (screen-last-click-y s)))
+             (incf (screen-click-count s))
+             (setf (screen-click-count s) 1))
+         (when (>= (screen-click-count s) 2) (setf (event-double e) t))
+         (when (>= (screen-click-count s) 3) (setf (event-triple e) t))
          (setf (screen-last-click-time s) now
                (screen-last-click-x s) (point-x p)
                (screen-last-click-y s) (point-y p))))

@@ -44,33 +44,77 @@
 (defmethod validator-error-message ((v trange-validator))
   (format nil "Enter an integer from ~d to ~d." (range-min v) (range-max v)))
 
-;;; --- TPictureValidator: a simple mask -------------------------------------
-;;; Mask characters: # = digit, ? = letter, & = letter upcased, A = alnum,
-;;; * = any.  Other characters are literals that must match exactly.
+;;; --- TPictureValidator: a Paradox-style picture mask -----------------------
+;;; Class chars: # digit, ? / L letter, & letter, @ / ! any char, A / a
+;;; alphanumeric.  `*' makes the following class repeat zero or more times,
+;;; `;' escapes the next character as a literal; any other char is a literal.
 
 (defclass tpicture-validator (tvalidator)
   ((picture :initarg :picture :initform "" :accessor picture-mask)))
 
 (defun make-picture-validator (mask) (make-instance 'tpicture-validator :picture mask))
 
-(defun %picture-char-ok (m ch)
+(defun %picture-class-char-p (m) (find m "#?&@!AaLl"))
+
+(defun %picture-class-match (m ch)
   (case m
     (#\# (and (digit-char-p ch) t))
-    (#\? (and (alpha-char-p ch) t))
-    (#\& (and (alpha-char-p ch) t))
-    (#\A (and (alphanumericp ch) t))
-    (#\* t)
-    (t (char= m ch))))
+    ((#\? #\L #\l #\& #\?) (and (alpha-char-p ch) t))
+    ((#\A #\a) (and (alphanumericp ch) t))
+    ((#\@ #\!) t)
+    (t nil)))
+
+(defun picture-match (mask string)
+  "Match STRING against picture MASK.  Return :complete, :incomplete, or :error."
+  (let ((mi 0) (si 0) (mlen (length mask)) (slen (length string)))
+    (loop
+      (when (>= mi mlen) (return (if (>= si slen) :complete :error)))
+      (let ((m (char mask mi)))
+        (cond
+          ((char= m #\;)                      ; literal escape
+           (incf mi)
+           (cond ((>= mi mlen) (return :error))
+                 ((>= si slen) (return :incomplete))
+                 ((char= (char string si) (char mask mi)) (incf mi) (incf si))
+                 (t (return :error))))
+          ((char= m #\*)                      ; repeat the following class
+           (incf mi)
+           (when (< mi mlen)
+             (let ((cls (char mask mi)))
+               (incf mi)
+               (loop while (and (< si slen) (%picture-class-match cls (char string si)))
+                     do (incf si)))))
+          ((%picture-class-char-p m)
+           (cond ((>= si slen) (return :incomplete))
+                 ((%picture-class-match m (char string si)) (incf mi) (incf si))
+                 (t (return :error))))
+          (t                                  ; literal
+           (cond ((>= si slen) (return :incomplete))
+                 ((char= (char string si) m) (incf mi) (incf si))
+                 (t (return :error)))))))))
 
 (defmethod is-valid-input ((v tpicture-validator) string)
-  (let ((mask (picture-mask v)))
-    (and (<= (length string) (length mask))
-         (loop for i below (length string)
-               always (%picture-char-ok (char mask i) (char string i))))))
+  (member (picture-match (picture-mask v) string) '(:complete :incomplete)))
 (defmethod is-valid ((v tpicture-validator) string)
-  (let ((mask (picture-mask v)))
-    (and (= (length string) (length mask))
-         (loop for i below (length mask)
-               always (%picture-char-ok (char mask i) (char string i))))))
+  (eq (picture-match (picture-mask v) string) :complete))
 (defmethod validator-error-message ((v tpicture-validator))
   (format nil "Input must match the pattern: ~a" (picture-mask v)))
+
+;;; --- TStringLookupValidator: value must be one of a known set --------------
+
+(defclass tstring-lookup-validator (tvalidator)
+  ((strings :initarg :strings :initform '() :accessor lookup-strings)))
+
+(defun make-string-lookup-validator (strings)
+  (make-instance 'tstring-lookup-validator :strings strings))
+
+(defmethod is-valid-input ((v tstring-lookup-validator) string)
+  ;; accept while STRING is a (case-insensitive) prefix of some valid entry
+  (or (zerop (length string))
+      (some (lambda (e) (and (<= (length string) (length e))
+                             (string-equal e string :end1 (length string))))
+            (lookup-strings v))))
+(defmethod is-valid ((v tstring-lookup-validator) string)
+  (and (member string (lookup-strings v) :test #'string-equal) t))
+(defmethod validator-error-message ((v tstring-lookup-validator))
+  (format nil "Must be one of: ~{~a~^, ~}" (lookup-strings v)))

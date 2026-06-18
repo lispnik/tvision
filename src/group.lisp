@@ -169,15 +169,20 @@ honouring V's grow-mode flags."
 
 (defmethod handle-event ((g tgroup) event)
   (cond
-    ;; positional: route to the topmost selectable view under the pointer
+    ;; positional: route to the topmost visible view under the pointer
+    ;; (any view, not just selectable -- so the menu bar / status line, which
+    ;; are not selectable, still receive clicks, as in Turbo Vision)
     ((mouse-event-p event)
      (let ((target (find-if (lambda (v)
                               (and (visible-p v)
-                                   (logtest (view-options v) +of-selectable+)
+                                   (not (view-disabled-p v))
+                                   (wants-event-p v event)
                                    (mouse-in-view-p v event)))
                             (group-subviews g))))
        (when target
-         (when (mouse-down-p event) (select target))
+         ;; focus the view on a click only if it is selectable
+         (when (and (mouse-down-p event) (logtest (view-options target) +of-selectable+))
+           (select target))
          (handle-event target event))))
     ;; keyboard: pre-process views (menu bar) first, then the focused chain,
     ;; then post-process views (status line)
@@ -185,9 +190,11 @@ honouring V's grow-mode flags."
      (dolist (v (group-subviews g))
        (when (and (not (eq v (group-current g)))
                   (logtest (view-options v) +of-pre-process+)
+                  (wants-event-p v event)
                   (/= (event-type event) +ev-nothing+))
          (handle-event v event)))
-     (when (and (group-current g) (/= (event-type event) +ev-nothing+))
+     (when (and (group-current g) (/= (event-type event) +ev-nothing+)
+                (wants-event-p (group-current g) event))
        (handle-event (group-current g) event))
      ;; Tab / Shift-Tab cycle focus among controls.  Consume them at the
      ;; innermost group that directly holds a leaf control (so the desktop
@@ -203,6 +210,7 @@ honouring V's grow-mode flags."
        (dolist (v (group-subviews g))
          (when (and (not (eq v (group-current g)))
                     (logtest (view-options v) +of-post-process+)
+                    (wants-event-p v event)
                     (/= (event-type event) +ev-nothing+))
            (handle-event v event)))))
     ;; commands / broadcasts: focused view first, then everyone
