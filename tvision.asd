@@ -18,6 +18,7 @@
                              (:file "draw-buffer")
                              (:file "events")
                              (:file "screen")
+                             (:file "concurrency")
                              (:file "view")
                              (:file "group")
                              (:file "frame")

@@ -138,6 +138,7 @@ reflow the whole view tree."
 A pending terminal resize is serviced first so every loop (main, modal dialog,
 menu tracking) reflows on SIGWINCH."
   (when *resize-pending* (apply-resize app))
+  (drain-ui-callbacks)
   (cond
     ((program-pending app) (pop (program-pending app)))
     (t (when *screen* (pump-input *screen* 0.02))
@@ -273,6 +274,7 @@ resumes -- mirroring Turbo Vision's execView/valid contract."
   (install-resize-handler)
   (set-bounds app (make-trect 0 0 (screen-width s) (screen-height s)))
   (setf (view-state app) (logior (view-state app) +sf-focused+ +sf-selected+))
+  (install-ui-wakeup)
   (init-menu-bar app)
   (init-desktop app)
   (init-status-line app)
@@ -287,6 +289,8 @@ resumes -- mirroring Turbo Vision's execView/valid contract."
            (progn
              (init-application app s)
              (modal-loop app))
+        (shutdown-background-threads)
+        (remove-ui-wakeup)
         (setf *application* nil)))))
 
 (defun program-loop (&optional (app *application*)) (modal-loop app))

@@ -16,6 +16,7 @@
 (defparameter +cm-inspect+  304)
 (defparameter +cm-load+     305)
 (defparameter +cm-savetx+   306)
+(defparameter +cm-interrupt+ 307)
 
 (defparameter +hc-repl+ 1)
 
@@ -44,7 +45,8 @@
       (menu-item "~C~opy"       +cm-copy+  :key-text "Ctrl-C")
       (menu-item "~P~aste"      +cm-paste+ :key-text "Ctrl-V")
       (menu-separator)
-      (menu-item "~I~nspect *"  +cm-inspect+ :key-code +kb-f8+ :key-text "F8")))
+      (menu-item "~I~nspect *"     +cm-inspect+   :key-code +kb-f8+ :key-text "F8")
+      (menu-item "I~n~terrupt eval" +cm-interrupt+ :key-text "Ctrl-C")))
    (sub-menu "~W~indow"
      (new-menu
       (menu-item "~N~ext"    +cm-next+    :key-code +kb-f6+ :key-text "F6")
@@ -83,7 +85,17 @@
 
 ;;; --- command dispatch ------------------------------------------------------
 
+(defparameter +kb-ctrl-c+ 3)
+
 (defmethod handle-event ((app tvlisp-app) event)
+  ;; Ctrl-C interrupts the running evaluation -- map it to the command before
+  ;; the text view can swallow it.
+  (when (and (= (event-type event) +ev-key-down+)
+             (= (event-key-code event) +kb-ctrl-c+))
+    (let ((rv (current-repl app)))
+      (when (and rv (repl-busy rv))
+        (repl-interrupt rv)
+        (clear-event event))))
   (call-next-method)
   (when (= (event-type event) +ev-command+)
     (let ((c (event-command event))
@@ -98,6 +110,8 @@
           ((= c +cm-inspect+)
            (when rv (repl-inspect (symbol-value (intern "*" (repl-package rv))) "*"))
            (clear-event event))
+          ((= c +cm-interrupt+)
+           (when rv (repl-interrupt rv)) (clear-event event))
           ((= c +cm-load+)
            (let ((path (file-open-dialog :title "Load Lisp file")))
              (when (and rv path) (repl-load-file rv path) (focus rv)))

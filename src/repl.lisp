@@ -16,6 +16,11 @@
   "When true, an error during REPL evaluation opens a restart menu (like the
 SLIME/micros debugger); when nil, the error is just reported and aborted.")
 
+(defvar *repl-async* t
+  "When true (and a UI loop is running), each REPL evaluates on its own worker
+thread so the UI never blocks and output streams in live.  When nil, evaluation
+runs inline on the UI thread (used by headless tests).")
+
 (defun ensure-repl-package ()
   (or (find-package :tv-repl-user)
       (make-package :tv-repl-user :use '(:common-lisp) :nicknames '("REPL"))))
@@ -104,7 +109,11 @@ with the condition inside HANDLER-BIND (it must transfer control).  Return
   ((package      :initarg :package :initform nil :accessor repl-package)
    (history      :initform '() :accessor repl-history)      ; most-recent first
    (hist-pos     :initform nil :accessor repl-hist-pos)
-   (history-file :initarg :history-file :initform nil :accessor repl-history-file)))
+   (history-file :initarg :history-file :initform nil :accessor repl-history-file)
+   ;; --- background evaluation (one worker thread per listener) ---
+   (worker       :initform nil :accessor repl-worker)       ; sb-thread:thread
+   (to-worker    :initform nil :accessor repl-to-worker)    ; mailbox of jobs
+   (busy         :initform nil :accessor repl-busy)))        ; eval in flight?
 
 (defmethod initialize-instance :after ((r trepl-view) &key)
   (unless (repl-package r) (setf (repl-package r) (ensure-repl-package)))
@@ -168,11 +177,11 @@ with the condition inside HANDLER-BIND (it must transfer control).  Return
 
 ;;; --- restart menu (the micros/SLIME debugger feel) -------------------------
 
-(defun repl-pick-restart (condition)
-  "Show the available restarts for CONDITION; return the chosen restart or NIL."
-  (when (and *repl-debugger* *application*)
-    (let* ((restarts (compute-restarts condition))
-           (labels (mapcar (lambda (rs) (format nil "~a" rs)) restarts))
+(defun repl-restart-dialog (condition restarts)
+  "UI-thread only: show RESTARTS for CONDITION; return the chosen index or NIL.
+Safe to call while a worker thread is blocked waiting for the answer."
+  (when (and *application* restarts)
+    (let* ((labels (mapcar (lambda (rs) (format nil "~a" rs)) restarts))
            (desk (program-desktop *application*))
            (w 64) (h 17)
            (d (make-instance 'tdialog :title "Error — pick a restart"
@@ -189,11 +198,18 @@ with the condition inside HANDLER-BIND (it must transfer control).  Return
       (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
                (max 0 (floor (- (point-y (view-size desk)) h) 2)))
       (focus lb)
-      (when (and (= (exec-view desk d) +cm-ok+) restarts)
-        (nth (list-focused lb) restarts)))))
+      (when (= (exec-view desk d) +cm-ok+) (list-focused lb)))))
+
+(defun repl-pick-restart (condition)
+  "Show the available restarts for CONDITION; return the chosen restart or NIL.
+Used by the synchronous (inline) evaluation path."
+  (when *repl-debugger*
+    (let* ((restarts (compute-restarts condition))
+           (idx (repl-restart-dialog condition restarts)))
+      (and idx (nth idx restarts)))))
 
 (defun repl-error-handler (e)
-  "HANDLER-BIND handler: offer restarts, then transfer control accordingly."
+  "HANDLER-BIND handler (inline path): offer restarts, then transfer control."
   (let ((chosen (repl-pick-restart e)))
     (invoke-restart (or chosen (find-restart 'repl-abort)))))
 
@@ -205,29 +221,191 @@ with the condition inside HANDLER-BIND (it must transfer control).  Return
     (setf (repl-package r) new-package)        ; sticky in-package
     (values output results errored)))
 
+(defun repl-print-results (r results)
+  (if results
+      (dolist (vals results)
+        (if vals
+            (dolist (v vals) (repl-print r (format nil "~s~%" v)))
+            (repl-print r (format nil "; No values~%"))))
+      (repl-print r (format nil "; No values~%"))))
+
+(defun repl-submit (r input)
+  "Record INPUT in history and start evaluating it -- on the worker thread when
+async is enabled and a UI loop is running, otherwise inline."
+  (push (string-trim '(#\Space #\Tab #\Newline #\Return) input) (repl-history r))
+  (setf (repl-hist-pos r) nil)
+  (when (repl-history-file r) (save-repl-history r))
+  (append-text r (string #\Newline))
+  (cond
+    ((and *repl-async* *ui-callbacks*)
+     (setf (repl-busy r) t)
+     (repl-ensure-worker r)
+     (mailbox-send (repl-to-worker r) (cons :eval input)))
+    (t                                   ; synchronous fallback
+     (multiple-value-bind (output results errored) (repl-eval r input)
+       (when (plusp (length output))
+         (repl-print r output) (repl-ensure-fresh-line r))
+       (unless errored (repl-print-results r results))
+       (repl-fresh-prompt r)))))
+
 (defmethod text-return ((r trepl-view))
-  (let ((input (repl-current-input r)))
-    (cond
-      ((string-blank-p input)
-       (append-text r (string #\Newline)) (repl-fresh-prompt r))
-      ((not (input-complete-p input))
-       (split-line-at-cursor r))
-      (t
-       (push (string-trim '(#\Space #\Tab #\Newline #\Return) input) (repl-history r))
-       (setf (repl-hist-pos r) nil)
-       (when (repl-history-file r) (save-repl-history r))
-       (append-text r (string #\Newline))
-       (multiple-value-bind (output results errored) (repl-eval r input)
-         (when (plusp (length output))
-           (repl-print r output) (repl-ensure-fresh-line r))
-         (unless errored
-           (if results
-               (dolist (vals results)
-                 (if vals
-                     (dolist (v vals) (repl-print r (format nil "~s~%" v)))
-                     (repl-print r (format nil "; No values~%"))))
-               (repl-print r (format nil "; No values~%"))))
-         (repl-fresh-prompt r))))))
+  (cond
+    ((repl-busy r) (call-next-method))   ; evaluating: Enter just inserts a newline
+    (t (let ((input (repl-current-input r)))
+         (cond
+           ((string-blank-p input)
+            (append-text r (string #\Newline)) (repl-fresh-prompt r))
+           ((not (input-complete-p input))
+            (split-line-at-cursor r))
+           (t (repl-submit r input)))))))
+
+;;; ===========================================================================
+;;; Background evaluation: one worker thread per listener (the SLIME/Lem model)
+;;; ===========================================================================
+;;;
+;;; The worker evaluates Lisp while the UI thread keeps running.  It NEVER
+;;; touches the view directly: output, results, and debugger requests are all
+;;; shipped to the UI thread via RUN-ON-UI.
+
+(defvar *repl-views* '() "All live REPL views, so the app can stop their workers.")
+
+;;; --- a Gray stream that streams worker output to the transcript live --------
+
+(defclass repl-output-stream (sb-gray:fundamental-character-output-stream)
+  ((view   :initarg :view :reader ros-view)
+   (buffer :initform (make-string-output-stream) :reader ros-buffer)))
+
+(defun ros-flush (s)
+  (let ((chunk (get-output-stream-string (ros-buffer s))))
+    (when (plusp (length chunk))
+      (let ((r (ros-view s)))
+        (run-on-ui (lambda () (repl-stream-output r chunk)))))))
+
+(defmethod sb-gray:stream-write-char ((s repl-output-stream) ch)
+  (write-char ch (ros-buffer s))
+  (when (char= ch #\Newline) (ros-flush s))
+  ch)
+
+(defmethod sb-gray:stream-write-string ((s repl-output-stream) string &optional (start 0) end)
+  (let ((end (or end (length string))))
+    (write-string string (ros-buffer s) :start start :end end)
+    (when (find #\Newline string :start start :end end) (ros-flush s)))
+  string)
+
+(defmethod sb-gray:stream-line-column ((s repl-output-stream)) nil)
+(defmethod sb-gray:stream-finish-output ((s repl-output-stream)) (ros-flush s))
+(defmethod sb-gray:stream-force-output ((s repl-output-stream)) (ros-flush s))
+
+(defun repl-stream-output (r chunk)
+  "UI thread: append a chunk of worker output to the transcript and redraw."
+  (append-text r chunk)
+  (ensure-visible r)
+  (draw-view r)
+  (when *screen* (flush-screen *screen*)))
+
+;;; --- the worker thread ------------------------------------------------------
+
+(defun repl-ensure-worker (r)
+  "Start R's evaluation thread if it isn't already running."
+  (unless (repl-to-worker r) (setf (repl-to-worker r) (make-mailbox)))
+  (unless (and (repl-worker r) (sb-thread:thread-alive-p (repl-worker r)))
+    (pushnew r *repl-views*)
+    (setf *background-shutdown-hook* #'shutdown-repl-workers)
+    (setf (repl-worker r)
+          (sb-thread:make-thread (lambda () (repl-worker-loop r))
+                                 :name "tvision-repl-worker"))))
+
+(defun repl-worker-loop (r)
+  (catch 'repl-worker-quit
+    (let ((*package* (repl-package r))
+          (*read-eval* t))
+      (loop
+        (let ((job (mailbox-receive (repl-to-worker r))))
+          (case (car job)
+            (:quit (throw 'repl-worker-quit nil))
+            (:eval (repl-worker-eval r (cdr job)))))))))
+
+(defun repl-worker-debug (r condition)
+  "Worker thread, inside HANDLER-BIND: ask the UI thread to show the restart
+menu, block for the choice, then invoke the chosen restart here (so the live
+stack/dynamic extent of the error is intact).  Never returns normally."
+  (declare (ignore r))
+  (let ((restarts (compute-restarts condition)))
+    (if (and *repl-debugger* *ui-callbacks*)
+        (let ((sem (sb-thread:make-semaphore)) (choice (list nil)))
+          (run-on-ui (lambda ()
+                       (setf (car choice) (repl-restart-dialog condition restarts))
+                       (sb-thread:signal-semaphore sem)))
+          (sb-thread:wait-on-semaphore sem)
+          (let ((idx (car choice)))
+            (invoke-restart (if (and idx (nth idx restarts))
+                                (nth idx restarts)
+                                (find-restart 'repl-abort)))))
+        (invoke-restart (find-restart 'repl-abort)))))
+
+(defun repl-worker-eval (r input)
+  "Worker thread: read+eval all forms in INPUT, streaming output to the UI and
+routing errors through the cross-thread debugger.  Posts the final results back
+to the UI thread."
+  (let ((out (make-instance 'repl-output-stream :view r))
+        (results '()) (errored nil) (last nil))
+    (let ((*standard-output* out) (*error-output* out) (*trace-output* out)
+          (*package* (repl-package r)))
+      (unwind-protect
+           (restart-case
+               (handler-bind ((error (lambda (e) (setf last e) (repl-worker-debug r e))))
+                 (with-input-from-string (in input)
+                   (loop for form = (read in nil :repl-eof)
+                         until (eq form :repl-eof)
+                         do (setf - form)
+                            (let ((vals (multiple-value-list (eval form))))
+                              (push vals results)
+                              (setf +++ ++  ++ +  + form
+                                    /// //  // /  / vals
+                                    *** **  ** *  * (first vals))))))
+             (repl-abort () (setf errored t)))
+        (finish-output out))
+      (let ((results (nreverse results)) (pkg *package*)
+            (errored errored) (last last))
+        (run-on-ui (lambda () (repl-finish-eval r results pkg errored last)))))))
+
+(defun repl-finish-eval (r results pkg errored last)
+  "UI thread: print results/error summary and re-prompt after a worker eval."
+  (setf (repl-package r) pkg)            ; sticky in-package
+  (repl-ensure-fresh-line r)
+  (cond
+    ((and errored last)
+     (repl-print r (format nil "; ~(~a~): ~a~%" (type-of last) last)))
+    ((not errored) (repl-print-results r results)))
+  (setf (repl-busy r) nil)
+  (repl-fresh-prompt r)
+  (draw-view r)
+  (when *screen* (flush-screen *screen*)))
+
+;;; --- interrupt + shutdown ---------------------------------------------------
+
+(defun repl-interrupt (r)
+  "Interrupt R's in-flight evaluation (Ctrl-C / menu): unwind it to a fresh
+prompt.  No-op when nothing is running."
+  (let ((th (repl-worker r)))
+    (when (and th (sb-thread:thread-alive-p th) (repl-busy r))
+      (ignore-errors
+       (sb-thread:interrupt-thread
+        th (lambda ()
+             (let ((rs (find-restart 'repl-abort)))
+               (when rs (invoke-restart rs)))))))))
+
+(defun repl-stop-worker (r)
+  (let ((th (repl-worker r)))
+    (when (and th (sb-thread:thread-alive-p th))
+      (ignore-errors (mailbox-send (repl-to-worker r) (cons :quit nil)))
+      (ignore-errors
+       (sb-thread:interrupt-thread th (lambda () (throw 'repl-worker-quit nil)))))
+    (setf (repl-worker r) nil)))
+
+(defun shutdown-repl-workers ()
+  (dolist (r *repl-views*) (repl-stop-worker r))
+  (setf *repl-views* '()))
 
 ;;; --- tab completion --------------------------------------------------------
 
@@ -384,6 +562,10 @@ candidate list when several remain."
         (focused (logtest (view-state r) +sf-focused+))
         (plain (zerop (event-modifiers event))))
     (cond
+      ;; While a worker is evaluating, the buffer is read-only: swallow typing
+      ;; (Ctrl-C / the Interrupt command still reach the app to abort the eval).
+      ((and (repl-busy r) (= (event-type event) +ev-key-down+) focused)
+       (clear-event event))
       ((and (= (event-type event) +ev-key-down+) focused plain (= k +kb-tab+)
             (can-edit-here-p r))
        (repl-complete r) (clear-event event))

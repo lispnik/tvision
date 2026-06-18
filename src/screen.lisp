@@ -225,24 +225,33 @@ silently ignored, which lets views draw without bounds-checking."
   "Configure the maximum gap (in seconds) for double/triple-click detection."
   (setf *double-click-ticks* (max 1 (round (* seconds internal-time-units-per-second)))))
 
+(defvar *input-multiplexer* nil
+  "When set (by the concurrency layer), a function (TIMEOUT) -> :FD0 | NIL that
+waits for terminal input OR a worker-thread wakeup, so background evaluation can
+wake the UI loop instantly.  When NIL, PUMP-INPUT just polls fd 0 directly.")
+
+(defun %auto-repeat (s)
+  "No new input, but a mouse button is held -> synthesize ev-mouse-auto."
+  (when (plusp (screen-mouse-buttons s))
+    (let ((now (get-internal-real-time)))
+      (when (>= (- now (screen-last-auto-time s)) +auto-repeat-ticks+)
+        (setf (screen-last-auto-time s) now)
+        (setf (screen-event-queue s)
+              (nconc (screen-event-queue s)
+                     (list (make-event :type +ev-mouse-auto+
+                                       :mouse-buttons (screen-mouse-buttons s)
+                                       :mouse-where (make-tpoint (screen-mouse-x s)
+                                                                 (screen-mouse-y s))))))))))
+
 (defun pump-input (s timeout)
   "Wait up to TIMEOUT seconds for input, decode it, and queue events.  If a
 mouse button is held with nothing else pending, synthesize ev-mouse-auto."
-  (cond
-    ((sb-sys:wait-until-fd-usable 0 :input timeout nil)
-     (%read-available s)
-     (decode-input s))
-    ((plusp (screen-mouse-buttons s))
-     ;; no new input, but a button is down -> auto-repeat
-     (let ((now (get-internal-real-time)))
-       (when (>= (- now (screen-last-auto-time s)) +auto-repeat-ticks+)
-         (setf (screen-last-auto-time s) now)
-         (setf (screen-event-queue s)
-               (nconc (screen-event-queue s)
-                      (list (make-event :type +ev-mouse-auto+
-                                        :mouse-buttons (screen-mouse-buttons s)
-                                        :mouse-where (make-tpoint (screen-mouse-x s)
-                                                                  (screen-mouse-y s)))))))))))
+  (let ((ready (if *input-multiplexer*
+                   (funcall *input-multiplexer* timeout)
+                   (and (sb-sys:wait-until-fd-usable 0 :input timeout nil) :fd0))))
+    (cond
+      ((eq ready :fd0) (%read-available s) (decode-input s))
+      (t (%auto-repeat s)))))
 
 (defun %update-mouse-state (s e)
   "Track button state for auto-repeat, and tag double-clicks."

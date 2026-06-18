@@ -84,6 +84,15 @@ the running TUI *is* the Lisp image being driven:
   `~/.tvlisp_history` across sessions; Up/Down recall it. `F7` (File ▸ Load
   file) loads a `.lisp` file with captured output, and File ▸ Save transcript
   writes the whole REPL buffer to a file.
+- **Threaded evaluation (one worker thread per listener)** — each REPL evaluates
+  on its own `sb-thread` worker, so the UI never freezes: output streams into
+  the transcript live as it is produced, multiple REPL windows run concurrently,
+  and a long/infinite computation can be aborted with **Ctrl-C** (Edit ▸
+  Interrupt eval). The cross-thread debugger is the SLIME/Lem model — an error
+  on the worker pops the restart dialog on the UI thread while the worker
+  blocks, then the chosen restart is invoked back on the worker's own stack.
+  (See *Background evaluation* below; set `*repl-async*` to nil to force inline
+  evaluation.)
 
 ```sh
 make tvlisp && ./tvlisp
@@ -162,6 +171,7 @@ recognisable part of the original framework:
 | `src/draw-buffer.lisp` | `TDrawBuffer`           | a run of `char+attribute` cells |
 | `src/events.lisp`      | `TEvent`, key/command codes | event record and constants |
 | `src/screen.lisp`      | `THardwareInfo`/`TScreen` | raw mode, alternate screen, diff-based ANSI rendering, input decoding (keys + SGR mouse) |
+| `src/concurrency.lisp` | (new)                   | `sb-thread` mailbox + worker→UI callback queue and self-pipe wakeup (lets background threads drive the single-threaded UI loop) |
 | `src/view.lisp`        | `TView`                 | base class: geometry, state, palette mapping, clipped drawing, events |
 | `src/group.lisp`       | `TGroup`                | subview ownership, Z-order, focus, event dispatch, modal exec |
 | `src/frame.lisp`       | `TFrame`                | window borders, title, close/zoom icons |

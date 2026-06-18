@@ -135,12 +135,17 @@
    #:tresource-file #:make-resource-file #:resource-put #:resource-get
    #:resource-names #:resource-put-object #:resource-get-object
    #:save-resource-file #:load-resource-file
+   ;; concurrency / worker->UI bridge
+   #:make-mailbox #:mailbox-send #:mailbox-receive #:mailbox-try-receive
+   #:run-on-ui #:drain-ui-callbacks #:install-ui-wakeup #:remove-ui-wakeup
+   #:*ui-callbacks* #:*input-multiplexer* #:shutdown-background-threads
    ;; repl
    #:trepl-view #:make-repl-window #:repl-eval #:repl-package #:repl-print
    #:ensure-repl-package #:repl-clear #:repl-history #:repl-history-file
    #:repl-complete #:repl-inspect #:object->outline #:repl-load-file
    #:save-repl-history #:load-repl-history #:*repl-debugger* #:popup-list
    #:repl-backend-completions #:repl-backend-eval #:longest-common-prefix
+   #:*repl-async* #:repl-busy #:repl-interrupt #:repl-worker #:repl-submit
    ;; menu
    #:tmenu-bar #:menu #:menu-item #:new-menu #:sub-menu #:menu-separator
    #:menu-items #:menu-bar-menu #:track-menu #:application-menu #:init-menu-bar
