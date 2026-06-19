@@ -63,6 +63,7 @@
 (defparameter +cm-bhistory+    342)
 (defparameter +cm-hslookup+    343)
 (defparameter +cm-pick-inspect+ 344)   ; "Inspect" button in a list picker
+(defparameter +cm-winlist+     345)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -142,6 +143,7 @@
       (menu-item "~A~uto-close parens" +cm-autoclose+)))
    (sub-menu "~W~indow"
      (new-menu
+      (menu-item "~L~ist..." +cm-winlist+ :key-text "Alt-0")
       (menu-item "~N~ext"    +cm-next+    :key-code +kb-f6+ :key-text "F6")
       (menu-item "~T~ile"    +cm-tile+    :key-code +kb-f4+ :key-text "F4")
       (menu-item "~C~ascade" +cm-cascade+ :key-code +kb-f5+ :key-text "F5")
@@ -720,6 +722,20 @@ Returns (values selected-item end-command)."
               ((eql cmd +cm-pick-inspect+)
                (repl-inspect p (format nil "package ~a" (package-name p)))))))))
 
+(defun do-window-list (app)
+  "Pop up a list of every open window (Alt-0); Enter/OK raises and focuses it."
+  (let* ((desk (program-desktop app))
+         (wins (remove-if-not (lambda (v) (typep v 'twindow)) (desktop-windows desk)))
+         (cur (group-current desk)))
+    (if (null wins)
+        (message-box "No windows are open." (logior +mf-information+ +mf-ok-button+))
+        (let* ((labels (loop for w in wins
+                             for n = (window-number w)
+                             collect (format nil "~:[  ~;> ~]~@[~d. ~]~a"
+                                             (eq w cur) (and (plusp n) n) (window-title w))))
+               (sel (choose-index "Window list" labels :start (max 0 (or (position cur wins) 0)))))
+          (when sel (set-current desk (nth sel wins) :normal-select))))))
+
 (defun do-systems ()
   (let ((chosen (choose-from-list "ASDF Systems"
                                   (sort (copy-list (asdf:registered-systems)) #'string<))))
@@ -1219,6 +1235,11 @@ run a form, and show the call-count/time report."
 ;;; --- event dispatch --------------------------------------------------------
 
 (defmethod handle-event ((app tvlisp-app) event)
+  ;; Alt-0 -> Window list, from anywhere
+  (when (and (= (event-type event) +ev-key-down+)
+             (logtest (event-modifiers event) +md-alt+)
+             (= (event-char-code event) (char-code #\0)))
+    (do-window-list app) (clear-event event))
   ;; Ctrl-keys handled before the text view swallows them -- but NOT when a
   ;; browser window is focused, so it can claim Ctrl-B/F/R for navigation.
   (when (and (= (event-type event) +ev-key-down+)
@@ -1266,6 +1287,7 @@ run a form, and show the call-count/time report."
           ((= c +cm-disassemble+) (do-disassemble rv) (clear-event event))
           ((= c +cm-apropos+)     (do-apropos rv) (clear-event event))
           ((= c +cm-classes+)     (do-classes rv app) (clear-event event))
+          ((= c +cm-winlist+)     (do-window-list app) (clear-event event))
           ((= c +cm-gotodef+)     (do-goto-definition rv app) (clear-event event))
           ((= c +cm-funcbrowser+) (do-function-browser rv app) (clear-event event))
           ((= c +cm-browse+)      (do-browse app) (clear-event event))
