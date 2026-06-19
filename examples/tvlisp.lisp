@@ -361,7 +361,7 @@ on START) or NIL on cancel.  Enter or OK selects."
 
 (defun hw-set-title (w)
   (setf (window-title w)
-        (format nil "~a  [Bksp/Alt-< back  Alt-> fwd  ^R reload]"
+        (format nil "~a  [^B/Bksp back  ^F fwd  ^R reload]"
                 (%location-title (hw-base w)))))
 
 (defun hw-go (w loc &key (record t))
@@ -431,9 +431,12 @@ around it."
      (let ((k (event-key-code event))
            (alt (logtest (event-modifiers event) +md-alt+)))
        (cond
-         ((or (= k +kb-back+) (and alt (= k +kb-left+)))  (hw-back w) (clear-event event))
-         ((and alt (= k +kb-right+))                      (hw-forward w) (clear-event event))
-         ((= (event-char-code event) 18)                 (hw-reload w) (clear-event event)) ; Ctrl-R
+         ;; Ctrl-B / Backspace / Alt-Left -> Back
+         ((or (= k 2) (= k +kb-back+) (and alt (= k +kb-left+)))  (hw-back w) (clear-event event))
+         ;; Ctrl-F / Alt-Right -> Forward
+         ((or (= k 6) (and alt (= k +kb-right+)))                 (hw-forward w) (clear-event event))
+         ;; Ctrl-R -> Reload
+         ((= k 18)                                                (hw-reload w) (clear-event event))
          (t (call-next-method)))))
     (t (call-next-method))))
 
@@ -1071,8 +1074,10 @@ run a form, and show the call-count/time report."
 ;;; --- event dispatch --------------------------------------------------------
 
 (defmethod handle-event ((app tvlisp-app) event)
-  ;; Ctrl-keys handled before the text view swallows them.
-  (when (= (event-type event) +ev-key-down+)
+  ;; Ctrl-keys handled before the text view swallows them -- but NOT when a
+  ;; browser window is focused, so it can claim Ctrl-B/F/R for navigation.
+  (when (and (= (event-type event) +ev-key-down+)
+             (not (typep (group-current (program-desktop app)) 'thtml-window)))
     (let ((k (event-key-code event)))
       (cond
         ((= k +kb-ctrl-c+)
