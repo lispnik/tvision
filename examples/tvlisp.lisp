@@ -332,30 +332,55 @@
       (if (and slash (< (1+ slash) (length s))) (subseq s (1+ slash)) s))))
 
 (defclass thtml-window (twindow)
-  ((view    :initform nil :accessor hw-view)
-   (base    :initform "" :accessor hw-base)
-   (history :initform '() :accessor hw-history)))
+  ((view :initform nil :accessor hw-view)
+   (base :initform "" :accessor hw-base)
+   (back :initform '() :accessor hw-back-stack)    ; pages behind the current one
+   (fwd  :initform '() :accessor hw-fwd-stack)))   ; pages ahead (after going Back)
 
 (defun hw-load (loc) (if (%url-p loc) (%http-get loc) (%read-file-string loc)))
 
+(defun hw-set-title (w)
+  (setf (window-title w)
+        (format nil "~a  [Bksp/Alt-< back  Alt-> fwd  ^R reload]"
+                (%location-title (hw-base w)))))
+
 (defun hw-go (w loc &key (record t))
-  "Load LOC into the window; push the previous page onto the Back history."
+  "Load LOC into the window.  When RECORD, treat it as fresh navigation: push
+the current page onto the Back stack and drop the Forward stack.  Return T on
+a successful load."
   (let ((content (hw-load loc)))
-    (if content
-        (progn
-          (when (and record (plusp (length (hw-base w))))
-            (push (hw-base w) (hw-history w)))
-          (setf (hw-base w) loc
-                (window-title w) (%location-title loc))
-          (set-html (hw-view w) content)
-          (focus (hw-view w))
-          (draw-view w))
-        (message-box (format nil "Could not load:~%~a" loc)
-                     (logior +mf-error+ +mf-ok-button+)))))
+    (cond
+      (content
+       (when (and record (plusp (length (hw-base w))))
+         (push (hw-base w) (hw-back-stack w))
+         (setf (hw-fwd-stack w) '()))
+       (setf (hw-base w) loc)
+       (hw-set-title w)
+       (set-html (hw-view w) content)
+       (focus (hw-view w))
+       (draw-view w)
+       t)
+      (t (message-box (format nil "Could not load:~%~a" loc)
+                      (logior +mf-error+ +mf-ok-button+))
+         nil))))
 
 (defun hw-back (w)
-  (when (hw-history w)
-    (hw-go w (pop (hw-history w)) :record nil)))
+  "Go to the previous page, remembering the current one for Forward."
+  (when (hw-back-stack w)
+    (let ((target (pop (hw-back-stack w))) (cur (hw-base w)))
+      (when (hw-go w target :record nil)
+        (push cur (hw-fwd-stack w))))))
+
+(defun hw-forward (w)
+  "Go to the next page (undo a Back), remembering the current one for Back."
+  (when (hw-fwd-stack w)
+    (let ((target (pop (hw-fwd-stack w))) (cur (hw-base w)))
+      (when (hw-go w target :record nil)
+        (push cur (hw-back-stack w))))))
+
+(defun hw-reload (w)
+  (when (plusp (length (hw-base w)))
+    (hw-go w (hw-base w) :record nil)))
 
 (defmethod handle-event ((w thtml-window) event)
   (cond
@@ -365,9 +390,14 @@
      (let ((href (html-current-href (hw-view w))))
        (when href (hw-go w (%resolve-location (hw-base w) href))))
      (clear-event event))
-    ((and (= (event-type event) +ev-key-down+)
-          (= (event-key-code event) +kb-back+))
-     (hw-back w) (clear-event event))
+    ((= (event-type event) +ev-key-down+)
+     (let ((k (event-key-code event))
+           (alt (logtest (event-modifiers event) +md-alt+)))
+       (cond
+         ((or (= k +kb-back+) (and alt (= k +kb-left+)))  (hw-back w) (clear-event event))
+         ((and alt (= k +kb-right+))                      (hw-forward w) (clear-event event))
+         ((= (event-char-code event) 18)                 (hw-reload w) (clear-event event)) ; Ctrl-R
+         (t (call-next-method)))))
     (t (call-next-method))))
 
 (defun open-html-window (app loc)
