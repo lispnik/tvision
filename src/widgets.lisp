@@ -99,6 +99,13 @@
   (draw-view b)
   (put-event b (make-event :type +ev-command+ :command (button-command b) :info b)))
 
+(defun button-hotkey (b)
+  "The button's Alt-mnemonic character (the one marked with ~ in its title),
+downcased, or NIL."
+  (let* ((title (or (button-title b) "")) (p (position #\~ title)))
+    (when (and p (< (1+ p) (length title)))
+      (char-downcase (char title (1+ p))))))
+
 (defmethod handle-event ((b tbutton) event)
   (when (command-enabled-p (button-command b))
     (cond
@@ -113,6 +120,13 @@
             (press-button b) (clear-event event))
            ;; Space presses the focused button
            ((and (= ch +kb-space+) (logtest (view-state b) +sf-focused+))
+            (press-button b) (clear-event event))
+           ;; Alt-<mnemonic> presses the button from anywhere (buttons are
+           ;; pre/post-process views, so they see this even when unfocused)
+           ((and (logtest (event-modifiers event) +md-alt+)
+                 (plusp ch)
+                 (let ((hk (button-hotkey b)))
+                   (and hk (char-equal (code-char ch) hk))))
             (press-button b) (clear-event event))))))))
 
 ;;; ===========================================================================

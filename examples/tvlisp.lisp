@@ -62,7 +62,7 @@
 (defparameter +cm-browse+      341)
 (defparameter +cm-bhistory+    342)
 (defparameter +cm-hslookup+    343)
-(defparameter +cm-inspect-pkg+ 344)
+(defparameter +cm-pick-inspect+ 344)   ; "Inspect" button in a list picker
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -670,17 +670,38 @@ current line)."
       (handler-case (repl-inspect (eval (read-in rv s)) s)
         (error (e) (err-box e))))))
 
-;;; A package picker: Enter/OK switches the listener's current package;
-;;; the Inspect button opens the selected package in an Inspector window.
-(defclass tpackages-dialog (tdialog) ())
+;;; A list picker with three actions -- OK (default), Inspect, Cancel -- used by
+;;; the Packages and Class browsers.  OK / Enter run the primary action on the
+;;; selection; Inspect opens it in an Inspector window.
+(defclass tlist-pick-dialog (tdialog) ())
 
-(defmethod handle-event ((d tpackages-dialog) event)
+(defmethod handle-event ((d tlist-pick-dialog) event)
   (cond
     ((and (= (event-type event) +ev-command+)
-          (= (event-command event) +cm-inspect-pkg+)
+          (= (event-command event) +cm-pick-inspect+)
           (logtest (view-state d) +sf-modal+))
-     (end-modal d +cm-inspect-pkg+) (clear-event event))
+     (end-modal d +cm-pick-inspect+) (clear-event event))
     (t (call-next-method))))
+
+(defun pick-with-inspect (title items &key (ok "~O~K"))
+  "Modal picker over (sorted) ITEMS with OK / Inspect / Cancel buttons.
+Returns (values selected-item end-command)."
+  (when (and *application* items)
+    (let* ((desk (program-desktop *application*))
+           (w 58) (h 18)
+           (d (make-instance 'tlist-pick-dialog :title title :bounds (make-trect 0 0 w h)))
+           (vsb (standard-scrollbar d t))
+           (lb (make-instance 'tsorted-list-box :items items :command +cm-ok+
+                              :bounds (make-trect 1 1 (1- w) (- h 3)))))
+      (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (insert d (make-button (make-trect (- w 42) (- h 3) (- w 30) (- h 1)) ok +cm-ok+ t))
+      (insert d (make-button (make-trect (- w 28) (- h 3) (- w 16) (- h 1)) "~I~nspect" +cm-pick-inspect+))
+      (insert d (make-button (make-trect (- w 14) (- h 3) (- w 4) (- h 1)) "~C~ancel" +cm-cancel+))
+      (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
+               (max 0 (floor (- (point-y (view-size desk)) h) 2)))
+      (focus lb)
+      (let ((cmd (exec-view desk d)))
+        (values (and (plusp (list-count lb)) (list-item lb (list-focused lb))) cmd)))))
 
 (defun pkg-switch (rv p)
   (when (and rv p)
@@ -690,29 +711,14 @@ current line)."
     (draw-view rv)))
 
 (defun do-packages (rv)
-  (when *application*
-    (let* ((names (sort (mapcar #'package-name (list-all-packages)) #'string<))
-           (desk (program-desktop *application*))
-           (w 58) (h 18)
-           (d (make-instance 'tpackages-dialog :title "Packages" :bounds (make-trect 0 0 w h)))
-           (vsb (standard-scrollbar d t))
-           (lb (make-instance 'tsorted-list-box :items names :command +cm-ok+
-                              :bounds (make-trect 1 1 (1- w) (- h 3)))))
-      (insert d lb) (attach-scrollbars lb :vscroll vsb)
-      (insert d (make-button (make-trect (- w 40) (- h 3) (- w 30) (- h 1)) "~O~K" +cm-ok+ t))
-      (insert d (make-button (make-trect (- w 28) (- h 3) (- w 16) (- h 1)) "~I~nspect" +cm-inspect-pkg+))
-      (insert d (make-button (make-trect (- w 14) (- h 3) (- w 4) (- h 1)) "Cancel" +cm-cancel+))
-      (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
-               (max 0 (floor (- (point-y (view-size desk)) h) 2)))
-      (focus lb)
-      (let ((cmd (exec-view desk d)))
-        (when (plusp (list-count lb))
-          (let ((p (find-package (list-item lb (list-focused lb)))))
-            (when p
-              (cond
-                ((= cmd +cm-ok+) (pkg-switch rv p))
-                ((= cmd +cm-inspect-pkg+)
-                 (repl-inspect p (format nil "package ~a" (package-name p))))))))))))
+  (multiple-value-bind (name cmd)
+      (pick-with-inspect "Packages"
+                         (sort (mapcar #'package-name (list-all-packages)) #'string<))
+    (let ((p (and name (find-package name))))
+      (when p
+        (cond ((eql cmd +cm-ok+) (pkg-switch rv p))
+              ((eql cmd +cm-pick-inspect+)
+               (repl-inspect p (format nil "package ~a" (package-name p)))))))))
 
 (defun do-systems ()
   (let ((chosen (choose-from-list "ASDF Systems"
@@ -740,14 +746,33 @@ current line)."
       (setf (outline-node-expanded node) t)
       node)))
 
-(defun do-classes (rv)
-  (let ((s (prompt-line "Class browser" "Class name:")))
-    (when (and rv s)
-      (handler-case
-          (let ((class (find-class (read-in rv s))))
-            (ignore-errors (sb-mop:finalize-inheritance class))
-            (open-outline-window (format nil "Class ~a" s) (list (class-outline class))))
-        (error (e) (err-box e))))))
+(defun class-list ()
+  "Sorted ((name-string . class)) for every class reachable from the class T."
+  (let ((seen (make-hash-table :test 'eq)) (acc '()))
+    (labels ((walk (c)
+               (unless (gethash c seen)
+                 (setf (gethash c seen) t)
+                 (let ((n (class-name c)))
+                   (when (symbolp n) (push (cons (prin1-to-string n) c) acc)))
+                 (dolist (s (ignore-errors (sb-mop:class-direct-subclasses c))) (walk s)))))
+      (walk (find-class t)))
+    (sort (delete-duplicates acc :key #'car :test #'string=) #'string< :key #'car)))
+
+(defun do-classes (rv app)
+  "Browse every class.  OK / Enter jumps to the selected class's definition;
+Inspect opens it in an Inspector window."
+  (let* ((*package* (if rv (repl-package rv) *package*))   ; names as the listener sees them
+         (alist (class-list)))
+    (multiple-value-bind (name cmd)
+        (pick-with-inspect "Classes" (mapcar #'car alist) :ok "~G~oto def")
+      (let ((class (and name (cdr (assoc name alist :test #'string=)))))
+        (when class
+          (cond
+            ((eql cmd +cm-ok+)
+             (handler-case (goto-definition-of app (class-name class)) (error (e) (err-box e))))
+            ((eql cmd +cm-pick-inspect+)
+             (ignore-errors (sb-mop:finalize-inheritance class))
+             (repl-inspect class (format nil "class ~a" name)))))))))
 
 ;;; --- navigation: go-to-definition, cross-reference, function browser -------
 
@@ -1240,7 +1265,7 @@ run a form, and show the call-count/time report."
           ((= c +cm-documentation+) (do-documentation rv) (clear-event event))
           ((= c +cm-disassemble+) (do-disassemble rv) (clear-event event))
           ((= c +cm-apropos+)     (do-apropos rv) (clear-event event))
-          ((= c +cm-classes+)     (do-classes rv) (clear-event event))
+          ((= c +cm-classes+)     (do-classes rv app) (clear-event event))
           ((= c +cm-gotodef+)     (do-goto-definition rv app) (clear-event event))
           ((= c +cm-funcbrowser+) (do-function-browser rv app) (clear-event event))
           ((= c +cm-browse+)      (do-browse app) (clear-event event))

@@ -110,9 +110,12 @@ parked with its stack live:
 - **Macroexpand**, **Describe**, **Documentation**, **Disassemble** — into
   scrollable windows.
 - **Apropos** — type a substring, pick from a type-ahead list, describe it.
-- **Class browser** (super/sub-classes + slots via `sb-mop`), **Package
-  browser** (switch the current package), **ASDF System browser** (load on
-  Enter), **Load buffer** (evaluate an editor window into the REPL).
+- **Class browser** — a type-ahead list of every class; OK / Enter jumps to the
+  selected class's definition, Inspect opens it in the object inspector.
+- **Package browser** — a type-ahead list; OK / Enter switches the listener's
+  current package, Inspect opens the package in the inspector.
+- **ASDF System browser** (load on Enter), **Load buffer** (evaluate an editor
+  window into the REPL).
 - **HyperSpec lookup** — opens the browser on the Common Lisp HyperSpec page
   for the symbol at the cursor (resolved via the HyperSpec's `Map_Sym.txt`);
   prompts, prefilled, when there is no symbol or it is not a standard one.
