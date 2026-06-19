@@ -1,7 +1,9 @@
-;;;; tvlisp.lisp --- A standalone Lisp REPL application built on Turbo Vision.
+;;;; tvlisp.lisp --- A standalone Lisp REPL / mini-IDE built on Turbo Vision.
 ;;;;
-;;;; A focused REPL host: opens a full-window Lisp read-eval-print loop with
-;;;; menus for managing REPL windows, clipboard, and window layout.
+;;;; A focused REPL host with code-intelligence tools: completion, the threaded
+;;;; debugger (restarts + backtrace), an object inspector, apropos/describe/
+;;;; documentation/macroexpand/disassemble windows, package/system/class
+;;;; browsers, transcript search, an editor, theming, and a live status line.
 
 (defpackage #:tvision-tvlisp
   (:use #:common-lisp #:tvision)
@@ -9,63 +11,161 @@
 
 (in-package #:tvision-tvlisp)
 
-(defparameter +cm-new-repl+ 300)
-(defparameter +cm-clear+    301)
-(defparameter +cm-tile+     302)
-(defparameter +cm-cascade+  303)
-(defparameter +cm-inspect+  304)
-(defparameter +cm-load+     305)
-(defparameter +cm-savetx+   306)
-(defparameter +cm-interrupt+ 307)
-(defparameter +cm-threads+   308)
+;; sb-introspect (a contrib) powers the arglist hints; load it at compile time
+;; so the SB-INTROSPECT package exists when this file is read.
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (require :sb-introspect))
+
+;;; --- commands --------------------------------------------------------------
+
+(defparameter +cm-new-repl+    300)
+(defparameter +cm-clear+       301)
+(defparameter +cm-tile+        302)
+(defparameter +cm-cascade+     303)
+(defparameter +cm-inspect+     304)
+(defparameter +cm-load+        305)
+(defparameter +cm-savetx+      306)
+(defparameter +cm-interrupt+   307)
+(defparameter +cm-threads+     308)
+(defparameter +cm-apropos+     310)
+(defparameter +cm-describe+    311)
+(defparameter +cm-documentation+ 312)
+(defparameter +cm-macroexpand+ 313)
+(defparameter +cm-disassemble+ 314)
+(defparameter +cm-inspect-expr+ 315)
+(defparameter +cm-packages+    316)
+(defparameter +cm-systems+     317)
+(defparameter +cm-classes+     318)
+(defparameter +cm-find+        319)
+(defparameter +cm-find-next+   320)
+(defparameter +cm-editor+      321)
+(defparameter +cm-load-buffer+ 322)
+(defparameter +cm-session-save+ 323)
+(defparameter +cm-session-load+ 324)
+(defparameter +cm-theme+       325)
+(defparameter +cm-pprint+      326)
+(defparameter +cm-timing+      327)
+(defparameter +cm-autoclose+   328)
+(defparameter +cm-help+        329)
+(defparameter +cm-histsearch+  330)
 
 (defparameter +hc-repl+ 1)
+(defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
+(defparameter +session-file+ (merge-pathnames ".tvlisp_session" (user-homedir-pathname)))
 
-(defparameter +history-file+
-  (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
+(defparameter +kb-ctrl-c+ 3)
+(defparameter +kb-ctrl-f+ 6)
+(defparameter +kb-ctrl-l+ 12)
+(defparameter +kb-ctrl-r+ 18)
 
 (defclass tvlisp-app (tapplication)
-  ((repl-count :initform 0 :accessor repl-count)))
+  ((repl-count   :initform 0   :accessor repl-count)
+   (find-last    :initform ""  :accessor find-last)
+   (arglist-hint :initform nil :accessor arglist-hint)
+   (auto-close   :initform nil :accessor auto-close)))
 
-;;; --- menu / status ---------------------------------------------------------
+;;; --- menu ------------------------------------------------------------------
 
 (defmethod tvision::application-menu ((app tvlisp-app))
   (new-menu
    (sub-menu "~F~ile"
      (new-menu
-      (menu-item "~N~ew REPL"      +cm-new-repl+ :key-code +kb-f2+ :key-text "F2")
-      (menu-item "~C~lear"         +cm-clear+    :key-code +kb-f3+ :key-text "F3")
+      (menu-item "~N~ew REPL"        +cm-new-repl+ :key-code +kb-f2+ :key-text "F2")
+      (menu-item "~C~lear"           +cm-clear+    :key-code +kb-f3+ :key-text "F3")
       (menu-separator)
-      (menu-item "~L~oad file..."  +cm-load+     :key-code +kb-f7+ :key-text "F7")
+      (menu-item "Open in ~e~ditor..." +cm-editor+)
+      (menu-item "~L~oad file..."    +cm-load+     :key-code +kb-f7+ :key-text "F7")
       (menu-item "Save ~t~ranscript..." +cm-savetx+)
       (menu-separator)
-      (menu-item "E~x~it"          +cm-quit+     :key-code +kb-alt-x+ :key-text "Alt-X")))
+      (menu-item "Save sessio~n~"    +cm-session-save+)
+      (menu-item "Restore sess~i~on" +cm-session-load+)
+      (menu-separator)
+      (menu-item "E~x~it"            +cm-quit+     :key-code +kb-alt-x+ :key-text "Alt-X")))
    (sub-menu "~E~dit"
      (new-menu
       (menu-item "Cu~t~"        +cm-cut+   :key-text "Ctrl-X")
       (menu-item "~C~opy"       +cm-copy+  :key-text "Ctrl-C")
       (menu-item "~P~aste"      +cm-paste+ :key-text "Ctrl-V")
       (menu-separator)
-      (menu-item "~I~nspect *"     +cm-inspect+   :key-code +kb-f8+ :key-text "F8")
+      (menu-item "~F~ind..."    +cm-find+      :key-text "Ctrl-F")
+      (menu-item "Find ~n~ext"  +cm-find-next+ :key-text "Ctrl-L")
+      (menu-item "~H~istory search" +cm-histsearch+ :key-text "Ctrl-R")
+      (menu-separator)
       (menu-item "I~n~terrupt eval" +cm-interrupt+ :key-text "Ctrl-C")))
+   (sub-menu "~L~isp"
+     (new-menu
+      (menu-item "~I~nspect *"        +cm-inspect+ :key-code +kb-f8+ :key-text "F8")
+      (menu-item "Inspect ~e~xpr..."  +cm-inspect-expr+)
+      (menu-separator)
+      (menu-item "~M~acroexpand..."   +cm-macroexpand+)
+      (menu-item "~D~escribe..."      +cm-describe+)
+      (menu-item "Doc~u~mentation..." +cm-documentation+)
+      (menu-item "Dis~a~ssemble..."   +cm-disassemble+)
+      (menu-item "A~p~ropos..."       +cm-apropos+)
+      (menu-separator)
+      (menu-item "~C~lass browser..." +cm-classes+)
+      (menu-item "Pac~k~ages..."      +cm-packages+)
+      (menu-item "~S~ystems..."       +cm-systems+)
+      (menu-item "Load ~b~uffer"      +cm-load-buffer+)))
+   (sub-menu "~O~ptions"
+     (new-menu
+      (menu-item "~T~heme..."          +cm-theme+)
+      (menu-item "~P~retty-print"      +cm-pprint+)
+      (menu-item "Eval t~i~ming"       +cm-timing+)
+      (menu-item "~A~uto-close parens" +cm-autoclose+)))
    (sub-menu "~W~indow"
      (new-menu
       (menu-item "~N~ext"    +cm-next+    :key-code +kb-f6+ :key-text "F6")
       (menu-item "~T~ile"    +cm-tile+    :key-code +kb-f4+ :key-text "F4")
       (menu-item "~C~ascade" +cm-cascade+ :key-code +kb-f5+ :key-text "F5")
       (menu-separator)
-      (menu-item "T~h~reads..." +cm-threads+ :key-code +kb-f9+ :key-text "F9")))))
+      (menu-item "T~h~reads..." +cm-threads+ :key-code +kb-f9+ :key-text "F9")))
+   (sub-menu "~H~elp"
+     (new-menu
+      (menu-item "~H~elp" +cm-help+ :key-code +kb-f1+ :key-text "F1")))))
+
+;;; --- live status line (package | threads | busy, or arglist hint) ----------
+
+(defclass tvlisp-status (tstatus-line) ())
+
+(defmethod draw ((sl tvlisp-status))
+  (call-next-method)
+  (let* ((app *application*)
+         (rv (and app (current-repl app)))
+         (hint (and app (arglist-hint app)))
+         (info (or hint
+                   (format nil "~a | ~d thr~:[~; | busy~]"
+                           (if rv (package-name (repl-package rv)) "-")
+                           (length (sb-thread:list-all-threads))
+                           (and rv (repl-busy rv)))))
+         (w (point-x (view-size sl)))
+         (s (format nil " ~a " info))
+         (s (if (> (length s) w) (subseq s 0 w) s))
+         (x (max 0 (- w (length s))))
+         (c (get-color sl 1))
+         (db (make-draw-buffer (length s))))
+    (db-fill db #\Space c)
+    (db-move-str db 0 s c)
+    (write-line* sl x 0 (length s) 1 db)))
+
+(defmethod tvision::init-status-line ((app tvlisp-app))
+  (let* ((h (point-y (view-size app))) (w (point-x (view-size app)))
+         (sl (make-instance 'tvlisp-status :items (tvision::status-line-items app))))
+    (set-bounds sl (make-trect 0 (1- h) w h))
+    (setf (view-options sl) (logior (view-options sl) +of-post-process+))
+    (setf (program-status-line app) sl)
+    (insert app sl)))
 
 (defmethod tvision::status-line-items ((app tvlisp-app))
   (list (make-status-item "~Alt-X~ Exit" +kb-alt-x+ +cm-quit+)
-        (make-status-item "~F1~ Help"    +kb-f1+ 0)
-        (make-status-item "~F2~ New REPL" +kb-f2+ +cm-new-repl+)
-        (make-status-item "~F3~ Clear"   +kb-f3+ +cm-clear+)
+        (make-status-item "~F1~ Help"    +kb-f1+ +cm-help+)
+        (make-status-item "~F2~ REPL"    +kb-f2+ +cm-new-repl+)
+        (make-status-item "~F8~ Inspect" +kb-f8+ +cm-inspect+)
         (make-status-item "~F10~ Menu"   +kb-f10+ 0)))
 
-;;; --- REPL windows ----------------------------------------------------------
+;;; --- windows ---------------------------------------------------------------
 
-(defun open-repl-window (app &key maximized)
+(defun open-repl-window (app &key maximized (package nil))
   (let* ((desk (program-desktop app))
          (n (incf (repl-count app)))
          (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
@@ -77,6 +177,7 @@
         (make-repl-window bounds :title (format nil "Lisp REPL ~d" n)
                                  :history-file +history-file+)
       (setf (view-help-ctx w) +hc-repl+)
+      (when package (let ((p (find-package package))) (when p (setf (repl-package rv) p))))
       (insert desk w)
       (focus rv)
       rv)))
@@ -86,8 +187,15 @@
     (when (typep w 'twindow)
       (find-if (lambda (v) (typep v 'trepl-view)) (group-subviews w)))))
 
+(defun some-repl (app)
+  "The focused REPL, or any REPL in the desktop."
+  (or (current-repl app)
+      (dolist (w (group-subviews (program-desktop app)))
+        (when (typep w 'twindow)
+          (let ((rv (find-if (lambda (v) (typep v 'trepl-view)) (group-subviews w))))
+            (when rv (return rv)))))))
+
 (defun open-thread-window (app)
-  "Open (or re-focus) the thread monitor."
   (let* ((desk (program-desktop app))
          (existing (first-that desk (lambda (v) (typep v 'tthread-window)))))
     (if existing
@@ -98,30 +206,312 @@
                (ax (max 0 (- dw w 1))) (ay 1))
           (insert desk (make-thread-window (make-trect ax ay (+ ax w) (+ ay h))))))))
 
-;;; --- command dispatch ------------------------------------------------------
+;;; --- prompts / output helpers ----------------------------------------------
 
-(defparameter +kb-ctrl-c+ 3)
+(defun prompt-line (title label &optional (default ""))
+  (multiple-value-bind (cmd s) (input-box title label (or default "") 200)
+    (when (and (= cmd +cm-ok+) (plusp (length (string-trim '(#\Space #\Tab) s)))) s)))
+
+(defun err-box (e)
+  (message-box (format nil "~a" e) (logior +mf-error+ +mf-ok-button+)))
+
+(defun read-in (rv string)
+  (let ((*package* (repl-package rv))) (read-from-string string)))
+
+(defun choose-from-list (title items &key (w 56) (h 18))
+  "Modal sorted (type-ahead) picker; return the chosen string or NIL."
+  (when (and *application* items)
+    (let* ((desk (program-desktop *application*))
+           (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
+           (vsb (standard-scrollbar d t))
+           (lb (make-instance 'tsorted-list-box :items items :command +cm-ok+
+                              :bounds (make-trect 1 1 (1- w) (- h 3)))))
+      (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (insert d (make-button (make-trect (- w 24) (- h 3) (- w 14) (- h 1)) "~O~K" +cm-ok+ t))
+      (insert d (make-button (make-trect (- w 12) (- h 3) (- w 2) (- h 1)) "Cancel" +cm-cancel+))
+      (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
+               (max 0 (floor (- (point-y (view-size desk)) h) 2)))
+      (focus lb)
+      (when (and (= (exec-view desk d) +cm-ok+) (plusp (list-count lb)))
+        (list-item lb (list-focused lb))))))
+
+(defun open-outline-window (title roots)
+  (let* ((desk (program-desktop *application*))
+         (w (make-instance 'twindow :title title :bounds (make-trect 4 2 64 22)))
+         (vsb (standard-scrollbar w t))
+         (ol (make-instance 'toutline :roots roots
+                            :bounds (make-trect 1 1 (1- (point-x (view-size w)))
+                                                (1- (point-y (view-size w)))))))
+    (insert w ol) (attach-scrollbars ol :vscroll vsb)
+    (insert desk w) (focus ol)
+    ol))
+
+;;; --- Lisp tools ------------------------------------------------------------
+
+(defun do-macroexpand (rv)
+  (let ((s (prompt-line "Macroexpand" "Form:")))
+    (when (and rv s)
+      (handler-case
+          (let ((*print-pretty* t))
+            (show-text-window "Macroexpand-1" (prin1-to-string (macroexpand-1 (read-in rv s)))))
+        (error (e) (err-box e))))))
+
+(defun describe-named (rv name)
+  (handler-case
+      (show-text-window (format nil "Describe ~a" name)
+                        (with-output-to-string (s) (describe (read-in rv name) s)))
+    (error (e) (err-box e))))
+
+(defun do-describe (rv)
+  (let ((s (prompt-line "Describe" "Symbol:"))) (when (and rv s) (describe-named rv s))))
+
+(defun do-documentation (rv)
+  (let ((s (prompt-line "Documentation" "Symbol:")))
+    (when (and rv s)
+      (handler-case
+          (let ((sym (read-in rv s)))
+            (show-text-window (format nil "Documentation ~a" s)
+              (with-output-to-string (o)
+                (dolist (ty '(function variable type structure setf compiler-macro))
+                  (let ((d (ignore-errors (documentation sym ty))))
+                    (when d (format o "~(~a~):~%~a~%~%" ty d))))
+                (when (zerop (file-position o)) (format o "(no documentation)")))))
+        (error (e) (err-box e))))))
+
+(defun do-disassemble (rv)
+  (let ((s (prompt-line "Disassemble" "Function:")))
+    (when (and rv s)
+      (handler-case
+          (show-text-window (format nil "Disassemble ~a" s)
+            (with-output-to-string (o)
+              (let ((*standard-output* o)) (disassemble (read-in rv s)))))
+        (error (e) (err-box e))))))
+
+(defun do-apropos (rv)
+  (let ((s (prompt-line "Apropos" "Substring:")))
+    (when (and rv s)
+      (let* ((names (sort (mapcar #'prin1-to-string (apropos-list s)) #'string<))
+             (chosen (choose-from-list (format nil "Apropos \"~a\" (~d)" s (length names)) names)))
+        (when chosen (describe-named rv chosen))))))
+
+(defun do-inspect-expr (rv)
+  (let ((s (prompt-line "Inspect" "Expression:")))
+    (when (and rv s)
+      (handler-case (repl-inspect (eval (read-in rv s)) s)
+        (error (e) (err-box e))))))
+
+(defun do-packages (rv)
+  (let ((chosen (choose-from-list "Packages"
+                                  (sort (mapcar #'package-name (list-all-packages)) #'string<))))
+    (when (and rv chosen)
+      (let ((p (find-package chosen)))
+        (when p
+          (setf (repl-package rv) p)
+          (repl-print rv (format nil "~%; switched to package ~a~%" (package-name p)))
+          (tvision::repl-fresh-prompt rv)
+          (draw-view rv))))))
+
+(defun do-systems ()
+  (let ((chosen (choose-from-list "ASDF Systems"
+                                  (sort (copy-list (asdf:registered-systems)) #'string<))))
+    (when chosen
+      (let ((out (with-output-to-string (o)
+                   (handler-case
+                       (let ((*standard-output* o) (*error-output* o)) (asdf:load-system chosen))
+                     (error (e) (format o ";; ~a~%" e))))))
+        (show-text-window (format nil "Load system ~a" chosen)
+                          (if (plusp (length out)) out (format nil "Loaded ~a." chosen)))))))
+
+(defun class-outline (class)
+  (flet ((cls-nodes (cs) (mapcar (lambda (c) (make-outline-node (format nil "~a" (class-name c)) nil)) cs))
+         (slot-nodes (ss) (mapcar (lambda (s) (make-outline-node
+                                               (format nil "~a" (sb-mop:slot-definition-name s)) nil)) ss)))
+    (let* ((supers (sb-mop:class-direct-superclasses class))
+           (subs (sb-mop:class-direct-subclasses class))
+           (slots (ignore-errors (sb-mop:class-slots class)))
+           (node (make-outline-node
+                  (format nil "Class ~a" (class-name class))
+                  (list (make-outline-node (format nil "Superclasses (~d)" (length supers)) (cls-nodes supers))
+                        (make-outline-node (format nil "Subclasses (~d)" (length subs)) (cls-nodes subs))
+                        (make-outline-node (format nil "Slots (~d)" (length slots)) (slot-nodes slots))))))
+      (setf (outline-node-expanded node) t)
+      node)))
+
+(defun do-classes (rv)
+  (let ((s (prompt-line "Class browser" "Class name:")))
+    (when (and rv s)
+      (handler-case
+          (let ((class (find-class (read-in rv s))))
+            (ignore-errors (sb-mop:finalize-inheritance class))
+            (open-outline-window (format nil "Class ~a" s) (list (class-outline class))))
+        (error (e) (err-box e))))))
+
+;;; --- transcript search / history -------------------------------------------
+
+(defun do-find (app)
+  (let ((rv (current-repl app)))
+    (when rv
+      (let ((s (prompt-line "Find" "Search for:" (find-last app))))
+        (when s
+          (setf (find-last app) s)
+          (unless (text-find-and-select rv s :wrap t)
+            (message-box "Not found." (logior +mf-information+ +mf-ok-button+)))
+          (draw-view rv))))))
+
+(defun do-find-next (app)
+  (let ((rv (current-repl app)) (s (find-last app)))
+    (when (and rv (plusp (length s)))
+      (text-find-and-select rv s :wrap t)
+      (draw-view rv))))
+
+(defun do-history-search (rv)
+  (when rv
+    (let ((chosen (choose-from-list "History"
+                    (remove-duplicates (copy-list (repl-history rv))
+                                       :test #'string= :from-end t))))
+      (when chosen (repl-replace-input rv chosen) (draw-view rv)))))
+
+;;; --- editor + load buffer --------------------------------------------------
+
+(defun do-open-editor (app)
+  (let ((path (file-open-dialog :title "Open in editor")))
+    (when path
+      (let* ((desk (program-desktop app))
+             (dw (point-x (view-size desk))) (dh (point-y (view-size desk))))
+        (multiple-value-bind (w ed)
+            (make-edit-window (make-trect 2 1 (min (- dw 2) 78) (min (- dh 1) 22))
+                              :title (file-namestring path) :filename path)
+          (declare (ignore ed))
+          (insert desk w)
+          (focus w))))))
+
+(defun do-load-buffer (app)
+  (let* ((win (group-current (program-desktop app)))
+         (ed (and (typep win 'teditor-window) (editor-window-editor win)))
+         (rv (some-repl app)))
+    (cond
+      ((not ed) (message-box "Focus an editor window first." (logior +mf-information+ +mf-ok-button+)))
+      ((not rv) (message-box "No REPL open." (logior +mf-information+ +mf-ok-button+)))
+      (t (let ((out (with-output-to-string (o)
+                      (let ((*standard-output* o) (*error-output* o) (*package* (repl-package rv)))
+                        (handler-case
+                            (with-input-from-string (in (text-string ed))
+                              (loop for f = (read in nil :eof) until (eq f :eof) do (eval f)))
+                          (error (e) (format o ";; ~a~%" e)))))))
+           (show-text-window "Load buffer" (if (plusp (length out)) out "Loaded (no output).")))))))
+
+;;; --- session save/restore --------------------------------------------------
+
+(defun do-session-save (app)
+  (ignore-errors
+   (with-open-file (s +session-file+ :direction :output :if-exists :supersede
+                                     :if-does-not-exist :create)
+     (let ((repls '()))
+       (dolist (w (reverse (group-subviews (program-desktop app))))
+         (when (typep w 'twindow)
+           (let ((rv (find-if (lambda (v) (typep v 'trepl-view)) (group-subviews w))))
+             (when rv (push (package-name (repl-package rv)) repls)))))
+       (prin1 (list :repls repls) s))))
+  (message-box "Session saved." (logior +mf-information+ +mf-ok-button+)))
+
+(defun do-session-load (app)
+  (let ((data (ignore-errors
+               (with-open-file (s +session-file+ :if-does-not-exist nil)
+                 (and s (read s nil nil))))))
+    (if (and (consp data) (eq (car data) :repls))
+        (dolist (pkg (getf data :repls))
+          (open-repl-window app :package pkg))
+        (message-box "No saved session." (logior +mf-information+ +mf-ok-button+)))))
+
+;;; --- options ---------------------------------------------------------------
+
+(defun do-theme (app)
+  (multiple-value-bind (ok fg bg) (color-dialog :title "Desktop color" :fg 7 :bg 0)
+    (when ok
+      (setf (aref tvision::+app-palette-color+ 38) (make-attr fg bg))
+      (draw-view app)
+      (when *screen* (flush-screen *screen*)))))
+
+(defun toggle-msg (name on)
+  (message-box (format nil "~a ~:[off~;on~]." name on) (logior +mf-information+ +mf-ok-button+)))
+
+;;; --- arglist echo + auto-close ---------------------------------------------
+
+(defun %first-token (s pkg)
+  (let ((end (or (position-if (lambda (c) (member c '(#\Space #\Tab #\( #\) #\Newline))) s)
+                 (length s))))
+    (when (plusp end)
+      (let ((*package* pkg))
+        (ignore-errors
+         (let ((sym (read-from-string (subseq s 0 end) nil nil)))
+           (and (symbolp sym) sym)))))))
+
+(defun operator-before (col line pkg)
+  "The operator symbol of the innermost open form left of COL, or NIL."
+  (let ((depth 0) (i (1- (min col (length line)))))
+    (loop while (>= i 0) do
+      (let ((ch (char line i)))
+        (cond ((char= ch #\)) (incf depth))
+              ((char= ch #\()
+               (if (zerop depth)
+                   (return-from operator-before (%first-token (subseq line (1+ i)) pkg))
+                   (decf depth)))))
+      (decf i))
+    nil))
+
+(defun update-arglist-hint (app rv)
+  (setf (arglist-hint app)
+        (ignore-errors
+         (let ((sym (operator-before (text-cur-col rv)
+                                     (tvision::current-line-string rv)
+                                     (repl-package rv))))
+           (when (and sym (fboundp sym))
+             (format nil "(~(~a~)~{ ~(~a~)~})" sym
+                     (sb-introspect:function-lambda-list sym)))))))
+
+(defun maybe-auto-close (app event)
+  "When auto-close is on, typing ( inserts () with the cursor between."
+  (when (and (auto-close app)
+             (= (event-type event) +ev-key-down+)
+             (= (event-char-code event) (char-code #\()))
+    (let ((rv (current-repl app)))
+      (when (and rv (not (repl-busy rv)) (tvision::can-edit-here-p rv))
+        (insert-string rv "()")
+        (setf (text-cur-col rv) (1- (text-cur-col rv)))
+        (draw-view rv)
+        (clear-event event)
+        t))))
+
+;;; --- context menu ----------------------------------------------------------
 
 (defun repl-context-menu ()
-  "The right-click context menu (a TMenuPopup) for a REPL window."
   (new-menu
    (menu-item "Cu~t~"       +cm-cut+      :key-text "Ctrl-X")
    (menu-item "~C~opy"      +cm-copy+     :key-text "Ctrl-C")
    (menu-item "~P~aste"     +cm-paste+    :key-text "Ctrl-V")
    (menu-separator)
    (menu-item "~I~nspect *" +cm-inspect+  :key-text "F8")
+   (menu-item "~M~acroexpand..." +cm-macroexpand+)
+   (menu-item "~D~escribe..."    +cm-describe+)
+   (menu-separator)
    (menu-item "I~n~terrupt" +cm-interrupt+)))
 
+;;; --- event dispatch --------------------------------------------------------
+
 (defmethod handle-event ((app tvlisp-app) event)
-  ;; Ctrl-C interrupts the running evaluation -- map it to the command before
-  ;; the text view can swallow it.
-  (when (and (= (event-type event) +ev-key-down+)
-             (= (event-key-code event) +kb-ctrl-c+))
-    (let ((rv (current-repl app)))
-      (when (and rv (repl-busy rv))
-        (repl-interrupt rv)
-        (clear-event event))))
-  ;; Right-click pops up a context menu (TMenuPopup) over the focused REPL.
+  ;; Ctrl-keys handled before the text view swallows them.
+  (when (= (event-type event) +ev-key-down+)
+    (let ((k (event-key-code event)))
+      (cond
+        ((= k +kb-ctrl-c+)
+         (let ((rv (current-repl app)))
+           (when (and rv (repl-busy rv)) (repl-interrupt rv) (clear-event event))))
+        ((= k +kb-ctrl-f+) (do-find app) (clear-event event))
+        ((= k +kb-ctrl-l+) (do-find-next app) (clear-event event))
+        ((= k +kb-ctrl-r+) (do-history-search (current-repl app)) (clear-event event)))))
+  ;; auto-close parens
+  (maybe-auto-close app event)
+  ;; right-click context menu
   (when (and (= (event-type event) +ev-mouse-down+)
              (logtest (event-mouse-buttons event) +mb-right+)
              (current-repl app))
@@ -129,9 +519,12 @@
       (popup-menu (repl-context-menu) (point-x p) (1+ (point-y p))))
     (clear-event event))
   (call-next-method)
+  ;; refresh the arglist hint (call-next-method may have consumed the event, so
+  ;; don't gate on its type here)
+  (let ((rv (current-repl app)))
+    (when rv (update-arglist-hint app rv)))
   (when (= (event-type event) +ev-command+)
-    (let ((c (event-command event))
-          (rv (current-repl app)))
+    (let ((c (event-command event)) (rv (current-repl app)))
       (flet ((with-repl (fn) (when rv (funcall fn rv) (draw-view rv))))
         (cond
           ((= c +cm-new-repl+) (open-repl-window app) (clear-event event))
@@ -139,11 +532,32 @@
           ((= c +cm-cut+)      (with-repl #'cut-selection) (clear-event event))
           ((= c +cm-copy+)     (with-repl #'copy-selection) (clear-event event))
           ((= c +cm-paste+)    (with-repl #'paste-clipboard) (clear-event event))
-          ((= c +cm-inspect+)
-           (when rv (repl-inspect (repl-hvar rv '*) "*"))
-           (clear-event event))
-          ((= c +cm-interrupt+)
-           (when rv (repl-interrupt rv)) (clear-event event))
+          ((= c +cm-inspect+)  (when rv (repl-inspect (repl-hvar rv '*) "*")) (clear-event event))
+          ((= c +cm-inspect-expr+) (do-inspect-expr rv) (clear-event event))
+          ((= c +cm-macroexpand+) (do-macroexpand rv) (clear-event event))
+          ((= c +cm-describe+)    (do-describe rv) (clear-event event))
+          ((= c +cm-documentation+) (do-documentation rv) (clear-event event))
+          ((= c +cm-disassemble+) (do-disassemble rv) (clear-event event))
+          ((= c +cm-apropos+)     (do-apropos rv) (clear-event event))
+          ((= c +cm-classes+)     (do-classes rv) (clear-event event))
+          ((= c +cm-packages+)    (do-packages rv) (clear-event event))
+          ((= c +cm-systems+)     (do-systems) (clear-event event))
+          ((= c +cm-load-buffer+) (do-load-buffer app) (clear-event event))
+          ((= c +cm-find+)        (do-find app) (clear-event event))
+          ((= c +cm-find-next+)   (do-find-next app) (clear-event event))
+          ((= c +cm-histsearch+)  (do-history-search rv) (clear-event event))
+          ((= c +cm-editor+)      (do-open-editor app) (clear-event event))
+          ((= c +cm-interrupt+)   (when rv (repl-interrupt rv)) (clear-event event))
+          ((= c +cm-session-save+) (do-session-save app) (clear-event event))
+          ((= c +cm-session-load+) (do-session-load app) (clear-event event))
+          ((= c +cm-theme+)       (do-theme app) (clear-event event))
+          ((= c +cm-pprint+)      (setf *print-pretty* (not *print-pretty*))
+                                  (toggle-msg "Pretty-print" *print-pretty*) (clear-event event))
+          ((= c +cm-timing+)      (setf *repl-time* (not *repl-time*))
+                                  (toggle-msg "Eval timing" *repl-time*) (clear-event event))
+          ((= c +cm-autoclose+)   (setf (auto-close app) (not (auto-close app)))
+                                  (toggle-msg "Auto-close parens" (auto-close app)) (clear-event event))
+          ((= c +cm-help+)        (open-help +hc-repl+ "tvlisp Help") (clear-event event))
           ((= c +cm-load+)
            (let ((path (file-open-dialog :title "Load Lisp file")))
              (when (and rv path) (repl-load-file rv path) (focus rv)))
@@ -160,13 +574,16 @@
 
 (defun register-tvlisp-help ()
   (register-help +hc-repl+
-                 (format nil "tvlisp -- a Turbo Vision Lisp REPL~%~%~
-Type a Lisp form and press Enter to evaluate it.~%~
-An open form (unbalanced parens) continues on the next line.~%~
-Up/Down recall previous input; *, **, *** hold recent values.~%~
-Output is read-only; only text after the prompt is editable.~%%~
-F2 new REPL, F3 clear, F4 tile, F5 cascade, F6 next window.~%~
-Ctrl-X/C/V cut/copy/paste, Ctrl-Z undo, F10 menu, Alt-X exit.")))
+                 (format nil "tvlisp -- a Turbo Vision Lisp REPL / mini-IDE~%~%~
+Type a Lisp form and press Enter to evaluate it; an open form continues on the~%~
+next line.  Up/Down recall input; *, +, / hold recent values (per window).~%~
+Each REPL runs on its own thread; an error opens the restart debugger (with a~%~
+Backtrace button).~%~%~
+Lisp menu: Inspect, Macroexpand, Describe, Documentation, Disassemble, Apropos,~%~
+Class/Package/System browsers, Load buffer.~%~
+Edit menu: Ctrl-F find, Ctrl-L find-next, Ctrl-R history search, Ctrl-C interrupt.~%~
+Options: theme, pretty-print, eval timing, auto-close parens.~%~
+F2 new REPL, F3 clear, F4 tile, F5 cascade, F6 next, F8 inspect, F9 threads.")))
 
 (defmethod tvision::setup ((app tvlisp-app))
   (register-tvlisp-help)
@@ -174,7 +591,6 @@ Ctrl-X/C/V cut/copy/paste, Ctrl-Z undo, F10 menu, Alt-X exit.")))
   (open-repl-window app :maximized t))
 
 (defun main ()
-  "Launch the tvlisp REPL application."
   (run 'tvlisp-app))
 
 (defun toplevel ()
