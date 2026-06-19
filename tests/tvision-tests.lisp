@@ -375,6 +375,30 @@ broadcasts and drawing); return the control."
     (is= "reload clears focus" (html-focused-link v) nil)))
 
 ;;; ===========================================================================
+;;; Lisp syntax highlighting (editor)
+;;; ===========================================================================
+
+(deftest syntax-highlight
+  ;; matching-paren scan over a string (offsets); strings/comments are skipped
+  (is= "match forward"  (tvision::%paren-match-offset "(a (b) c)" 0) 8)
+  (is= "match backward" (tvision::%paren-match-offset "(a (b) c)" 8) 0)
+  (is= "match inner"    (tvision::%paren-match-offset "(a (b) c)" 3) 5)
+  (is= "paren inside a string is skipped" (tvision::%paren-match-offset "(foo \")\")" 0) 8)
+  ;; colouriser: comment / string / keyword differ from the base attribute
+  (let* ((base (tvision::make-attr 0 3))            ; black on cyan = the editor base
+         (src "(a :kw \"s\") ; c"))
+    (multiple-value-bind (attrs instr) (tvision::%lisp-colorize src base nil)
+      (ok "line not left in a string" (not instr))
+      (ok "plain symbol char stays base" (= (aref attrs 1) base))   ; the 'a'
+      (ok "keyword coloured"  (/= (aref attrs (search ":kw" src)) base))
+      (ok "string coloured"   (/= (aref attrs (search "\"s\"" src)) base))
+      (ok "comment coloured"  (/= (aref attrs (search "; c" src)) base)))
+    ;; an unterminated string carries the state to the next line
+    (multiple-value-bind (attrs instr) (tvision::%lisp-colorize "\"open" base nil)
+      (declare (ignore attrs))
+      (ok "unterminated string carries over" instr))))
+
+;;; ===========================================================================
 ;;; Memo + editor
 ;;; ===========================================================================
 

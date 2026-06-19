@@ -131,6 +131,11 @@ parked with its stack live:
 
 **Editing & windows**
 
+- **Lisp syntax highlighting** in editor windows — comments, strings, `#\chars`
+  and `:keywords` are coloured, and the paren matching the one at the cursor is
+  highlighted.  **Undo / redo** (Ctrl-Z / Ctrl-Y).
+- **Eval from an editor** — Lisp ▸ Eval defun (the top-level form at the cursor)
+  and Eval region (the selection) submit into a REPL.
 - **Find / Find-next** (Ctrl-F / Ctrl-L) over the transcript, **right-click
   context menu**, **open a file in an editor window** (a `TEditWindow`) via a
   reusable `TFileDialog` — type a path or browse: Enter on a directory descends

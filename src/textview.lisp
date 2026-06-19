@@ -27,6 +27,7 @@
    (modified  :initform nil :accessor text-modified)
    (overwrite :initform nil :accessor text-overwrite)
    (wrap      :initarg :wrap :initform nil :accessor text-wrap) ; word-wrap mode
+   (highlight :initarg :highlight :initform nil :accessor text-highlight) ; Lisp syntax colouring
    (goal-col  :initform nil :accessor text-goal-col)))  ; desired visual col for Up/Down
 
 (declaim (inline text-top-line text-left-col))
@@ -182,6 +183,103 @@ START precedes END; (values nil nil) when there is no selection."
 
 ;;; --- drawing ---------------------------------------------------------------
 
+;;; --- Lisp syntax highlighting ----------------------------------------------
+
+(defun %synfg (base fg) (make-attr fg (attr-bg base)))
+
+(defun %lisp-symchar-p (c)
+  (or (alphanumericp c) (find c "+-*/@$%^&_=<>.~!?:")))
+
+(defun %lisp-colorize (line base in-string)
+  "Return (values ATTRS END-IN-STRING): ATTRS is a per-character attribute-byte
+vector colouring LINE as Lisp (comments, strings, char literals, keywords).
+IN-STRING means the line begins inside a \"...\" string from the line above."
+  (let* ((n (length line))
+         (attrs (make-array n :initial-element base :element-type '(unsigned-byte 8)))
+         (comment (%synfg base 8)) (string (%synfg base 4)) (kw (%synfg base 14))
+         (i 0) (instr in-string))
+    (flet ((paint (a b attr) (loop for k from (max 0 a) below (min b n) do (setf (aref attrs k) attr))))
+      (when instr
+        (let ((end 0) (closed nil))
+          (loop while (< end n) do
+            (cond ((char= (char line end) #\\) (incf end 2))
+                  ((char= (char line end) #\") (incf end) (setf closed t) (return))
+                  (t (incf end))))
+          (paint 0 (min end n) string)
+          (setf instr (not closed) i (if closed end n))))
+      (loop while (< i n) do
+        (let ((c (char line i)))
+          (cond
+            ((char= c #\;) (paint i n comment) (setf i n))
+            ((char= c #\")
+             (let ((end (1+ i)) (closed nil))
+               (loop while (< end n) do
+                 (cond ((char= (char line end) #\\) (incf end 2))
+                       ((char= (char line end) #\") (incf end) (setf closed t) (return))
+                       (t (incf end))))
+               (paint i (min end n) string)
+               (setf instr (not closed) i (if closed end n))))
+            ((and (char= c #\#) (< (1+ i) n) (char= (char line (1+ i)) #\\))
+             (let ((end (min n (+ i 3))))
+               (when (and (> end (+ i 2)) (alpha-char-p (char line (1- end))))
+                 (loop while (and (< end n) (alphanumericp (char line end))) do (incf end)))
+               (paint i end string) (setf i end)))
+            ((and (char= c #\:) (or (zerop i) (not (%lisp-symchar-p (char line (1- i))))))
+             (let ((end (1+ i)))
+               (loop while (and (< end n) (%lisp-symchar-p (char line end))) do (incf end))
+               (paint i end kw) (setf i end)))
+            (t (incf i))))))
+    (values attrs instr)))
+
+(defun %string-start-state (tv top)
+  "Whether line TOP begins inside a string (scan the lines above it)."
+  (let ((instr nil))
+    (dotimes (i (min top (line-count tv)) instr)
+      (multiple-value-bind (attrs s) (%lisp-colorize (nth-line tv i) 0 instr)
+        (declare (ignore attrs))
+        (setf instr s)))))
+
+(defun %paren-match-offset (str target)
+  "STR[TARGET] is ( or ).  Return the matching paren's offset, or NIL.  Skips
+strings, ; comments and #\\ char literals."
+  (let ((n (length str)) (stack '()) (i 0))
+    (loop while (< i n) do
+      (let ((c (char str i)))
+        (cond
+          ((char= c #\;) (loop while (and (< i n) (char/= (char str i) #\Newline)) do (incf i)))
+          ((char= c #\")
+           (incf i)
+           (loop while (< i n) do
+             (let ((d (char str i))) (incf i)
+               (cond ((char= d #\\) (incf i)) ((char= d #\") (return))))))
+          ((and (char= c #\#) (< (1+ i) n) (char= (char str (1+ i)) #\\)) (incf i 3))
+          ((char= c #\() (push i stack) (incf i))
+          ((char= c #\))
+           (let ((open (and stack (pop stack))))
+             (when (and open (or (= open target) (= i target)))
+               (return-from %paren-match-offset (if (= i target) open i))))
+           (incf i))
+          (t (incf i)))))
+    nil))
+
+(defun %matching-parens (tv)
+  "Return a list of two (LINE . COL) cells -- the paren at/just-before the
+cursor and its match -- or NIL."
+  (let* ((cl (text-cur-line tv)) (cc (text-cur-col tv))
+         (line (nth-line tv cl)) (llen (length line)))
+    (labels ((off (l c)
+               (let ((o 0)) (dotimes (i l) (incf o (1+ (length (nth-line tv i))))) (+ o c)))
+             (lc (o)
+               (let ((l 0))
+                 (loop (let ((ll (1+ (length (nth-line tv l)))))
+                         (if (< o ll) (return (cons l o)) (progn (decf o ll) (incf l))))))))
+      (let ((target (cond
+                      ((and (< cc llen) (find (char line cc) "()")) (off cl cc))
+                      ((and (> cc 0) (<= cc llen) (find (char line (1- cc)) "()")) (off cl (1- cc))))))
+        (when target
+          (let ((m (%paren-match-offset (text-string tv) target)))
+            (when m (list (lc target) (lc m)))))))))
+
 (defmethod draw ((tv ttext-view))
   (if (text-wrap tv) (%draw-wrapped tv) (%draw-flat tv)))
 
@@ -191,7 +289,11 @@ START precedes END; (values nil nil) when there is no selection."
          (c (get-color tv 1))
          (hi (get-color tv 2))
          (dx (text-left-col tv))
-         (db (make-draw-buffer w)))
+         (db (make-draw-buffer w))
+         (hl (text-highlight tv))
+         (instr (and hl (%string-start-state tv (text-top-line tv))))
+         (parens (and hl (logtest (view-state tv) +sf-focused+) (%matching-parens tv)))
+         (paren-hi (%synfg c 15)))   ; matching paren: bright
     (multiple-value-bind (sels sele) (selection-range tv)
       (dotimes (row h)
         (db-fill db #\Space c)
@@ -201,6 +303,19 @@ START precedes END; (values nil nil) when there is no selection."
                    (start (min dx (length line)))
                    (vis (subseq line start (min (length line) (+ start w)))))
               (db-move-str db 0 vis c)
+              ;; Lisp syntax colouring
+              (when hl
+                (multiple-value-bind (attrs s) (%lisp-colorize line c instr)
+                  (setf instr s)
+                  (loop for col from start below (min (length line) (+ start w))
+                        for sx from 0
+                        do (db-put-attribute db sx (aref attrs col) 1))))
+              ;; matching-paren accent
+              (when parens
+                (dolist (p parens)
+                  (when (= (car p) li)
+                    (let ((sx (- (cdr p) dx)))
+                      (when (and (>= sx 0) (< sx w)) (db-put-attribute db sx paren-hi 1))))))
               ;; highlight the selected span on this line
               (when (and sels (<= (car sels) li (car sele)))
                 (let* ((hs (if (= li (car sels)) (cdr sels) 0))
@@ -748,6 +863,9 @@ counterpart of the windowed editor).  Its data is the whole text string."))
 (defclass tfile-editor (ttext-view)
   ((filename :initarg :filename :initform nil :accessor editor-filename))
   (:documentation "An editor bound to a file (TEditor + a filename)."))
+
+(defmethod initialize-instance :after ((ed tfile-editor) &key)
+  (setf (text-highlight ed) t))   ; Lisp syntax colouring on for file editors
 
 (defclass teditor-window (twindow)
   ((editor :initform nil :accessor editor-window-editor))
