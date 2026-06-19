@@ -26,7 +26,8 @@
    (redo      :initform '() :accessor text-redo)
    (modified  :initform nil :accessor text-modified)
    (overwrite :initform nil :accessor text-overwrite)
-   (wrap      :initarg :wrap :initform nil :accessor text-wrap))) ; word-wrap mode
+   (wrap      :initarg :wrap :initform nil :accessor text-wrap) ; word-wrap mode
+   (goal-col  :initform nil :accessor text-goal-col)))  ; desired visual col for Up/Down
 
 (declaim (inline text-top-line text-left-col))
 (defun text-top-line (tv) (point-y (scroller-delta tv)))
@@ -399,11 +400,33 @@ subclass overrides this to evaluate the current input instead.")
               (text-cur-col tv) (+ (text-left-col tv) mx)))
     (clamp-cursor tv)))
 
+(defun %wrap-vmove (tv dir)
+  "Move the cursor one VISUAL row (DIR -1 up / +1 down) in word-wrap mode,
+keeping the goal visual column across the move."
+  (let* ((w (max 1 (point-x (view-size tv))))
+         (len (length (current-line-string tv)))
+         (vseg (floor (text-cur-col tv) w))
+         (goal (or (text-goal-col tv) (mod (text-cur-col tv) w))))
+    (setf (text-goal-col tv) goal)
+    (if (plusp dir)
+        (if (< vseg (1- (%line-rows len w)))                 ; another segment below
+            (setf (text-cur-col tv) (min len (+ (* (1+ vseg) w) goal)))
+            (when (< (text-cur-line tv) (1- (line-count tv))) ; -> next logical line
+              (incf (text-cur-line tv))
+              (setf (text-cur-col tv) (min (length (current-line-string tv)) goal))))
+        (if (> vseg 0)                                        ; another segment above
+            (setf (text-cur-col tv) (min len (+ (* (1- vseg) w) goal)))
+            (when (> (text-cur-line tv) 0)                    ; -> prev line's last segment
+              (decf (text-cur-line tv))
+              (let* ((plen (length (current-line-string tv)))
+                     (last-seg (1- (%line-rows plen w))))
+                (setf (text-cur-col tv) (min plen (+ (* last-seg w) goal)))))))))
+
 (defun %move-cursor (tv k)
   "Apply a navigation key K to the cursor (no selection / redraw side effects)."
   (cond
-    ((= k +kb-up+)    (decf (text-cur-line tv)))
-    ((= k +kb-down+)  (incf (text-cur-line tv)))
+    ((= k +kb-up+)    (if (text-wrap tv) (%wrap-vmove tv -1) (decf (text-cur-line tv))))
+    ((= k +kb-down+)  (if (text-wrap tv) (%wrap-vmove tv +1) (incf (text-cur-line tv))))
     ((= k +kb-left+)  (if (> (text-cur-col tv) 0) (decf (text-cur-col tv))
                           (when (> (text-cur-line tv) 0)
                             (decf (text-cur-line tv))
@@ -468,6 +491,7 @@ subclass overrides this to evaluate the current input instead.")
      (clear-event event))
     ;; mouse down: position the cursor and begin a (possible) selection
     ((and (= (event-type event) +ev-mouse-down+) (mouse-in-view-p tv event))
+     (setf (text-goal-col tv) nil)
      (%mouse-to-cursor tv event)
      (setf (text-anchor tv) (text-pos tv))   ; drag from here; click w/o drag = no sel
      (ensure-visible tv) (draw-view tv)
@@ -490,6 +514,8 @@ subclass overrides this to evaluate the current input instead.")
             (ctrl (logtest mods +md-ctrl+))
             (ctrl-letter (and ctrl (<= 1 ch 26) (code-char (+ ch 96))))
             (handled t))
+       ;; Up/Down keep the goal visual column; everything else resets it.
+       (unless (or (= k +kb-up+) (= k +kb-down+)) (setf (text-goal-col tv) nil))
        (cond
          ;; clipboard / undo
          ((eql ctrl-letter #\c) (copy-selection tv))
