@@ -254,22 +254,28 @@ modal view, e.g. the restart dialog)."
 ;;; browsed later on the UI thread (even for the cross-thread worker debugger).
 
 (defun %frame-vars (frame df loc)
+  "Each local as (name display-string value); the value object is retained so it
+can be inspected (drilled into) later."
   (let ((out '()))
     (handler-case
         (sb-di:do-debug-fun-vars (v df)
           (when (and loc (eq (handler-case (sb-di:debug-var-validity v loc) (error () :invalid))
                              :valid))
-            (push (cons (string-downcase (symbol-name (sb-di:debug-var-symbol v)))
-                        (handler-case
-                            (let ((*print-length* 8) (*print-level* 3) (*print-readably* nil))
-                              (prin1-to-string (sb-di:debug-var-value v frame)))
-                          (error () "#<error printing>")))
-                  out)))
+            (let ((val (handler-case (sb-di:debug-var-value v frame)
+                         (error () '#:|#<unavailable>|))))
+              (push (list (string-downcase (symbol-name (sb-di:debug-var-symbol v)))
+                          (handler-case
+                              (let ((*print-length* 8) (*print-level* 3) (*print-readably* nil))
+                                (prin1-to-string val))
+                            (error () "#<error printing>"))
+                          val)
+                    out))))
       (error () nil))
     (nreverse out)))
 
 (defun repl-capture-frames (&key (count 50))
-  "Snapshot the live stack as a list of plists (:label STRING :locals ((name . value-string) ...))."
+  "Snapshot the live stack as a list of plists
+(:label STRING :locals ((name display-string value) ...))."
   (or (ignore-errors
        (let ((frames '()) (i 0))
          (do ((f (sb-di:top-frame) (sb-di:frame-down f)))
@@ -283,26 +289,75 @@ modal view, e.g. the restart dialog)."
            (incf i))))
       '()))
 
-(defun %frame-locals-text (frame)
-  (let ((locals (getf frame :locals)))
-    (format nil "~a~%~%~a" (getf frame :label)
-            (if locals
-                (format nil "~{  ~a = ~a~%~}"
-                        (loop for (n . v) in locals append (list n v)))
-                "(no locals available for this frame)"))))
+(defun inspect-modal (obj label)
+  "Inspect OBJ in a modal TOutline window (usable from inside another modal view,
+e.g. the frame-locals browser).  The tree is drillable: expand nodes to follow
+the value's structure."
+  (when *application*
+    (let* ((desk (program-desktop *application*))
+           (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+           (w (min 70 (max 24 (- dw 2)))) (h (min 20 (max 8 (- dh 2))))
+           (d (make-instance 'tdialog :title (format nil "Inspect ~a" label)
+                             :bounds (make-trect 0 0 w h)))
+           (vsb (standard-scrollbar d t))
+           (ol (make-instance 'toutline :roots (list (object->outline obj label))
+                              :bounds (make-trect 1 1 (1- w) (- h 3)))))
+      (insert d ol) (attach-scrollbars ol :vscroll vsb)
+      (insert d (make-button (make-trect (floor (- w 10) 2) (- h 3)
+                                         (+ (floor (- w 10) 2) 10) (- h 1)) "O~K~" +cm-ok+))
+      (move-to d (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+      (focus ol)
+      (exec-view desk d))))
+
+(defclass tlocals-dialog (tdialog)
+  ((locals :initarg :locals :initform nil :accessor locals-dialog-locals) ; (name str value)
+   (lb     :initarg :lb     :initform nil :accessor locals-dialog-lb))
+  (:documentation "A frame's local variables; Enter on one inspects its value."))
+
+(defmethod handle-event ((d tlocals-dialog) event)
+  (when (and (message-event-p event)
+             (= (event-command event) +cm-list-item-selected+)
+             (locals-dialog-lb d))
+    (let ((entry (nth (list-focused (locals-dialog-lb d)) (locals-dialog-locals d))))
+      (when entry (inspect-modal (third entry) (first entry))))
+    (clear-event event))
+  (call-next-method))
+
+(defun show-locals-dialog (frame)
+  "Modal locals browser for FRAME; Enter on a local inspects its value."
+  (let ((label (getf frame :label)) (locals (getf frame :locals)))
+    (if (null locals)
+        (show-text-dialog "Frame locals" (format nil "~a~%~%(no locals available)" label))
+        (let* ((desk (program-desktop *application*))
+               (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+               (w (min 70 (max 30 (- dw 2)))) (h (min 18 (max 8 (- dh 2))))
+               (items (mapcar (lambda (l) (format nil "~a = ~a" (first l) (second l))) locals))
+               (lb (make-instance 'tlist-box :items items :command 0
+                                  :bounds (make-trect 1 1 (1- w) (- h 4))))
+               (d (make-instance 'tlocals-dialog :locals locals :lb lb
+                                 :title (format nil "Locals: ~a — Enter to inspect"
+                                                (string-trim " " label))
+                                 :bounds (make-trect 0 0 w h)))
+               (vsb (standard-scrollbar d t)))
+          (insert d lb) (attach-scrollbars lb :vscroll vsb)
+          (insert d (make-button (make-trect (floor (- w 10) 2) (- h 3)
+                                             (+ (floor (- w 10) 2) 10) (- h 1)) "O~K~" +cm-ok+))
+          (move-to d (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+          (focus lb)
+          (exec-view desk d)))))
 
 (defclass tframe-dialog (tdialog)
   ((frames :initarg :frames :initform nil :accessor frame-dialog-frames)
    (lb     :initarg :lb     :initform nil :accessor frame-dialog-lb))
-  (:documentation "The backtrace browser: a list of frames; Enter shows a
-frame's local variables."))
+  (:documentation "The backtrace browser: a list of frames; Enter opens a frame's
+locals browser, from which a value can be inspected/drilled into."))
 
 (defmethod handle-event ((d tframe-dialog) event)
   (when (and (message-event-p event)
              (= (event-command event) +cm-list-item-selected+)
              (frame-dialog-lb d))
     (let ((frame (nth (list-focused (frame-dialog-lb d)) (frame-dialog-frames d))))
-      (when frame (show-text-dialog "Frame locals" (%frame-locals-text frame))))
+      (when frame (show-locals-dialog frame)))
     (clear-event event))
   (call-next-method))
 
