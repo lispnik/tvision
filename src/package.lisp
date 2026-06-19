@@ -97,6 +97,10 @@
    #:outline-node-children #:outline-node-expanded #:outline-node-data
    #:outline-roots #:outline-current #:outline-focus #:outline-toggle
    #:outline-select #:outline-command #:+cm-outline-item-selected+
+   ;; html view (hypertext browser)
+   #:thtml-view #:set-html #:html-source #:html-current-href #:html-focused-link
+   #:html-next-link #:html-focus-link #:html-activate-link #:html-link-count
+   #:html->tokens #:+cm-html-link+
    ;; window
    #:twindow #:window-title #:window-number #:window-flags #:window-frame
    #:close-window #:zoom-window #:standard-scrollbar

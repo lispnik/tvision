@@ -38,6 +38,7 @@
                              (:file "listbox")
                              (:file "tableview")
                              (:file "outline")
+                             (:file "htmlview")
                              (:file "history")
                              (:file "filedialog")
                              (:file "chdir")

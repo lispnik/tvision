@@ -309,6 +309,43 @@ broadcasts and drawing); return the control."
     (ok "toggle flips expanded" (not (outline-node-expanded root)))))
 
 ;;; ===========================================================================
+;;; HTML view (hypertext browser)
+;;; ===========================================================================
+
+(defun %html-text (v)
+  "Flatten the rendered lines of an HTML view into one newline-joined string."
+  (with-output-to-string (s)
+    (loop for ln across (tvision::html-lines v) do
+      (loop for r in ln do (write-string (tvision::html-run-text r) s))
+      (terpri s))))
+
+(deftest html-view
+  (let* ((src "<h1>Title</h1>
+<p>Hello <b>bold</b> &amp; <a href=\"a.htm\">one</a> and
+<a href=\"b.htm\">two</a>.</p>
+<pre>code  line</pre>")
+         (v (focused (host (make-instance 'thtml-view :html src
+                                          :bounds (make-trect 0 0 40 12))))))
+    (is= "two links" (html-link-count v) 2)
+    (is= "no focus initially" (html-focused-link v) nil)
+    (html-next-link v 1)
+    (is= "first link href" (html-current-href v) "a.htm")
+    (html-next-link v 1)
+    (is= "second link href" (html-current-href v) "b.htm")
+    (html-next-link v 1)
+    (is= "next wraps to first" (html-current-href v) "a.htm")
+    (html-next-link v -1)
+    (is= "prev wraps to last" (html-current-href v) "b.htm")
+    (let ((text (%html-text v)))
+      (ok "entity decoded, inline flow" (search "Hello bold & one and two." text))
+      (ok "heading text present" (search "Title" text))
+      (ok "pre preserves double space" (search "code  line" text)))
+    ;; reload replaces content and clears focus
+    (set-html v "<p><a href=\"z.htm\">only</a></p>")
+    (is= "reloaded link count" (html-link-count v) 1)
+    (is= "reload clears focus" (html-focused-link v) nil)))
+
+;;; ===========================================================================
 ;;; Memo + editor
 ;;; ===========================================================================
 

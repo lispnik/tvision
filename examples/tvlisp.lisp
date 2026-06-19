@@ -59,6 +59,7 @@
 (defparameter +cm-saveas+      338)
 (defparameter +cm-profile+     339)
 (defparameter +cm-profile-det+ 340)
+(defparameter +cm-browse+      341)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -144,6 +145,8 @@
       (menu-item "T~h~reads..." +cm-threads+ :key-code +kb-f9+ :key-text "F9")))
    (sub-menu "~H~elp"
      (new-menu
+      (menu-item "Hyper~S~pec / browse..." +cm-browse+)
+      (menu-separator)
       (menu-item "~H~elp" +cm-help+ :key-code +kb-f1+ :key-text "F1")))))
 
 ;;; --- live status line (package | threads | busy, or arglist hint) ----------
@@ -267,6 +270,127 @@
     (insert w ol) (attach-scrollbars ol :vscroll vsb)
     (insert desk w) (focus ol)
     ol))
+
+;;; --- HTML browser (HyperSpec help) -----------------------------------------
+;;; A THtmlView in a window, wired so that following a link fetches the next
+;;; page.  Remote pages are fetched with curl (no in-image TLS); local files are
+;;; read directly.  Backspace goes Back.
+
+(defun %url-p (s) (or (search "://" s) (and (>= (length s) 7) (string-equal "http" s :end2 4))))
+
+(defun %http-get (url)
+  "Fetch URL with curl; return the body string, or NIL on failure."
+  (handler-case
+      (let* ((out (make-string-output-stream))
+             (p (sb-ext:run-program "curl" (list "-fsSL" "--max-time" "20" url)
+                                    :search t :output out :error nil :wait t)))
+        (if (and p (eql 0 (sb-ext:process-exit-code p)))
+            (get-output-stream-string out)
+            nil))
+    (error () nil)))
+
+(defun %read-file-string (path)
+  (handler-case
+      (with-open-file (s path :external-format :utf-8)
+        (let ((buf (make-string (file-length s))))
+          (subseq buf 0 (read-sequence buf s))))
+    (error () nil)))
+
+(defun %normalize-path (path)
+  "Resolve . and .. in a /-separated PATH (string), returning an absolute path."
+  (let ((segs '()) (start 0) (n (length path)))
+    (loop for i from 0 to n
+          when (or (= i n) (char= (char path i) #\/)) do
+            (let ((seg (subseq path start i)))
+              (cond ((or (string= seg "") (string= seg ".")) nil)
+                    ((string= seg "..") (when segs (pop segs)))
+                    (t (push seg segs)))
+              (setf start (1+ i))))
+    (format nil "/~{~a~^/~}" (nreverse segs))))
+
+(defun %resolve-location (base href)
+  "Resolve HREF against the current BASE location (URL or file path)."
+  (let* ((hash (position #\# href)) (h (if hash (subseq href 0 hash) href)))
+    (cond
+      ((zerop (length h)) base)                       ; pure fragment
+      ((%url-p h) h)                                  ; absolute URL
+      ((%url-p base)                                  ; relative against a URL
+       (let* ((p (search "://" base))
+              (slash (position #\/ base :start (+ p 3)))
+              (origin (if slash (subseq base 0 slash) base))
+              (path (if slash (subseq base slash) "/")))
+         (if (and (plusp (length h)) (char= (char h 0) #\/))
+             (concatenate 'string origin (%normalize-path h))
+             (let ((dir (subseq path 0 (1+ (or (position #\/ path :from-end t) 0)))))
+               (concatenate 'string origin (%normalize-path (concatenate 'string dir h)))))))
+      (t                                              ; relative against a file
+       (namestring (merge-pathnames h (directory-namestring base)))))))
+
+(defun %location-title (loc)
+  (let ((s (if (position #\# loc) (subseq loc 0 (position #\# loc)) loc)))
+    (let ((slash (position #\/ s :from-end t)))
+      (if (and slash (< (1+ slash) (length s))) (subseq s (1+ slash)) s))))
+
+(defclass thtml-window (twindow)
+  ((view    :initform nil :accessor hw-view)
+   (base    :initform "" :accessor hw-base)
+   (history :initform '() :accessor hw-history)))
+
+(defun hw-load (loc) (if (%url-p loc) (%http-get loc) (%read-file-string loc)))
+
+(defun hw-go (w loc &key (record t))
+  "Load LOC into the window; push the previous page onto the Back history."
+  (let ((content (hw-load loc)))
+    (if content
+        (progn
+          (when (and record (plusp (length (hw-base w))))
+            (push (hw-base w) (hw-history w)))
+          (setf (hw-base w) loc
+                (window-title w) (%location-title loc))
+          (set-html (hw-view w) content)
+          (focus (hw-view w))
+          (draw-view w))
+        (message-box (format nil "Could not load:~%~a" loc)
+                     (logior +mf-error+ +mf-ok-button+)))))
+
+(defun hw-back (w)
+  (when (hw-history w)
+    (hw-go w (pop (hw-history w)) :record nil)))
+
+(defmethod handle-event ((w thtml-window) event)
+  (cond
+    ((and (= (event-type event) +ev-broadcast+)
+          (= (event-command event) +cm-html-link+)
+          (eq (event-info event) (hw-view w)))
+     (let ((href (html-current-href (hw-view w))))
+       (when href (hw-go w (%resolve-location (hw-base w) href))))
+     (clear-event event))
+    ((and (= (event-type event) +ev-key-down+)
+          (= (event-key-code event) +kb-back+))
+     (hw-back w) (clear-event event))
+    (t (call-next-method))))
+
+(defun open-html-window (app loc)
+  (let* ((desk (program-desktop app))
+         (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+         (w (make-instance 'thtml-window :title "Browser"
+                           :bounds (make-trect 1 0 (min (- dw 1) 88) (min (- dh 1) 30))))
+         (vsb (standard-scrollbar w t))
+         (hv (make-instance 'thtml-view
+                            :bounds (make-trect 1 1 (1- (point-x (view-size w)))
+                                                (1- (point-y (view-size w)))))))
+    (insert w hv) (attach-scrollbars hv :vscroll vsb)
+    (setf (hw-view w) hv)
+    (insert desk w)
+    (hw-go w loc)
+    w))
+
+(defparameter +hyperspec-default+
+  "https://www.lispworks.com/documentation/HyperSpec/Front/index.htm")
+
+(defun do-browse (app)
+  (let ((loc (prompt-line "HyperSpec / browse" "URL or file:" +hyperspec-default+)))
+    (when loc (open-html-window app (string-trim " " loc)))))
 
 ;;; --- Lisp tools ------------------------------------------------------------
 
@@ -913,6 +1037,7 @@ run a form, and show the call-count/time report."
           ((= c +cm-classes+)     (do-classes rv) (clear-event event))
           ((= c +cm-gotodef+)     (do-goto-definition rv app) (clear-event event))
           ((= c +cm-funcbrowser+) (do-function-browser rv app) (clear-event event))
+          ((= c +cm-browse+)      (do-browse app) (clear-event event))
           ((= c +cm-step+)        (do-step rv) (clear-event event))
           ((= c +cm-profile+)     (do-profile rv app) (clear-event event))
           ((= c +cm-profile-det+) (do-profile-deterministic rv) (clear-event event))
