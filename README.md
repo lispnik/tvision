@@ -148,6 +148,8 @@ parked with its stack live:
 
 ![Browsing the Common Lisp HyperSpec in the THtmlView control](media/hyperspec.gif)
 
+![Starting from the HyperSpec index and following a link](media/hyperspec-index.gif)
+
 ```sh
 make tvlisp && ./tvlisp
 # or: sbcl --eval '(asdf:make :tvision/examples/tvlisp)' --quit  (-> ./tvlisp)
