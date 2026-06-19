@@ -137,7 +137,11 @@ package errored new-hist)."
   (unless (repl-package r) (setf (repl-package r) (ensure-repl-package)))
   (when (repl-history-file r) (load-repl-history r))
   (repl-print r (repl-banner r))
-  (repl-fresh-prompt r))
+  (repl-fresh-prompt r)
+  ;; Start the worker eagerly so the listener's thread exists (and shows up in
+  ;; the thread monitor) before the first evaluation.  Headless/no-loop use
+  ;; stays on the inline path.
+  (when (and *repl-async* *ui-callbacks*) (repl-ensure-worker r)))
 
 (defun repl-hvar (r sym)
   "Value of R's per-listener history variable SYM (one of +repl-hist-symbols+,
