@@ -76,7 +76,9 @@ the running TUI *is* the Lisp image being driven:
   vectors, and hash-tables by element/entry, depth-limited.
 - **Restart menu on error** — a signalled error pops an "Error — pick a restart"
   dialog listing the live `compute-restarts`; pick one to invoke it (Abort
-  returns you to a fresh prompt).
+  returns you to a fresh prompt). Value-taking restarts (`USE-VALUE` /
+  `STORE-VALUE`) prompt for a Lisp form, so the computation can *resume* past the
+  error with a supplied value, not just unwind.
 - **History variables & sticky package** — `*`/`**`/`***`, `/`/`//`/`///`, and
   `+`/`++`/`+++` follow standard CL REPL semantics and are **per-listener**
   (each window keeps its own, bound with `progv` around evaluation so concurrent

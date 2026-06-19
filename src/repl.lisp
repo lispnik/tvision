@@ -201,9 +201,17 @@ e.g. '*, '+, '/).  Reads listener-local storage, not the global CL specials."
 
 ;;; --- restart menu (the micros/SLIME debugger feel) -------------------------
 
+(defun %restart-needs-value-p (restart)
+  "True for restarts that take a value argument (USE-VALUE / STORE-VALUE), so
+the debugger must prompt for one before invoking."
+  (let ((n (restart-name restart)))
+    (and n (member (symbol-name n) '("USE-VALUE" "STORE-VALUE") :test #'string=))))
+
 (defun repl-restart-dialog (condition restarts)
-  "UI-thread only: show RESTARTS for CONDITION; return the chosen index or NIL.
-Safe to call while a worker thread is blocked waiting for the answer."
+  "UI-thread only: show RESTARTS for CONDITION and, when the chosen restart needs
+a value (USE-VALUE/STORE-VALUE), prompt for a Lisp form supplying it.  Returns
+(values index value-form-string); INDEX is NIL when the user aborts.  Safe to
+call while a worker thread is blocked waiting for the answer."
   (when (and *application* restarts)
     (let* ((labels (mapcar (lambda (rs) (format nil "~a" rs)) restarts))
            (desk (program-desktop *application*))
@@ -222,20 +230,41 @@ Safe to call while a worker thread is blocked waiting for the answer."
       (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
                (max 0 (floor (- (point-y (view-size desk)) h) 2)))
       (focus lb)
-      (when (= (exec-view desk d) +cm-ok+) (list-focused lb)))))
+      (if (= (exec-view desk d) +cm-ok+)
+          (let* ((idx (list-focused lb)) (rs (nth idx restarts)))
+            (if (%restart-needs-value-p rs)
+                (multiple-value-bind (cmd s)
+                    (input-box "Restart value"
+                               (format nil "Lisp form to ~(~a~):" (restart-name rs)) "")
+                  (if (and (= cmd +cm-ok+) (plusp (length (string-trim '(#\Space #\Tab) s))))
+                      (values idx s)
+                      (values nil nil)))     ; cancelled the value -> abort
+                (values idx nil)))
+          (values nil nil)))))
 
-(defun repl-pick-restart (condition)
-  "Show the available restarts for CONDITION; return the chosen restart or NIL.
-Used by the synchronous (inline) evaluation path."
-  (when *repl-debugger*
-    (let* ((restarts (compute-restarts condition))
-           (idx (repl-restart-dialog condition restarts)))
-      (and idx (nth idx restarts)))))
+(defun repl-invoke-restart (restarts idx value-string)
+  "Invoke the chosen restart, reading+evaluating VALUE-STRING for the value of a
+USE-VALUE/STORE-VALUE restart; abort when nothing was chosen or the value form
+fails to read/evaluate.  Runs on the thread owning the error's dynamic extent."
+  (let ((rs (and idx (nth idx restarts))))
+    (cond
+      ((null rs) (invoke-restart (find-restart 'repl-abort)))
+      (value-string
+       (let* ((sentinel (cons nil nil))
+              (val (handler-case (eval (read-from-string value-string))
+                     (error () sentinel))))
+         (if (eq val sentinel)
+             (invoke-restart (find-restart 'repl-abort))
+             (invoke-restart rs val))))
+      (t (invoke-restart rs)))))
 
 (defun repl-error-handler (e)
   "HANDLER-BIND handler (inline path): offer restarts, then transfer control."
-  (let ((chosen (repl-pick-restart e)))
-    (invoke-restart (or chosen (find-restart 'repl-abort)))))
+  (if *repl-debugger*
+      (let ((restarts (compute-restarts e)))
+        (multiple-value-bind (idx vs) (repl-restart-dialog e restarts)
+          (repl-invoke-restart restarts idx vs)))
+      (invoke-restart (find-restart 'repl-abort))))
 
 ;;; --- evaluation + printing -------------------------------------------------
 
@@ -357,15 +386,13 @@ stack/dynamic extent of the error is intact).  Never returns normally."
   (declare (ignore r))
   (let ((restarts (compute-restarts condition)))
     (if (and *repl-debugger* *ui-callbacks*)
-        (let ((sem (sb-thread:make-semaphore)) (choice (list nil)))
+        (let ((sem (sb-thread:make-semaphore)) (choice (list nil nil)))
           (run-on-ui (lambda ()
-                       (setf (car choice) (repl-restart-dialog condition restarts))
+                       (multiple-value-bind (idx vs) (repl-restart-dialog condition restarts)
+                         (setf (first choice) idx (second choice) vs))
                        (sb-thread:signal-semaphore sem)))
           (sb-thread:wait-on-semaphore sem)
-          (let ((idx (car choice)))
-            (invoke-restart (if (and idx (nth idx restarts))
-                                (nth idx restarts)
-                                (find-restart 'repl-abort)))))
+          (repl-invoke-restart restarts (first choice) (second choice)))
         (invoke-restart (find-restart 'repl-abort)))))
 
 (defun repl-worker-eval (r input)
