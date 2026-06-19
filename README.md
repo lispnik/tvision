@@ -19,7 +19,9 @@ terminal.
 
 * [SBCL](http://www.sbcl.org/)
 * A POSIX terminal with `stty` (macOS / Linux)
-* No external Lisp libraries — the framework depends only on SBCL itself.
+* No external Lisp libraries — the framework depends only on SBCL itself.  The
+  threaded REPL / debugger / tooling use SBCL's own facilities (`sb-thread`,
+  `sb-mop`, `sb-di`, and the `sb-introspect` contrib, all bundled with SBCL).
 
 The project is structured to be loadable through [ocicl](https://github.com/ocicl/ocicl):
 the current directory is on the ASDF source registry (configured by ocicl in
@@ -59,44 +61,68 @@ a file to open).  Keys: F2 save, F3 open, F7 find, F5 find-next, F8 replace, F6 
 F9 next window, Ctrl-Z/Y undo/redo, Ctrl-X/C/V clipboard, Ctrl-A select-all,
 Ctrl+Left/Right word movement, Shift+arrows select, F10 menu, Alt-X exit.
 
-### tvlisp — a standalone REPL app
+### tvlisp — a Lisp REPL / mini-IDE
 
-`tvlisp` is a dedicated Lisp REPL application: a full-window REPL with menus for
-opening more REPL windows, clipboard, clear (F3), and window tiling.
+`tvlisp` is a dedicated Lisp environment built on the framework.  It uses an
+in-process, micros-style backend (the same operation set Lem gets from micros,
+but built directly on SBCL built-ins with zero external deps), so the running
+TUI *is* the Lisp image being driven.
 
-It uses an in-process, micros-style backend (the same operation set Lem gets
-from micros, but built directly on SBCL built-ins with zero external deps), so
-the running TUI *is* the Lisp image being driven:
+**REPL core**
 
-- **Tab completion** — `Tab` completes the symbol before the cursor against the
-  current package; multiple candidates pop up in a selectable list, a common
-  prefix is filled in, and `pkg:`/`pkg::` qualified tokens are supported.
-- **Object inspector** — `F8` (Edit ▸ Inspect *) opens a `TOutline` tree of the
-  last value `*`: structs/objects expand by slot (via `sb-mop`), conses,
-  vectors, and hash-tables by element/entry, depth-limited.
-- **Restart menu on error** — a signalled error pops an "Error — pick a restart"
-  dialog listing the live `compute-restarts`; pick one to invoke it (Abort
-  returns you to a fresh prompt). Value-taking restarts (`USE-VALUE` /
-  `STORE-VALUE`) prompt for a Lisp form, so the computation can *resume* past the
-  error with a supplied value, not just unwind.
-- **History variables & sticky package** — `*`/`**`/`***`, `/`/`//`/`///`, and
-  `+`/`++`/`+++` follow standard CL REPL semantics and are **per-listener**
-  (each window keeps its own, bound with `progv` around evaluation so concurrent
-  REPLs never clobber one another or the global `cl:*`); `(in-package …)` sticks
-  for subsequent forms (the prompt reflects the current package).
-- **Persistent history & transcript** — input history is saved to
-  `~/.tvlisp_history` across sessions; Up/Down recall it. `F7` (File ▸ Load
-  file) loads a `.lisp` file with captured output, and File ▸ Save transcript
-  writes the whole REPL buffer to a file.
-- **Threaded evaluation (one worker thread per listener)** — each REPL evaluates
-  on its own `sb-thread` worker, so the UI never freezes: output streams into
-  the transcript live as it is produced, multiple REPL windows run concurrently,
-  and a long/infinite computation can be aborted with **Ctrl-C** (Edit ▸
-  Interrupt eval). The cross-thread debugger is the SLIME/Lem model — an error
-  on the worker pops the restart dialog on the UI thread while the worker
-  blocks, then the chosen restart is invoked back on the worker's own stack.
-  (See *Background evaluation* below; set `*repl-async*` to nil to force inline
-  evaluation.)
+- **Threaded evaluation (one worker thread per listener).** Each REPL window
+  evaluates on its own `sb-thread` worker, so the UI never freezes: output
+  streams into the transcript live as it is produced, multiple REPL windows run
+  concurrently, and a long/infinite computation can be aborted with **Ctrl-C**
+  (Edit ▸ Interrupt eval).  Set `*repl-async*` to nil to force inline evaluation.
+- **Tab completion** against the current package; multiple candidates pop up in a
+  list, a common prefix is filled in, and `pkg:`/`pkg::` tokens are supported.
+- **Per-listener history variables & sticky package.** `*`/`**`/`***`,
+  `/`/`//`/`///`, `+`/`++`/`+++` follow standard CL REPL semantics and are kept
+  per window (bound with `progv` around evaluation, so concurrent REPLs never
+  clobber one another or the global `cl:*`); `(in-package …)` sticks and the
+  prompt reflects the current package.
+- **Persistent history, transcript, file loading.** Input history is saved to
+  `~/.tvlisp_history`; Up/Down recall it, **Ctrl-R** searches it.  File ▸ Load
+  file (F7) loads a `.lisp` file with captured output; Save transcript writes the
+  buffer; Save/Restore session reopens your REPL windows and their packages.
+- **Arglist echo & a live status line.** As you type, the status line shows the
+  operator's lambda list (via `sb-introspect`), e.g. `(mapcar function list
+  &rest more-lists)`; otherwise it shows the current package, thread count and
+  busy state.
+
+**The debugger (SLIME `sldb`-style, across the worker-thread boundary)**
+
+A signalled error pops an "Error — pick a restart" dialog while the worker stays
+parked with its stack live:
+
+- Pick a restart to invoke it on the worker's own stack; **`USE-VALUE` /
+  `STORE-VALUE`** prompt for a Lisp form so the computation can *resume* past the
+  error, not just unwind.  Abort returns to a fresh prompt.
+- **Backtrace** opens a frame browser; selecting a frame shows its **local
+  variables** (captured live via `sb-di`); selecting a local opens the **object
+  inspector** on its value, which you can **drill into** (a `TOutline` tree —
+  slots, conses, vectors, hash-table entries, arbitrarily deep).
+
+**Code-intelligence tools (Lisp menu)**
+
+- **Inspect `*`** (F8) or **Inspect expr…** — a `TOutline` tree of any value.
+- **Macroexpand**, **Describe**, **Documentation**, **Disassemble** — into
+  scrollable windows.
+- **Apropos** — type a substring, pick from a type-ahead list, describe it.
+- **Class browser** (super/sub-classes + slots via `sb-mop`), **Package
+  browser** (switch the current package), **ASDF System browser** (load on
+  Enter), **Load buffer** (evaluate an editor window into the REPL).
+
+**Editing & windows**
+
+- **Find / Find-next** (Ctrl-F / Ctrl-L) over the transcript, **right-click
+  context menu**, **open a file in an editor window** (a `TEditWindow`).
+- **Options:** theme picker (`TColorDialog`), pretty-print toggle, eval-timing
+  toggle (`; N ms`), auto-close parens.
+- **Thread monitor** (F9, Window ▸ Threads) lists the worker threads with
+  Refresh / Kill; new REPL (F2), Clear (F3), Tile (F4), Cascade (F5), Next (F6),
+  Help (F1).
 
 ```sh
 make tvlisp && ./tvlisp
@@ -188,19 +214,21 @@ recognisable part of the original framework:
 | `src/program.lisp`     | `TProgram`/`TApplication`| application palette, main event loop, modal loop, window dragging |
 | `src/menu.lisp`        | `TMenuBar`/`TMenuBox`/`TMenuPopup` | menu bar, dropdowns, submenus, shortcuts, hot-keys, `popup-menu` (context menus) |
 | `src/scroller.lisp`    | `TScroller`             | view onto a virtual area, bound to scroll bars |
-| `src/textview.lisp`    | `TEditor`/`TMemo`       | editable text area: selection, clipboard, undo, protect (REPL-ready) |
-| `src/cluster.lisp`     | `TCluster`/`TRadioButtons`/`TCheckBoxes` | labelled option clusters |
-| `src/validator.lisp`   | `TValidator` family     | filter / range / picture input validators |
+| `src/textview.lisp`    | `TEditor`/`TMemo`/`TFileEditor`/`TEditWindow` | editable text area + the windowed/in-dialog editor classes |
+| `src/cluster.lisp`     | `TCluster`/`TRadioButtons`/`TCheckBoxes`/`TMultiCheckBoxes` | labelled option clusters (incl. multi-state boxes) |
+| `src/validator.lisp`   | `TValidator`/`TLookupValidator` family | filter / range / picture / string-lookup input validators |
 | `src/collection.lisp`  | `TCollection`           | dynamic + sorted collections |
-| `src/listbox.lisp`     | `TListViewer`/`TListBox`| scrollable, selectable list (multi-column) |
+| `src/listbox.lisp`     | `TListViewer`/`TListBox`/`TSortedListBox` | scrollable, selectable list (multi-column, type-ahead search) |
 | `src/outline.lisp`     | `TOutline`              | collapsible tree view |
-| `src/history.lisp`     | `THistory`              | input line with a recallable value history |
-| `src/filedialog.lisp`  | `TFileDialog`           | file open/save dialog with a directory browser |
-| `src/colordialog.lisp` | `TColorDialog`          | foreground/background colour picker with live preview |
+| `src/history.lisp`     | `THistory`/`THistoryViewer`/`THistoryWindow` | input line with a recallable value history |
+| `src/filedialog.lisp`  | `TFileDialog`/`TFileInputLine`/`TFileInfoPane` | file dialog: directory browser, wildcard filter, size/date pane |
+| `src/chdir.lisp`       | `TChDirDialog`/`TDirListBox` | change-directory dialog |
+| `src/colordialog.lisp` | `TColorDialog`/`TColorSelector`/`TColorDisplay`/`TMonoSelector` | colour-picker controls with a live sample |
 | `src/help.lisp`        | help system / `THelpFile` | hypertext topics with links + navigable viewer |
 | `src/persist.lisp`     | streams                 | S-expression save/load of the desktop |
 | `src/stream.lisp`      | `TStream`/`TResourceFile` | binary object streaming + named resource files |
-| `src/repl.lisp`        | (new)                   | `trepl-view` — a Lisp REPL built on the text view |
+| `src/threadmon.lisp`   | (new)                   | refreshable thread monitor (list + kill worker threads) |
+| `src/repl.lisp`        | (new)                   | `trepl-view` — threaded Lisp REPL, restart/backtrace/frame-locals debugger, inspector, text windows |
 
 The text view (`src/textview.lisp`) carries the editor engine: selection,
 clipboard, undo/redo, insert/overwrite, word movement, goto, find,
@@ -244,20 +272,33 @@ lines, labels, static/param text, scroll bars, modal execution, Tab/Shift-Tab
 focus cycling, a command set
 (enable/disable with greying), window drag/close/zoom/**resize**/keyboard
 move-size/**cycling (F6)**/**Alt-1..9 selection**, **drop shadows**, tiling/
-cascading, group-level data exchange, a **tree view (`TOutline`)**, a
-**colour-picker dialog**, **per-view event masks** and **per-control
-disable/grey**, **hypertext help** (linked topics) with a context-switched
-status line, **colour / black-white / monochrome palettes**, S-expression
-*and* **binary** persistence (`TResourceFile`), full mouse (incl.
-**double/triple-click, wheel, auto-repeat**) and keyboard (incl.
+cascading, group-level data exchange, a **tree view (`TOutline`)**, **colour-
+picker controls** (`TColorSelector`/`TColorDisplay`/`TMonoSelector`), **per-view
+event masks** and **per-control disable/grey**, **hypertext help** (linked
+topics) with a context-switched status line, **colour / black-white / monochrome
+palettes**, S-expression *and* **binary** persistence (`TResourceFile`), full
+mouse (incl. **double/triple-click, wheel, auto-repeat**) and keyboard (incl.
 **Alt/Ctrl/Shift modifiers**), configurable cursor shapes, **live terminal
 resize**, and a diffing ANSI renderer.
+
+The control set covers essentially all of Borland Turbo Vision's, including the
+later additions: **multi-state check boxes**, a **type-ahead sorted list box**, a
+**change-directory dialog**, an **in-dialog memo** and the **windowed editor**
+classes (`TFileEditor`/`TEditWindow`), **string-lookup validators**, and a
+file dialog with **wildcard filtering** and a **size/date info pane**.  Beyond
+the original, the port adds a **threaded Lisp REPL** with a SLIME `sldb`-style
+debugger (restarts, backtrace, frame-locals, value drill-down) and a **thread
+monitor** — built on an `sb-thread` worker model with a worker→UI callback
+bridge (`src/concurrency.lisp`).
 
 Deliberately not implemented (invasive core rewrites for little visible gain):
 Turbo Vision's per-group buffer + cover-list occlusion model (this port
 composites a single back buffer in z-order each frame — correct on screen, just
 not the original's partial-repaint optimization); 256-/true-colour (the cell
-attribute is a 16-colour DOS byte); and editor word-wrap.
+attribute is a 16-colour DOS byte); editor word-wrap; and the `TColorDialog`
+palette-scheme *editor* lists (`TColorGroupList`/`TColorItemList`) — the colour
+*picker* controls are present, but editing a whole application palette by colour
+group is not.
 
 `Tab`/`Shift-Tab` cycle the focus among a group's controls in layout order
 (consumed at the innermost group that holds leaf controls, so the desktop never
@@ -282,15 +323,32 @@ The Enter key is routed through the generic `text-return`.
 
 `trepl-view` (in `src/repl.lisp`) is a working Lisp REPL built on exactly those
 hooks: it overrides `text-return` to read the text after the prompt, evaluate it
-in a dedicated `TV-REPL-USER` package (capturing printed output and binding
-`*`/`**`/`***`), `append-text` the values back, and write a fresh prompt — while
-`set-protect-boundary` keeps the transcript above the prompt read-only.  An
+in a dedicated `TV-REPL-USER` package (capturing printed output and binding the
+history variables), `append-text` the values back, and write a fresh prompt —
+while `set-protect-boundary` keeps the transcript above the prompt read-only.  An
 incomplete form (unbalanced parens) continues on the next line instead of
 evaluating, and Up/Down recall input history.  `(make-repl-window bounds)`
-returns a ready-to-insert window with the REPL and a scroll bar.
+returns a ready-to-insert window with the REPL and a scroll bar.  Evaluation runs
+on a per-listener `sb-thread` worker; the worker→UI bridge in
+`src/concurrency.lisp` streams output and drives the cross-thread debugger.  The
+**tvlisp** example above turns this into a full mini-IDE.
 
-The only remaining gaps are the three deliberate omissions noted above
-(per-group occlusion, 256-colour, editor word-wrap).
+## Testing
+
+A self-contained, dependency-free test suite (a tiny `deftest`/`ok`/`is=`
+harness) drives each control — constructing it, feeding events through
+`handle-event`, and asserting on state, data or rendered cells:
+
+```sh
+make test                                         # 115 checks across 25 tests
+# or:  sbcl --eval '(asdf:test-op :tvision/tests)'
+# or from Lisp: (asdf:load-system :tvision/tests) (tvision-tests:run-tests)
+```
+
+It exits non-zero on any failure (CI-ready) and covers geometry, the draw
+buffer, every control (clusters, lists, validators, collections, history,
+menus/`TMenuPopup`, colour selectors, file/chdir dialogs, the memo/editor), the
+concurrency mailbox, the thread monitor, and the REPL backend.
 
 ## License
 
