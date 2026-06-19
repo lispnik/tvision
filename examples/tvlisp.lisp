@@ -48,6 +48,10 @@
 (defparameter +cm-autoclose+   328)
 (defparameter +cm-help+        329)
 (defparameter +cm-histsearch+  330)
+(defparameter +cm-gotodef+     331)
+(defparameter +cm-funcbrowser+ 332)
+(defparameter +cm-whocalls+    333)
+(defparameter +cm-whorefs+     334)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -96,6 +100,11 @@
      (new-menu
       (menu-item "~I~nspect *"        +cm-inspect+ :key-code +kb-f8+ :key-text "F8")
       (menu-item "Inspect ~e~xpr..."  +cm-inspect-expr+)
+      (menu-separator)
+      (menu-item "~G~o to definition..." +cm-gotodef+ :key-text "Alt-.")
+      (menu-item "~F~unction browser..." +cm-funcbrowser+)
+      (menu-item "~W~ho calls..."        +cm-whocalls+)
+      (menu-item "Who ~r~eferences..."   +cm-whorefs+)
       (menu-separator)
       (menu-item "~M~acroexpand..."   +cm-macroexpand+)
       (menu-item "~D~escribe..."      +cm-describe+)
@@ -346,6 +355,118 @@
             (open-outline-window (format nil "Class ~a" s) (list (class-outline class))))
         (error (e) (err-box e))))))
 
+;;; --- navigation: go-to-definition, cross-reference, function browser -------
+
+(defun symbol-definitions (sym)
+  "List of (type pathname char-offset) source locations for SYM."
+  (loop for type in '(:function :generic-function :macro :variable :class
+                      :structure :condition :method :compiler-macro
+                      :setf-expander :type)
+        append (ignore-errors
+                (loop for src in (sb-introspect:find-definition-sources-by-name sym type)
+                      for path = (sb-introspect:definition-source-pathname src)
+                      when path
+                      collect (list type (namestring path)
+                                    (sb-introspect:definition-source-character-offset src))))))
+
+(defun %offset-to-line (path offset)
+  "1-based line number containing character OFFSET in PATH."
+  (or (ignore-errors
+       (with-open-file (s path)
+         (let ((line 1))
+           (dotimes (i (or offset 0) line)
+             (let ((c (read-char s nil nil)))
+               (unless c (return line))
+               (when (char= c #\Newline) (incf line)))))))
+      1))
+
+(defun goto-source (app type path offset)
+  (declare (ignore type))
+  (if (and path (probe-file path))
+      (let* ((desk (program-desktop app))
+             (dw (point-x (view-size desk))) (dh (point-y (view-size desk))))
+        (multiple-value-bind (w ed)
+            (make-edit-window (make-trect 2 1 (min (- dw 2) 84) (min (- dh 1) 26))
+                              :title (file-namestring path) :filename path)
+          (insert desk w)
+          (when offset (text-goto ed (%offset-to-line path offset) 0))
+          (focus w)))
+      (message-box (format nil "No source file:~%~a" path) (logior +mf-error+ +mf-ok-button+))))
+
+(defun goto-definition-of (app sym)
+  (let ((defs (symbol-definitions sym)))
+    (cond
+      ((null defs)
+       (message-box (format nil "No source location for ~a." sym)
+                    (logior +mf-information+ +mf-ok-button+)))
+      ((= 1 (length defs)) (apply #'goto-source app (first defs)))
+      (t (let* ((labels (mapcar (lambda (d) (format nil "~(~a~)  ~a" (first d) (second d))) defs))
+                (chosen (choose-from-list "Definitions" labels)))
+           (when chosen
+             (apply #'goto-source app (nth (position chosen labels :test #'string=) defs))))))))
+
+(defun do-goto-definition (rv app)
+  (let ((s (prompt-line "Go to definition" "Symbol:")))
+    (when (and rv s)
+      (handler-case (goto-definition-of app (read-in rv s)) (error (e) (err-box e))))))
+
+(defun do-xref (rv app kind)
+  (let ((s (prompt-line (format nil "Who ~(~a~)" kind) "Symbol:")))
+    (when (and rv s)
+      (handler-case
+          (let* ((sym (read-in rv s))
+                 (entries (ecase kind
+                            (:calls (sb-introspect:who-calls sym))
+                            (:references (sb-introspect:who-references sym))))
+                 (names (sort (remove-duplicates
+                               (mapcar (lambda (e) (format nil "~s" (car e))) entries)
+                               :test #'string=)
+                              #'string<)))
+            (if (null names)
+                (message-box (format nil "Nothing ~(~a~) ~a." kind s)
+                             (logior +mf-information+ +mf-ok-button+))
+                (let ((chosen (choose-from-list
+                               (format nil "Who ~(~a~) ~a (~d)" kind s (length names)) names)))
+                  (when chosen (goto-definition-of app (read-in rv chosen))))))
+        (error (e) (err-box e))))))
+
+(defun method-label (m)
+  (string-trim " "
+    (format nil "~{~(~a~)~^ ~} (~{~a~^ ~})"
+            (sb-mop:method-qualifiers m)
+            (mapcar (lambda (s)
+                      (cond ((typep s 'class) (class-name s))
+                            (t (or (ignore-errors
+                                    (list 'eql (sb-mop:eql-specializer-object s)))
+                                   s))))
+                    (sb-mop:method-specializers m)))))
+
+(defun do-function-browser (rv app)
+  (let ((s (prompt-line "Function / GF browser" "Function name:")))
+    (when (and rv s)
+      (handler-case
+          (let* ((sym (read-in rv s)) (fn (and (fboundp sym) (fdefinition sym))))
+            (cond
+              ((typep fn 'generic-function)
+               (let* ((methods (sb-mop:generic-function-methods fn))
+                      (labels (mapcar #'method-label methods))
+                      (chosen (choose-from-list
+                               (format nil "~a — ~d method~:p" s (length methods)) labels)))
+                 (when chosen
+                   (let* ((m (nth (position chosen labels :test #'string=) methods))
+                          (src (ignore-errors
+                                (sb-introspect:find-definition-source (sb-mop:method-function m))))
+                          (path (and src (sb-introspect:definition-source-pathname src))))
+                     (if path
+                         (goto-source app :method (namestring path)
+                                      (sb-introspect:definition-source-character-offset src))
+                         (message-box "No source for that method."
+                                      (logior +mf-information+ +mf-ok-button+)))))))
+              (fn (goto-definition-of app sym))
+              (t (message-box (format nil "~a is not a function." s)
+                              (logior +mf-information+ +mf-ok-button+)))))
+        (error (e) (err-box e))))))
+
 ;;; --- transcript search / history -------------------------------------------
 
 (defun do-find (app)
@@ -508,7 +629,9 @@
            (when (and rv (repl-busy rv)) (repl-interrupt rv) (clear-event event))))
         ((= k +kb-ctrl-f+) (do-find app) (clear-event event))
         ((= k +kb-ctrl-l+) (do-find-next app) (clear-event event))
-        ((= k +kb-ctrl-r+) (do-history-search (current-repl app)) (clear-event event)))))
+        ((= k +kb-ctrl-r+) (do-history-search (current-repl app)) (clear-event event))
+        ((and (logtest (event-modifiers event) +md-alt+) (= (event-char-code event) 46)) ; M-.
+         (do-goto-definition (current-repl app) app) (clear-event event)))))
   ;; auto-close parens
   (maybe-auto-close app event)
   ;; right-click context menu
@@ -540,6 +663,10 @@
           ((= c +cm-disassemble+) (do-disassemble rv) (clear-event event))
           ((= c +cm-apropos+)     (do-apropos rv) (clear-event event))
           ((= c +cm-classes+)     (do-classes rv) (clear-event event))
+          ((= c +cm-gotodef+)     (do-goto-definition rv app) (clear-event event))
+          ((= c +cm-funcbrowser+) (do-function-browser rv app) (clear-event event))
+          ((= c +cm-whocalls+)    (do-xref rv app :calls) (clear-event event))
+          ((= c +cm-whorefs+)     (do-xref rv app :references) (clear-event event))
           ((= c +cm-packages+)    (do-packages rv) (clear-event event))
           ((= c +cm-systems+)     (do-systems) (clear-event event))
           ((= c +cm-load-buffer+) (do-load-buffer app) (clear-event event))
