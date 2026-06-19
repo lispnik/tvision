@@ -154,6 +154,8 @@ parked with its stack live:
 
 ![Browsing the Common Lisp HyperSpec in the THtmlView control](media/hyperspec.gif)
 
+![HyperSpec lookup of the symbol at the cursor](media/hyperspec-lookup.gif)
+
 ![Starting from the HyperSpec index and following a link](media/hyperspec-index.gif)
 
 ![Back / Forward through the browser history](media/browser-history.gif)
