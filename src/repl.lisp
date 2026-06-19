@@ -248,11 +248,87 @@ modal view, e.g. the restart dialog)."
       (focus tv)
       (exec-view desk d))))
 
-(defun repl-capture-backtrace ()
-  "Capture the current backtrace as a string (called where the error stack is
-still live)."
-  (ignore-errors
-   (with-output-to-string (s) (sb-debug:print-backtrace :stream s :count 50))))
+;;; --- backtrace capture (sb-di) + a frame/locals browser -------------------
+;;; Frames are snapshotted eagerly (label + each live local's value as a string)
+;;; while the error stack is still live; the snapshot is plain data, so it can be
+;;; browsed later on the UI thread (even for the cross-thread worker debugger).
+
+(defun %frame-vars (frame df loc)
+  (let ((out '()))
+    (handler-case
+        (sb-di:do-debug-fun-vars (v df)
+          (when (and loc (eq (handler-case (sb-di:debug-var-validity v loc) (error () :invalid))
+                             :valid))
+            (push (cons (string-downcase (symbol-name (sb-di:debug-var-symbol v)))
+                        (handler-case
+                            (let ((*print-length* 8) (*print-level* 3) (*print-readably* nil))
+                              (prin1-to-string (sb-di:debug-var-value v frame)))
+                          (error () "#<error printing>")))
+                  out)))
+      (error () nil))
+    (nreverse out)))
+
+(defun repl-capture-frames (&key (count 50))
+  "Snapshot the live stack as a list of plists (:label STRING :locals ((name . value-string) ...))."
+  (or (ignore-errors
+       (let ((frames '()) (i 0))
+         (do ((f (sb-di:top-frame) (sb-di:frame-down f)))
+             ((or (null f) (>= i count)) (nreverse frames))
+           (let* ((df (sb-di:frame-debug-fun f))
+                  (name (handler-case (sb-di:debug-fun-name df) (error () "?")))
+                  (loc (handler-case (sb-di:frame-code-location f) (error () nil))))
+             (push (list :label (format nil "~2d  ~a" i name)
+                         :locals (%frame-vars f df loc))
+                   frames))
+           (incf i))))
+      '()))
+
+(defun %frame-locals-text (frame)
+  (let ((locals (getf frame :locals)))
+    (format nil "~a~%~%~a" (getf frame :label)
+            (if locals
+                (format nil "~{  ~a = ~a~%~}"
+                        (loop for (n . v) in locals append (list n v)))
+                "(no locals available for this frame)"))))
+
+(defclass tframe-dialog (tdialog)
+  ((frames :initarg :frames :initform nil :accessor frame-dialog-frames)
+   (lb     :initarg :lb     :initform nil :accessor frame-dialog-lb))
+  (:documentation "The backtrace browser: a list of frames; Enter shows a
+frame's local variables."))
+
+(defmethod handle-event ((d tframe-dialog) event)
+  (when (and (message-event-p event)
+             (= (event-command event) +cm-list-item-selected+)
+             (frame-dialog-lb d))
+    (let ((frame (nth (list-focused (frame-dialog-lb d)) (frame-dialog-frames d))))
+      (when frame (show-text-dialog "Frame locals" (%frame-locals-text frame))))
+    (clear-event event))
+  (call-next-method))
+
+(defun show-frames-dialog (frames)
+  "Modal backtrace browser; pick a frame (Enter) to inspect its locals."
+  (when *application*
+    (if (null frames)
+        (show-text-dialog "Backtrace" "(no backtrace available)")
+        (let* ((desk (program-desktop *application*))
+               (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+               (w (min 76 (max 30 (- dw 2)))) (h (min 22 (max 10 (- dh 2))))
+               (lb (make-instance 'tlist-box
+                                  :items (mapcar (lambda (f) (getf f :label)) frames)
+                                  :command 0 :bounds (make-trect 1 1 (1- w) (- h 4))))
+               (d (make-instance 'tframe-dialog :frames frames :lb lb
+                                 :title "Backtrace — Enter for locals"
+                                 :bounds (make-trect 0 0 w h)))
+               (vsb (standard-scrollbar d t)))
+          (insert d lb) (attach-scrollbars lb :vscroll vsb)
+          ;; OK is NOT the default button: a default button would steal Enter
+          ;; from the list (where Enter must open the focused frame's locals).
+          (insert d (make-button (make-trect (floor (- w 10) 2) (- h 3)
+                                             (+ (floor (- w 10) 2) 10) (- h 1)) "O~K~" +cm-ok+))
+          (move-to d (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+          (focus lb)
+          (exec-view desk d)))))
 
 ;;; --- restart menu (the micros/SLIME debugger feel) -------------------------
 
@@ -260,13 +336,13 @@ still live)."
 
 (defclass trestart-dialog (tdialog)
   ((backtrace :initarg :backtrace :initform nil :accessor restart-dialog-backtrace))
-  (:documentation "The debugger dialog; its Backtrace button shows the captured
-backtrace without dismissing the restart list."))
+  (:documentation "The debugger dialog; its Backtrace button opens the frame
+browser (frames + locals) without dismissing the restart list."))
 
 (defmethod handle-event ((d trestart-dialog) event)
   (when (and (= (event-type event) +ev-command+)
              (= (event-command event) +cm-repl-backtrace+))
-    (show-text-dialog "Backtrace" (or (restart-dialog-backtrace d) "(no backtrace)"))
+    (show-frames-dialog (restart-dialog-backtrace d))
     (clear-event event))
   (call-next-method))
 
@@ -333,7 +409,7 @@ fails to read/evaluate.  Runs on the thread owning the error's dynamic extent."
   "HANDLER-BIND handler (inline path): offer restarts, then transfer control."
   (if *repl-debugger*
       (let ((restarts (compute-restarts e))
-            (bt (repl-capture-backtrace)))
+            (bt (repl-capture-frames)))
         (multiple-value-bind (idx vs) (repl-restart-dialog e restarts bt)
           (repl-invoke-restart restarts idx vs)))
       (invoke-restart (find-restart 'repl-abort))))
@@ -457,7 +533,7 @@ menu, block for the choice, then invoke the chosen restart here (so the live
 stack/dynamic extent of the error is intact).  Never returns normally."
   (declare (ignore r))
   (let ((restarts (compute-restarts condition))
-        (bt (repl-capture-backtrace)))
+        (bt (repl-capture-frames)))
     (if (and *repl-debugger* *ui-callbacks*)
         (let ((sem (sb-thread:make-semaphore)) (choice (list nil nil)))
           (run-on-ui (lambda ()
