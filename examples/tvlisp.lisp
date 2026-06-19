@@ -544,13 +544,16 @@
 (defun do-profile (rv app)
   (let ((s (prompt-line "Profile" "Form to profile:")))
     (when (and rv s)
-      (handler-case
-          (let ((data (run-profile (read-in rv s) (repl-package rv))))
-            (if (getf data :flat)
-                (show-profile-results app data)
-                (message-box "No samples collected (the form ran too quickly)."
-                             (logior +mf-information+ +mf-ok-button+))))
-        (error (e) (err-box e))))))
+      (let ((form (read-in rv s)) (pkg (repl-package rv)))
+        ;; run on the worker thread so the UI stays responsive (Ctrl-C aborts)
+        (repl-call-on-worker rv
+          (lambda ()
+            (let ((data (run-profile form pkg)))
+              (run-on-ui (lambda ()
+                           (if (getf data :flat)
+                               (show-profile-results app data)
+                               (message-box "No samples collected (the form ran too quickly)."
+                                            (logior +mf-information+ +mf-ok-button+))))))))))))
 
 (defun do-profile-deterministic (rv)
   "Deterministic profiler (sb-profile): instrument every function in a package,
@@ -558,23 +561,28 @@ run a form, and show the call-count/time report."
   (let ((pkg (and rv (prompt-line "Deterministic profile" "Profile functions in package:"
                                   (package-name (repl-package rv))))))
     (when pkg
-      (let ((form (prompt-line "Deterministic profile" "Form to run:")))
+      (let ((form (prompt-line "Deterministic profile" "Form to run:"))
+            (rp (repl-package rv)))
         (when form
-          (handler-case
-              (let ((*package* (repl-package rv)))
-                (sb-profile:reset)
-                (eval (list 'sb-profile:profile pkg))
-                (unwind-protect
-                     (progn
-                       (eval (read-from-string form))
-                       (show-text-window
-                        (format nil "Deterministic profile: ~a" pkg)
-                        (with-output-to-string (s)
-                          (let ((*standard-output* s) (*trace-output* s))
-                            (sb-profile:report)))))
-                  (eval (list 'sb-profile:unprofile pkg))
-                  (sb-profile:reset)))
-            (error (e) (err-box e))))))))
+          ;; run on the worker thread so the UI stays responsive
+          (repl-call-on-worker rv
+            (lambda ()
+              (handler-case
+                  (let ((*package* rp) (txt nil))
+                    (sb-profile:reset)
+                    (eval (list 'sb-profile:profile pkg))
+                    (unwind-protect
+                         (progn
+                           (eval (read-from-string form))
+                           (setf txt (with-output-to-string (s)
+                                       (let ((*standard-output* s) (*trace-output* s))
+                                         (sb-profile:report)))))
+                      (eval (list 'sb-profile:unprofile pkg))
+                      (sb-profile:reset))
+                    (run-on-ui (lambda ()
+                                 (show-text-window (format nil "Deterministic profile: ~a" pkg)
+                                                   (or txt "")))))
+                (error (e) (run-on-ui (lambda () (err-box e))))))))))))
 
 (defun do-function-browser (rv app)
   (let ((s (prompt-line "Function / GF browser" "Function name:")))

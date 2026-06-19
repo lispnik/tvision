@@ -707,7 +707,37 @@ async is enabled and a UI loop is running, otherwise inline."
           (case (car job)
             (:quit (throw 'repl-worker-quit nil))
             (:eval (repl-worker-eval r (cdr job)))
-            (:step (repl-worker-eval r (cdr job) t))))))))
+            (:step (repl-worker-eval r (cdr job) t))
+            (:call (repl-worker-call r (cdr job)))))))))
+
+(defun repl-worker-call (r thunk)
+  "Run THUNK on the worker with the REPL's output captured/streamed, errors
+routed to the cross-thread debugger, and abort (Ctrl-C) honoured.  Clears the
+busy flag on the UI thread when done."
+  (let ((out (make-instance 'repl-output-stream :view r)))
+    (unwind-protect
+         (let ((*standard-output* out) (*error-output* out) (*trace-output* out)
+               (*package* (repl-package r)))
+           (restart-case
+               (handler-bind ((error (lambda (e) (repl-worker-debug r e))))
+                 (funcall thunk))
+             (repl-abort () nil)))
+      (finish-output out)
+      (run-on-ui (lambda ()
+                   (setf (repl-busy r) nil)
+                   (draw-view r)
+                   (when *screen* (flush-screen *screen*)))))))
+
+(defun repl-call-on-worker (r thunk)
+  "Schedule THUNK to run on R's worker thread, so the UI stays responsive (output
+streams, errors open the debugger, Ctrl-C interrupts).  Runs inline when there is
+no UI loop / async is disabled."
+  (cond
+    ((and *repl-async* *ui-callbacks*)
+     (setf (repl-busy r) t)
+     (repl-ensure-worker r)
+     (mailbox-send (repl-to-worker r) (cons :call thunk)))
+    (t (funcall thunk))))
 
 (defun repl-worker-debug (r condition)
   "Worker thread, inside HANDLER-BIND: ask the UI thread to show the restart
