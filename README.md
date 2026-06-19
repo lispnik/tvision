@@ -139,7 +139,7 @@ parked with its stack live:
   toggle (`; N ms`), auto-close parens.
 - **Thread monitor** (F9, Window ▸ Threads) lists the worker threads with
   Refresh / Kill; new REPL (F2), Clear (F3), Tile (F4), Cascade (F5), Next (F6),
-  Help (F1).
+  Close (Window ▸ Close), Help (F1).
 - **Numbered windows** — each window is assigned the lowest free number 1–9
   (shown in its frame, classic TV style); **Alt-1…9** jumps straight to that
   window.

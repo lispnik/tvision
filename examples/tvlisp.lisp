@@ -147,6 +147,7 @@
       (menu-item "~N~ext"    +cm-next+    :key-code +kb-f6+ :key-text "F6")
       (menu-item "~T~ile"    +cm-tile+    :key-code +kb-f4+ :key-text "F4")
       (menu-item "~C~ascade" +cm-cascade+ :key-code +kb-f5+ :key-text "F5")
+      (menu-item "Cl~o~se"   +cm-close+)
       (menu-separator)
       (menu-item "T~h~reads..." +cm-threads+ :key-code +kb-f9+ :key-text "F9")))
    (sub-menu "~H~elp"
