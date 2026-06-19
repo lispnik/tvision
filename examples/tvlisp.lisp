@@ -60,6 +60,7 @@
 (defparameter +cm-profile+     339)
 (defparameter +cm-profile-det+ 340)
 (defparameter +cm-browse+      341)
+(defparameter +cm-bhistory+    342)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -146,6 +147,7 @@
    (sub-menu "~H~elp"
      (new-menu
       (menu-item "Hyper~S~pec / browse..." +cm-browse+)
+      (menu-item "~B~rowser history..."    +cm-bhistory+)
       (menu-separator)
       (menu-item "~H~elp" +cm-help+ :key-code +kb-f1+ :key-text "F1")))))
 
@@ -259,6 +261,24 @@
       (focus lb)
       (when (and (= (exec-view desk d) +cm-ok+) (plusp (list-count lb)))
         (list-item lb (list-focused lb))))))
+
+(defun choose-index (title labels &key (start 0) (w 64) (h 18))
+  "Modal, order-preserving picker over LABELS; return the chosen index (focused
+on START) or NIL on cancel.  Enter or OK selects."
+  (when (and *application* labels)
+    (let* ((desk (program-desktop *application*))
+           (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
+           (vsb (standard-scrollbar d t))
+           (lb (make-instance 'tlist-box :items labels :command +cm-ok+
+                              :bounds (make-trect 1 1 (1- w) (- h 3)))))
+      (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (insert d (make-button (make-trect (- w 24) (- h 3) (- w 14) (- h 1)) "~O~K" +cm-ok+ t))
+      (insert d (make-button (make-trect (- w 12) (- h 3) (- w 2) (- h 1)) "Cancel" +cm-cancel+))
+      (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
+               (max 0 (floor (- (point-y (view-size desk)) h) 2)))
+      (list-focus-item lb (min (max 0 start) (1- (list-count lb))))
+      (focus lb)
+      (when (= (exec-view desk d) +cm-ok+) (list-focused lb)))))
 
 (defun open-outline-window (title roots)
   (let* ((desk (program-desktop *application*))
@@ -382,6 +402,23 @@ a successful load."
   (when (plusp (length (hw-base w)))
     (hw-go w (hw-base w) :record nil)))
 
+(defun hw-history-list (w)
+  "The full visit history in chronological order (oldest first)."
+  (append (reverse (hw-back-stack w)) (list (hw-base w)) (hw-fwd-stack w)))
+
+(defun hw-history-index (w)
+  "Position of the current page within (HW-HISTORY-LIST W)."
+  (length (hw-back-stack w)))
+
+(defun hw-goto-index (w i)
+  "Jump to chronological history entry I, rebuilding the Back/Forward stacks
+around it."
+  (let ((items (hw-history-list w)))
+    (when (and (>= i 0) (< i (length items)) (/= i (hw-history-index w)))
+      (setf (hw-back-stack w) (reverse (subseq items 0 i))
+            (hw-fwd-stack w)  (subseq items (1+ i)))
+      (hw-go w (nth i items) :record nil))))
+
 (defmethod handle-event ((w thtml-window) event)
   (cond
     ((and (= (event-type event) +ev-broadcast+)
@@ -421,6 +458,20 @@ a successful load."
 (defun do-browse (app)
   (let ((loc (prompt-line "HyperSpec / browse" "URL or file:" +hyperspec-default+)))
     (when loc (open-html-window app (string-trim " " loc)))))
+
+(defun do-browser-history (app)
+  "Pop up the focused browser window's history; selecting an entry visits it."
+  (let ((w (group-current (program-desktop app))))
+    (cond
+      ((not (typep w 'thtml-window))
+       (message-box "Select a browser window first."
+                    (logior +mf-information+ +mf-ok-button+)))
+      (t (let* ((items (hw-history-list w))
+                (cur (hw-history-index w))
+                (labels (loop for loc in items for i from 0
+                              collect (format nil "~:[  ~;> ~]~a" (= i cur) loc))))
+           (let ((sel (choose-index "Browser history" labels :start cur)))
+             (when sel (hw-goto-index w sel))))))))
 
 ;;; --- Lisp tools ------------------------------------------------------------
 
@@ -1068,6 +1119,7 @@ run a form, and show the call-count/time report."
           ((= c +cm-gotodef+)     (do-goto-definition rv app) (clear-event event))
           ((= c +cm-funcbrowser+) (do-function-browser rv app) (clear-event event))
           ((= c +cm-browse+)      (do-browse app) (clear-event event))
+          ((= c +cm-bhistory+)    (do-browser-history app) (clear-event event))
           ((= c +cm-step+)        (do-step rv) (clear-event event))
           ((= c +cm-profile+)     (do-profile rv app) (clear-event event))
           ((= c +cm-profile-det+) (do-profile-deterministic rv) (clear-event event))
