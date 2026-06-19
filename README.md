@@ -127,6 +127,8 @@ parked with its stack live:
 
 ![The tvlisp statistical profiler: sortable results table and call-graph outline](media/profiler.gif)
 
+![The class browser: Goto def jumps to source, Inspect opens the object inspector](media/class-browser.gif)
+
 **Editing & windows**
 
 - **Find / Find-next** (Ctrl-F / Ctrl-L) over the transcript, **right-click
