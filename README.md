@@ -124,12 +124,18 @@ parked with its stack live:
 **Editing & windows**
 
 - **Find / Find-next** (Ctrl-F / Ctrl-L) over the transcript, **right-click
-  context menu**, **open a file in an editor window** (a `TEditWindow`).
+  context menu**, **open a file in an editor window** (a `TEditWindow`) via a
+  reusable `TFileDialog` — type a path or browse: Enter on a directory descends
+  into it, Enter on `..` goes back up, Enter on a file opens it.
 - **Options:** theme picker (`TColorDialog`), pretty-print toggle, eval-timing
   toggle (`; N ms`), auto-close parens.
 - **Thread monitor** (F9, Window ▸ Threads) lists the worker threads with
   Refresh / Kill; new REPL (F2), Clear (F3), Tile (F4), Cascade (F5), Next (F6),
   Help (F1).
+
+![Open in editor: choosing a file and loading it into an editor window](media/open-in-editor.gif)
+
+![Browsing directories in the file dialog by keyboard](media/file-dialog-nav.gif)
 
 ```sh
 make tvlisp && ./tvlisp
