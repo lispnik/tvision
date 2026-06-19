@@ -340,6 +340,17 @@ broadcasts and drawing); return the control."
       (ok "entity decoded, inline flow" (search "Hello bold & one and two." text))
       (ok "heading text present" (search "Title" text))
       (ok "pre preserves double space" (search "code  line" text)))
+    ;; find-in-page
+    (is= "find 'and' -> 1 match" (html-find v "and") 1)
+    (ok "match recorded" (tvision::html-matches v))
+    (is= "find 'l' counts occurrences" (html-find v "l")
+         (let ((n 0)) (loop for ln across (tvision::html-lines v) do
+                        (loop for r in ln do
+                          (loop for c across (string-downcase (tvision::html-run-text r))
+                                when (char= c #\l) do (incf n))))
+                      n))
+    (is= "miss -> 0" (html-find v "zzqq") 0)
+    (is= "miss clears match index" (tvision::html-match-index v) nil)
     ;; the focused link renders in the focus colour (6); other links in the
     ;; link colour (5); normal/heading/code runs in their own colours
     (flet ((link-run (id)

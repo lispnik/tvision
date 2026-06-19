@@ -100,7 +100,7 @@
    ;; html view (hypertext browser)
    #:thtml-view #:set-html #:html-source #:html-current-href #:html-focused-link
    #:html-next-link #:html-focus-link #:html-activate-link #:html-link-count
-   #:html->tokens #:html-document-title #:+cm-html-link+
+   #:html->tokens #:html-document-title #:html-find #:html-find-next #:+cm-html-link+
    ;; window
    #:twindow #:window-title #:window-number #:window-flags #:window-frame
    #:close-window #:zoom-window #:standard-scrollbar

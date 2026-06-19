@@ -320,7 +320,10 @@ comments / declarations."
    (tokens       :initform '() :accessor html-tokens)
    (lines        :initform #() :accessor html-lines)
    (links        :initform #() :accessor html-links)
-   (focused-link :initform nil :accessor html-focused-link)))
+   (focused-link :initform nil :accessor html-focused-link)
+   (search       :initform nil :accessor html-search)        ; current find query
+   (matches      :initform '() :accessor html-matches)       ; list of (line start end)
+   (match-index  :initform nil :accessor html-match-index))) ; current match, or NIL
 
 ;; index 1 normal, 2 emphasis, 3 heading, 4 code, 5 link, 6 focused link
 (defmethod get-palette ((v thtml-view)) (make-palette 1 2 10 3 12 14))
@@ -338,7 +341,10 @@ comments / declarations."
   (multiple-value-bind (toks lks) (html->tokens (html-source v))
     (setf (html-tokens v) toks
           (html-links v) lks
-          (html-focused-link v) nil))
+          (html-focused-link v) nil
+          (html-search v) nil
+          (html-matches v) '()
+          (html-match-index v) nil))
   (%html-relayout v)
   (scroll-to v 0 0)
   (draw-view v)
@@ -357,6 +363,23 @@ comments / declarations."
         (t (case (html-run-style run)
              (:heading 3) (:code 4) (:emph 2) (t 1)))))
 
+(defun %html-draw-line (v db li dx w)
+  "Render rendered-line LI into draw-buffer DB (already filled), applying the
+horizontal scroll DX and overlaying any find-in-page match highlights."
+  (let ((col 0))
+    (dolist (run (aref (html-lines v) li))
+      (let ((attr (get-color v (%html-run-color v run))))
+        (loop for ch across (html-run-text run) do
+          (let ((sx (- col dx)))
+            (when (and (>= sx 0) (< sx w)) (db-put-char db sx ch attr)))
+          (incf col)))))
+  (loop for m in (html-matches v) for mi from 0
+        when (= (first m) li) do
+          (let ((s (max 0 (- (second m) dx)))
+                (e (min w (- (third m) dx)))
+                (attr (if (eql mi (html-match-index v)) (make-attr 0 4) (make-attr 0 6))))
+            (when (> e s) (db-put-attribute db s attr (- e s))))))
+
 (defmethod draw ((v thtml-view))
   (let* ((w (point-x (view-size v))) (h (point-y (view-size v)))
          (dx (point-x (scroller-delta v))) (dy (point-y (scroller-delta v)))
@@ -367,14 +390,47 @@ comments / declarations."
       (db-fill db #\Space normal)
       (let ((li (+ dy row)))
         (when (< li (length lines))
-          (let ((col 0))
-            (dolist (run (aref lines li))
-              (let ((attr (get-color v (%html-run-color v run))))
-                (loop for ch across (html-run-text run) do
-                  (let ((sx (- col dx)))
-                    (when (and (>= sx 0) (< sx w)) (db-put-char db sx ch attr)))
-                  (incf col)))))))
+          (%html-draw-line v db li dx w)))
       (write-line* v 0 row w 1 db))))
+
+(defun %html-line-text (v li)
+  "The plain text of rendered line LI (run texts concatenated)."
+  (with-output-to-string (s)
+    (when (< li (length (html-lines v)))
+      (dolist (r (aref (html-lines v) li)) (write-string (html-run-text r) s)))))
+
+(defun html-find (v query)
+  "Find QUERY (case-insensitive) across the rendered lines; record the matches,
+jump to the first, and return the match count."
+  (setf (html-search v) query)
+  (let ((q (string-downcase (or query ""))) (ms '()))
+    (when (plusp (length q))
+      (dotimes (li (length (html-lines v)))
+        (let ((line (string-downcase (%html-line-text v li))) (start 0))
+          (loop for pos = (search q line :start2 start) while pos do
+            (push (list li pos (+ pos (length q))) ms)
+            (setf start (+ pos (length q)))))))
+    (setf (html-matches v) (nreverse ms)
+          (html-match-index v) (if (html-matches v) 0 nil))
+    (when (html-match-index v)
+      (%html-scroll-line-into-view v (first (nth 0 (html-matches v)))))
+    (draw-view v)
+    (length (html-matches v))))
+
+(defun html-find-next (v &optional (dir 1))
+  "Move to the next (DIR 1) or previous (DIR -1) find match, wrapping."
+  (let ((n (length (html-matches v))))
+    (when (plusp n)
+      (setf (html-match-index v) (mod (+ (or (html-match-index v) 0) dir) n))
+      (%html-scroll-line-into-view v (first (nth (html-match-index v) (html-matches v))))
+      (draw-view v))))
+
+(defun %html-prompt-find (v)
+  (multiple-value-bind (cmd s) (input-box "Find in page" "Text:" (or (html-search v) "") 200)
+    (when (and (= cmd +cm-ok+) (plusp (length s)))
+      (when (zerop (html-find v s))
+        (message-box (format nil "Not found: ~a" s)
+                     (logior +mf-information+ +mf-ok-button+))))))
 
 ;;; --- link navigation -------------------------------------------------------
 
@@ -427,11 +483,14 @@ comments / declarations."
 (defmethod handle-event ((v thtml-view) event)
   (cond
     ((and (= (event-type event) +ev-key-down+) (logtest (view-state v) +sf-focused+))
-     (let ((k (event-key-code event)))
+     (let ((k (event-key-code event)) (ch (event-char-code event)))
        (cond
          ((= k +kb-tab+)       (html-next-link v 1)  (clear-event event))
          ((= k +kb-shift-tab+) (html-next-link v -1) (clear-event event))
          ((= k +kb-enter+)     (html-activate-link v) (clear-event event))
+         ((eql ch (char-code #\/)) (%html-prompt-find v) (clear-event event))   ; find in page
+         ((eql ch (char-code #\n)) (html-find-next v 1)  (clear-event event))   ; next match
+         ((eql ch (char-code #\N)) (html-find-next v -1) (clear-event event))   ; prev match
          (t (call-next-method)))))
     ((and (= (event-type event) +ev-mouse-down+) (mouse-in-view-p v event))
      (let* ((lp (make-local v (event-mouse-where event)))

@@ -158,7 +158,8 @@ parked with its stack live:
   Common Lisp HyperSpec.  Tab / Shift-Tab move between links, Enter (or a click)
   follows one, and a Back / Forward history is kept — Ctrl-B (or Backspace) goes
   Back, Ctrl-F goes Forward, Ctrl-R reloads (Alt-←/→ work too where the terminal
-  sends them).  Help ▸ Browser history pops up the
+  sends them).  `/` searches the page (find-in-page) with `n` / `N` to jump
+  between highlighted hits.  Help ▸ Browser history pops up the
   visited-page list (current marked) so you can jump straight to any of them.
   Remote pages are fetched with `curl` (no in-image TLS needed); local files
   are read directly.
