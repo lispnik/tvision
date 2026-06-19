@@ -139,6 +139,11 @@
    #:make-mailbox #:mailbox-send #:mailbox-receive #:mailbox-try-receive
    #:run-on-ui #:drain-ui-callbacks #:install-ui-wakeup #:remove-ui-wakeup
    #:*ui-callbacks* #:*input-multiplexer* #:shutdown-background-threads
+   ;; thread monitor
+   #:tthread-list #:tthread-window #:make-thread-window #:tw-list
+   #:thread-list-refresh #:thread-list-kill #:thread-list-threads
+   #:thread-list-selected
+   #:+cm-thread-refresh+ #:+cm-thread-kill+
    ;; repl
    #:trepl-view #:make-repl-window #:repl-eval #:repl-package #:repl-print
    #:ensure-repl-package #:repl-clear #:repl-history #:repl-history-file

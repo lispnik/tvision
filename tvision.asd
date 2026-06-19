@@ -43,6 +43,7 @@
                              (:file "help")
                              (:file "persist")
                              (:file "stream")
+                             (:file "threadmon")
                              (:file "repl")))))
 
 (asdf:defsystem "tvision/examples"

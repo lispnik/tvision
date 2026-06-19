@@ -17,6 +17,7 @@
 (defparameter +cm-load+     305)
 (defparameter +cm-savetx+   306)
 (defparameter +cm-interrupt+ 307)
+(defparameter +cm-threads+   308)
 
 (defparameter +hc-repl+ 1)
 
@@ -51,7 +52,9 @@
      (new-menu
       (menu-item "~N~ext"    +cm-next+    :key-code +kb-f6+ :key-text "F6")
       (menu-item "~T~ile"    +cm-tile+    :key-code +kb-f4+ :key-text "F4")
-      (menu-item "~C~ascade" +cm-cascade+ :key-code +kb-f5+ :key-text "F5")))))
+      (menu-item "~C~ascade" +cm-cascade+ :key-code +kb-f5+ :key-text "F5")
+      (menu-separator)
+      (menu-item "T~h~reads..." +cm-threads+ :key-code +kb-f9+ :key-text "F9")))))
 
 (defmethod tvision::status-line-items ((app tvlisp-app))
   (list (make-status-item "~Alt-X~ Exit" +kb-alt-x+ +cm-quit+)
@@ -82,6 +85,18 @@
   (let ((w (group-current (program-desktop app))))
     (when (typep w 'twindow)
       (find-if (lambda (v) (typep v 'trepl-view)) (group-subviews w)))))
+
+(defun open-thread-window (app)
+  "Open (or re-focus) the thread monitor."
+  (let* ((desk (program-desktop app))
+         (existing (first-that desk (lambda (v) (typep v 'tthread-window)))))
+    (if existing
+        (progn (focus existing)
+               (let ((tl (tw-list existing))) (when tl (thread-list-refresh tl))))
+        (let* ((dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+               (w (min 56 (- dw 2))) (h (min 18 (- dh 2)))
+               (ax (max 0 (- dw w 1))) (ay 1))
+          (insert desk (make-thread-window (make-trect ax ay (+ ax w) (+ ay h))))))))
 
 ;;; --- command dispatch ------------------------------------------------------
 
@@ -121,7 +136,8 @@
              (when (and rv path) (text-save-file rv path)))
            (clear-event event))
           ((= c +cm-tile+)     (tile (program-desktop app)) (clear-event event))
-          ((= c +cm-cascade+)  (cascade (program-desktop app)) (clear-event event)))))))
+          ((= c +cm-cascade+)  (cascade (program-desktop app)) (clear-event event))
+          ((= c +cm-threads+)  (open-thread-window app) (clear-event event)))))))
 
 ;;; --- entry points ----------------------------------------------------------
 
