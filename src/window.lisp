@@ -30,6 +30,7 @@
 
 (defmethod frame-owner-title ((w twindow)) (window-title w))
 (defmethod frame-owner-flags ((w twindow)) (window-flags w))
+(defmethod frame-owner-number ((w twindow)) (window-number w))
 
 (defun standard-scrollbar (w &optional (vertical t))
   "Create and insert a scroll bar along the right (or bottom) edge of W."

@@ -12,6 +12,7 @@
 ;;; concrete window class at compile time.
 (defgeneric frame-owner-title (v) (:method ((v tview)) nil))
 (defgeneric frame-owner-flags (v) (:method ((v tview)) 0))
+(defgeneric frame-owner-number (v) (:method ((v tview)) 0))
 
 (defclass tframe (tview)
   ())
@@ -52,6 +53,10 @@
     (db-fill db (code-char (aref box 1)) cf)
     (%set-cell db 0 (aref box 4) cf)
     (%set-cell db (1- w) (aref box 5) cf)
+    ;; the window number (1..9), classic TV style, near the lower-right corner
+    (let ((n (frame-owner-number win)))
+      (when (and (integerp n) (<= 1 n 9) (> w 6))
+        (%set-cell db (- w 3) (+ (char-code #\0) n) cf)))
     (write-line* f 0 (1- h) w 1 db)
     ;; --- title ------------------------------------------------------------
     (let ((title (frame-owner-title win)))

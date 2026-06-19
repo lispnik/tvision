@@ -38,7 +38,23 @@
                    :key (lambda (w) (and (typep w 'twindow) (window-number w))))))
     (when win (set-current d win :normal-select))))
 
+(defmethod on-inserted ((d tdesktop) view)
+  "Give each window the lowest free number 1..9 as it joins the desktop."
+  (when (and (typep view 'twindow) (= (window-number view) +wn-no-number+))
+    (let ((used (loop for w in (desktop-windows d)
+                      when (and (typep w 'twindow) (not (eq w view)))
+                      collect (window-number w))))
+      (loop for n from 1 to 9
+            unless (member n used)
+            do (setf (window-number view) n) (return)))))
+
 (defmethod handle-event ((d tdesktop) event)
+  ;; Alt-1..9 jumps to that window -- handled before the focused view sees the digit
+  (when (and (= (event-type event) +ev-key-down+)
+             (logtest (event-modifiers event) +md-alt+)
+             (<= (char-code #\1) (event-char-code event) (char-code #\9)))
+    (select-window-by-number d (- (event-char-code event) (char-code #\0)))
+    (clear-event event))
   (call-next-method)
   (when (= (event-type event) +ev-command+)
     (cond

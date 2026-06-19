@@ -140,9 +140,12 @@ parked with its stack live:
 - **Thread monitor** (F9, Window ▸ Threads) lists the worker threads with
   Refresh / Kill; new REPL (F2), Clear (F3), Tile (F4), Cascade (F5), Next (F6),
   Help (F1).
-- **Window list** (Window ▸ List, Alt-0) — a picker of every open window (the
-  active one marked); Enter / OK raises and focuses the chosen window, like the
-  classic Turbo Vision IDE's Alt-0.
+- **Numbered windows** — each window is assigned the lowest free number 1–9
+  (shown in its frame, classic TV style); **Alt-1…9** jumps straight to that
+  window.
+- **Window list** (Window ▸ List, Alt-0) — a picker of every open window
+  (numbered, the active one marked); Enter / OK raises and focuses the chosen
+  window, like the classic Turbo Vision IDE's Alt-0.
 
 ![Window list (Alt-0): pick any open window to raise it](media/window-list.gif)
 - **HyperSpec browser** (Help ▸ HyperSpec / browse…) — a `THtmlView` hypertext

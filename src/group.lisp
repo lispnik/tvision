@@ -21,11 +21,16 @@
 
 ;;; --- insertion / removal ---------------------------------------------------
 
+(defgeneric on-inserted (g view)
+  (:documentation "Hook run after VIEW is inserted into G (e.g. to number windows).")
+  (:method (g view) (declare (ignore g view)) nil))
+
 (defun insert (g view)
   "Insert VIEW at the top of G, give it the focus if selectable, and draw it."
   (setf (view-owner view) g)
   (setf (group-subviews g) (cons view (group-subviews g)))
   (set-state view +sf-visible+ t)
+  (on-inserted g view)
   (if (logtest (view-options view) +of-selectable+)
       (set-current g view :normal-select)
       (draw-view view))
