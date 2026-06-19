@@ -21,6 +21,9 @@ SLIME/micros debugger); when nil, the error is just reported and aborted.")
 thread so the UI never blocks and output streams in live.  When nil, evaluation
 runs inline on the UI thread (used by headless tests).")
 
+(defvar *repl-time* nil
+  "When true, the REPL prints the wall-clock time each evaluation took.")
+
 (defparameter +repl-hist-symbols+ '(* ** *** / // /// + ++ +++ -)
   "The CL REPL history variables, in shift order.  Each listener keeps its own
 values (in the view) and binds these symbols with PROGV around evaluation, so
@@ -203,7 +206,69 @@ e.g. '*, '+, '/).  Reads listener-local storage, not the global CL specials."
     (end-of-file () nil)
     (error () t)))
 
+;;; --- read-only text windows (describe / macroexpand / backtrace / ...) ------
+
+(defun show-text-window (title text &key (width 76) (height 22))
+  "Open a modeless, read-only, scrollable window showing TEXT.  Returns the
+window and its text view."
+  (when *application*
+    (let* ((desk (program-desktop *application*))
+           (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+           (w (min width (max 24 (- dw 2)))) (h (min height (max 6 (- dh 2))))
+           (win (make-instance 'twindow :title title :bounds (make-trect 0 0 w h)))
+           (vsb (standard-scrollbar win t))
+           (tv (make-instance 'ttext-view :read-only t
+                              :bounds (make-trect 1 1 (1- w) (1- h)))))
+      (insert win tv)
+      (text-attach-scrollbars tv :vscroll vsb)
+      (set-text tv (or text ""))
+      (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+      (insert desk win)
+      (focus tv)
+      (values win tv))))
+
+(defun show-text-dialog (title text &key (width 72) (height 20))
+  "Show TEXT in a modal, read-only, scrollable dialog (usable from inside another
+modal view, e.g. the restart dialog)."
+  (when *application*
+    (let* ((desk (program-desktop *application*))
+           (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+           (w (min width (max 24 (- dw 2)))) (h (min height (max 8 (- dh 2))))
+           (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
+           (vsb (standard-scrollbar d t))
+           (tv (make-instance 'ttext-view :read-only t
+                              :bounds (make-trect 1 1 (1- w) (- h 3)))))
+      (insert d tv)
+      (text-attach-scrollbars tv :vscroll vsb)
+      (set-text tv (or text ""))
+      (insert d (make-button (make-trect (floor (- w 10) 2) (- h 3)
+                                         (+ (floor (- w 10) 2) 10) (- h 1))
+                             "O~K~" +cm-ok+ t))
+      (move-to d (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+      (focus tv)
+      (exec-view desk d))))
+
+(defun repl-capture-backtrace ()
+  "Capture the current backtrace as a string (called where the error stack is
+still live)."
+  (ignore-errors
+   (with-output-to-string (s) (sb-debug:print-backtrace :stream s :count 50))))
+
 ;;; --- restart menu (the micros/SLIME debugger feel) -------------------------
+
+(defparameter +cm-repl-backtrace+ 70)
+
+(defclass trestart-dialog (tdialog)
+  ((backtrace :initarg :backtrace :initform nil :accessor restart-dialog-backtrace))
+  (:documentation "The debugger dialog; its Backtrace button shows the captured
+backtrace without dismissing the restart list."))
+
+(defmethod handle-event ((d trestart-dialog) event)
+  (when (and (= (event-type event) +ev-command+)
+             (= (event-command event) +cm-repl-backtrace+))
+    (show-text-dialog "Backtrace" (or (restart-dialog-backtrace d) "(no backtrace)"))
+    (clear-event event))
+  (call-next-method))
 
 (defun %restart-needs-value-p (restart)
   "True for restarts that take a value argument (USE-VALUE / STORE-VALUE), so
@@ -211,17 +276,18 @@ the debugger must prompt for one before invoking."
   (let ((n (restart-name restart)))
     (and n (member (symbol-name n) '("USE-VALUE" "STORE-VALUE") :test #'string=))))
 
-(defun repl-restart-dialog (condition restarts)
+(defun repl-restart-dialog (condition restarts &optional backtrace)
   "UI-thread only: show RESTARTS for CONDITION and, when the chosen restart needs
-a value (USE-VALUE/STORE-VALUE), prompt for a Lisp form supplying it.  Returns
-(values index value-form-string); INDEX is NIL when the user aborts.  Safe to
-call while a worker thread is blocked waiting for the answer."
+a value (USE-VALUE/STORE-VALUE), prompt for a Lisp form supplying it.  A
+Backtrace button shows BACKTRACE.  Returns (values index value-form-string);
+INDEX is NIL when the user aborts.  Safe to call while a worker thread is blocked
+waiting for the answer."
   (when (and *application* restarts)
     (let* ((labels (mapcar (lambda (rs) (format nil "~a" rs)) restarts))
            (desk (program-desktop *application*))
            (w 64) (h 17)
-           (d (make-instance 'tdialog :title "Error — pick a restart"
-                             :bounds (make-trect 0 0 w h)))
+           (d (make-instance 'trestart-dialog :title "Error — pick a restart"
+                             :backtrace backtrace :bounds (make-trect 0 0 w h)))
            (st (make-instance 'tstatic-text
                               :text (format nil "~(~a~):~%~a" (type-of condition) condition)
                               :bounds (make-trect 2 1 (- w 2) 5)))
@@ -229,6 +295,7 @@ call while a worker thread is blocked waiting for the answer."
            (lb (make-instance 'tlist-box :items labels :command +cm-ok+
                               :bounds (make-trect 2 6 (1- w) (- h 4)))))
       (insert d st) (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (insert d (make-button (make-trect 2 (- h 3) 15 (- h 1)) "~B~acktrace" +cm-repl-backtrace+))
       (insert d (make-button (make-trect (- w 28) (- h 3) (- w 17) (- h 1)) "~I~nvoke" +cm-ok+ t))
       (insert d (make-button (make-trect (- w 14) (- h 3) (- w 3) (- h 1)) "Abort" +cm-cancel+))
       (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
@@ -265,8 +332,9 @@ fails to read/evaluate.  Runs on the thread owning the error's dynamic extent."
 (defun repl-error-handler (e)
   "HANDLER-BIND handler (inline path): offer restarts, then transfer control."
   (if *repl-debugger*
-      (let ((restarts (compute-restarts e)))
-        (multiple-value-bind (idx vs) (repl-restart-dialog e restarts)
+      (let ((restarts (compute-restarts e))
+            (bt (repl-capture-backtrace)))
+        (multiple-value-bind (idx vs) (repl-restart-dialog e restarts bt)
           (repl-invoke-restart restarts idx vs)))
       (invoke-restart (find-restart 'repl-abort))))
 
@@ -388,11 +456,12 @@ async is enabled and a UI loop is running, otherwise inline."
 menu, block for the choice, then invoke the chosen restart here (so the live
 stack/dynamic extent of the error is intact).  Never returns normally."
   (declare (ignore r))
-  (let ((restarts (compute-restarts condition)))
+  (let ((restarts (compute-restarts condition))
+        (bt (repl-capture-backtrace)))
     (if (and *repl-debugger* *ui-callbacks*)
         (let ((sem (sb-thread:make-semaphore)) (choice (list nil nil)))
           (run-on-ui (lambda ()
-                       (multiple-value-bind (idx vs) (repl-restart-dialog condition restarts)
+                       (multiple-value-bind (idx vs) (repl-restart-dialog condition restarts bt)
                          (setf (first choice) idx (second choice) vs))
                        (sb-thread:signal-semaphore sem)))
           (sb-thread:wait-on-semaphore sem)
@@ -404,7 +473,8 @@ stack/dynamic extent of the error is intact).  Never returns normally."
 routing errors through the cross-thread debugger.  Posts the final results back
 to the UI thread."
   (let ((out (make-instance 'repl-output-stream :view r))
-        (results '()) (errored nil) (last nil) (new-hist (repl-hist-vars r)))
+        (results '()) (errored nil) (last nil) (new-hist (repl-hist-vars r))
+        (start (get-internal-real-time)))
     (let ((*standard-output* out) (*error-output* out) (*trace-output* out)
           (*package* (repl-package r)))
       (unwind-protect
@@ -423,10 +493,12 @@ to the UI thread."
                (repl-abort () (setf errored t))))
         (finish-output out))
       (let ((results (nreverse results)) (pkg *package*)
-            (errored errored) (last last) (new-hist new-hist))
-        (run-on-ui (lambda () (repl-finish-eval r results pkg errored last new-hist)))))))
+            (errored errored) (last last) (new-hist new-hist)
+            (ms (round (* 1000 (/ (- (get-internal-real-time) start)
+                                  internal-time-units-per-second)))))
+        (run-on-ui (lambda () (repl-finish-eval r results pkg errored last new-hist ms)))))))
 
-(defun repl-finish-eval (r results pkg errored last new-hist)
+(defun repl-finish-eval (r results pkg errored last new-hist &optional (ms 0))
   "UI thread: print results/error summary and re-prompt after a worker eval."
   (setf (repl-package r) pkg             ; sticky in-package
         (repl-hist-vars r) new-hist)     ; per-listener history vars
@@ -435,6 +507,8 @@ to the UI thread."
     ((and errored last)
      (repl-print r (format nil "; ~(~a~): ~a~%" (type-of last) last)))
     ((not errored) (repl-print-results r results)))
+  (when (and *repl-time* (not errored))
+    (repl-print r (format nil "; ~d ms~%" ms)))
   (setf (repl-busy r) nil)
   (repl-fresh-prompt r)
   (draw-view r)
