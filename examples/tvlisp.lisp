@@ -61,6 +61,7 @@
 (defparameter +cm-profile-det+ 340)
 (defparameter +cm-browse+      341)
 (defparameter +cm-bhistory+    342)
+(defparameter +cm-hslookup+    343)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -126,6 +127,7 @@
       (menu-item "Doc~u~mentation..." +cm-documentation+)
       (menu-item "Dis~a~ssemble..."   +cm-disassemble+)
       (menu-item "A~p~ropos..."       +cm-apropos+)
+      (menu-item "~H~yperSpec lookup..." +cm-hslookup+)
       (menu-separator)
       (menu-item "~C~lass browser..." +cm-classes+)
       (menu-item "Pac~k~ages..."      +cm-packages+)
@@ -486,6 +488,79 @@ around it."
                               collect (format nil "~:[  ~;> ~]~a" (= i cur) (hw-label w loc)))))
            (let ((sel (choose-index "Browser history" labels :start cur)))
              (when sel (hw-goto-index w sel))))))))
+
+;;; --- HyperSpec symbol lookup -----------------------------------------------
+
+(defparameter +hyperspec-base+ "https://www.lispworks.com/documentation/HyperSpec/")
+(defvar *hyperspec-map* nil
+  "Lazy-loaded hash table mapping an upcased symbol name to its HyperSpec URL.")
+
+(defun %load-hyperspec-map ()
+  "Fetch and parse the HyperSpec Data/Map_Sym.txt -- alternating NAME / path
+lines -- into a name -> URL hash table, or NIL on failure."
+  (let ((txt (%http-get (concatenate 'string +hyperspec-base+ "Data/Map_Sym.txt"))))
+    (when txt
+      (let ((map (make-hash-table :test 'equal))
+            (lines (with-input-from-string (s txt)
+                     (loop for l = (read-line s nil nil) while l
+                           collect (string-trim '(#\Return #\Space #\Tab) l)))))
+        ;; paths are relative to the Data/ directory, e.g. "../Body/f_car_c.htm"
+        (loop for (name path) on lines by #'cddr
+              when (and name path (plusp (length name)) (plusp (length path))) do
+                (let ((rel (if (eql 0 (search "../" path))
+                               (subseq path 3)                       ; -> Body/...
+                               (concatenate 'string "Data/" path))))
+                  (setf (gethash (string-upcase name) map)
+                        (concatenate 'string +hyperspec-base+ rel))))
+        map))))
+
+(defun hyperspec-url (name)
+  "The HyperSpec page URL for symbol NAME, or NIL.  Loads the map on first use;
+a failed load is retried next time."
+  (when (null *hyperspec-map*)
+    (setf *hyperspec-map* (%load-hyperspec-map)))
+  (and *hyperspec-map* (gethash (string-upcase name) *hyperspec-map*)))
+
+(defun %hs-symchar-p (ch) (or (alphanumericp ch) (find ch "+-*/@$%^&_=<>.~!?:")))
+
+(defun %symbol-at-point (view)
+  "The symbol token surrounding the cursor in text VIEW, or NIL."
+  (when (typep view 'ttext-view)
+    (let* ((line (current-line-string view))
+           (col (min (text-cur-col view) (length line)))
+           (start col) (end col))
+      (loop while (and (> start 0) (%hs-symchar-p (char line (1- start)))) do (decf start))
+      (loop while (and (< end (length line)) (%hs-symchar-p (char line end))) do (incf end))
+      (when (< start end) (subseq line start end)))))
+
+(defun %strip-package (name)
+  "Drop a leading PACKAGE: / PACKAGE:: qualifier from NAME."
+  (let ((p (position #\: name :from-end t)))
+    (if p (subseq name (1+ p)) name)))
+
+(defun %current-text-view (app)
+  "The focused editor or REPL text view, or NIL."
+  (let ((w (group-current (program-desktop app))))
+    (if (typep w 'teditor-window) (editor-window-editor w) (current-repl app))))
+
+(defun do-hyperspec-lookup (app)
+  "Open a browser on the HyperSpec page for the symbol at point.  When there is
+no symbol, or it is not a standard symbol, prompt (prefilled with what we found)."
+  (let* ((view (%current-text-view app))
+         (tok (%strip-package (or (and view (%symbol-at-point view)) "")))
+         (url (and (plusp (length tok)) (hyperspec-url tok))))
+    (cond
+      (url (open-html-window app url))
+      (t (let ((name (prompt-line "HyperSpec lookup" "Symbol:" tok)))
+           (when name
+             (let* ((nm (%strip-package (string-trim " " name)))
+                    (u (and (plusp (length nm)) (hyperspec-url nm))))
+               (cond
+                 (u (open-html-window app u))
+                 ((plusp (length nm))
+                  (message-box (format nil "~a is not in the Common Lisp HyperSpec."
+                                       (string-upcase nm))
+                               (logior +mf-information+ +mf-ok-button+)))))))))))
 
 ;;; --- Lisp tools ------------------------------------------------------------
 
@@ -1136,6 +1211,7 @@ run a form, and show the call-count/time report."
           ((= c +cm-funcbrowser+) (do-function-browser rv app) (clear-event event))
           ((= c +cm-browse+)      (do-browse app) (clear-event event))
           ((= c +cm-bhistory+)    (do-browser-history app) (clear-event event))
+          ((= c +cm-hslookup+)    (do-hyperspec-lookup app) (clear-event event))
           ((= c +cm-step+)        (do-step rv) (clear-event event))
           ((= c +cm-profile+)     (do-profile rv app) (clear-event event))
           ((= c +cm-profile-det+) (do-profile-deterministic rv) (clear-event event))

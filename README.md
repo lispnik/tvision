@@ -113,6 +113,9 @@ parked with its stack live:
 - **Class browser** (super/sub-classes + slots via `sb-mop`), **Package
   browser** (switch the current package), **ASDF System browser** (load on
   Enter), **Load buffer** (evaluate an editor window into the REPL).
+- **HyperSpec lookup** — opens the browser on the Common Lisp HyperSpec page
+  for the symbol at the cursor (resolved via the HyperSpec's `Map_Sym.txt`);
+  prompts, prefilled, when there is no symbol or it is not a standard one.
 - **Profiler** — statistical (`sb-sprof`) and deterministic (`sb-profile`).
   Runs on the worker thread so the UI stays live, then shows the results in a
   sortable `TTableView` grid (Self% / Cumul% / Samples / Function — click a
