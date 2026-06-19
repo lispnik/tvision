@@ -270,12 +270,65 @@
 
 ;;; --- Lisp tools ------------------------------------------------------------
 
-(defun do-macroexpand (rv)
-  (let ((s (prompt-line "Macroexpand" "Form:")))
-    (when (and rv s)
+(defun %editor-offset (ed)
+  "Absolute character offset of the cursor within (text-string ED)."
+  (let ((off 0))
+    (dotimes (i (text-cur-line ed))
+      (incf off (1+ (length (nth-line ed i)))))   ; + the line's newline
+    (+ off (min (text-cur-col ed) (length (current-line-string ed))))))
+
+(defun %sexp-at-offset (str off)
+  "Substring of STR for the innermost balanced () form containing OFF, or NIL.
+Skips strings, #\\char literals and ; comments so their parens don't count."
+  (let ((len (length str)) (stack '()) (best nil) (i 0))
+    (loop while (< i len) do
+      (let ((c (char str i)))
+        (cond
+          ((char= c #\;)                                  ; line comment
+           (loop while (and (< i len) (char/= (char str i) #\Newline)) do (incf i)))
+          ((char= c #\")                                  ; string literal
+           (incf i)
+           (loop while (< i len) do
+             (let ((d (char str i)))
+               (incf i)
+               (cond ((char= d #\\) (incf i))
+                     ((char= d #\") (return))))))
+          ((and (char= c #\#) (< (1+ i) len) (char= (char str (1+ i)) #\\))
+           (incf i 3))                                    ; #\x char literal
+          ((char= c #\() (push i stack) (incf i))
+          ((char= c #\))
+           (when stack
+             (let ((start (pop stack)))
+               (when (and (<= start off) (<= off i)        ; encloses the cursor,
+                          (or (null best) (> start (car best))))  ; keep innermost
+                 (setf best (cons start (1+ i))))))
+           (incf i))
+          (t (incf i)))))
+    (when best (subseq str (car best) (cdr best)))))
+
+(defun editor-form-at-point (ed)
+  "The selection, the s-expression around the cursor, or the current line."
+  (let ((sel (selected-string ed)))
+    (if (and sel (plusp (length (string-trim '(#\Space #\Tab #\Newline) sel))))
+        sel
+        (or (ignore-errors (%sexp-at-offset (text-string ed) (%editor-offset ed)))
+            (current-line-string ed)))))
+
+(defun do-macroexpand (app)
+  "Macroexpand-1 a form.  When an editor window is focused, the prompt defaults
+to the form at the cursor (the selection, the enclosing s-expression, or the
+current line)."
+  (let* ((rv (some-repl app))
+         (ew (current-editor-window app))
+         (default (when ew
+                    (string-trim '(#\Space #\Tab #\Newline)
+                                 (or (editor-form-at-point (editor-window-editor ew)) ""))))
+         (s (prompt-line "Macroexpand" "Form:" (or default ""))))
+    (when s
       (handler-case
-          (let ((*print-pretty* t))
-            (show-text-window "Macroexpand-1" (prin1-to-string (macroexpand-1 (read-in rv s)))))
+          (let ((*print-pretty* t)
+                (*package* (if rv (repl-package rv) *package*)))
+            (show-text-window "Macroexpand-1" (prin1-to-string (macroexpand-1 (read-from-string s)))))
         (error (e) (err-box e))))))
 
 (defun describe-named (rv name)
@@ -852,7 +905,7 @@ run a form, and show the call-count/time report."
           ((= c +cm-paste+)    (with-repl #'paste-clipboard) (clear-event event))
           ((= c +cm-inspect+)  (when rv (repl-inspect (repl-hvar rv '*) "*")) (clear-event event))
           ((= c +cm-inspect-expr+) (do-inspect-expr rv) (clear-event event))
-          ((= c +cm-macroexpand+) (do-macroexpand rv) (clear-event event))
+          ((= c +cm-macroexpand+) (do-macroexpand app) (clear-event event))
           ((= c +cm-describe+)    (do-describe rv) (clear-event event))
           ((= c +cm-documentation+) (do-documentation rv) (clear-event event))
           ((= c +cm-disassemble+) (do-disassemble rv) (clear-event event))
