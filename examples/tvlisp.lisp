@@ -1094,6 +1094,27 @@ run a form, and show the call-count/time report."
   (let ((w (group-current (program-desktop app))))
     (and (typep w 'teditor-window) w)))
 
+(defmethod valid-p ((w teditor-window) command)
+  "Confirm before closing or quitting a modified editor window: Yes saves
+(Save As when it has no file yet), No discards, Cancel keeps the window."
+  (let ((ed (editor-window-editor w)))
+    (if (and (member command (list +cm-close+ +cm-quit+)) ed (text-modified ed))
+        (let ((ans (message-box
+                    (format nil "~a has unsaved changes.  Save before closing?"
+                            (window-title w))
+                    (logior +mf-warning+ +mf-yes-button+ +mf-no-button+ +mf-cancel-button+))))
+          (cond
+            ((= ans +cm-yes+)
+             (let ((path (or (editor-filename ed) (file-save-dialog :title "Save As"))))
+               (when path
+                 (text-save-file ed path)
+                 (setf (editor-filename ed) path
+                       (window-title w) (file-namestring path)))
+               (and path t)))            ; Save As cancelled -> abort the close
+            ((= ans +cm-no+) t)          ; discard changes
+            (t nil)))                    ; Cancel -> keep the window
+        (call-next-method))))
+
 (defun do-saveas-editor (app)
   "Save the focused editor window under a new path; return T if saved."
   (let ((w (current-editor-window app)))
