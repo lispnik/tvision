@@ -25,7 +25,8 @@
    (undo      :initform '() :accessor text-undo)
    (redo      :initform '() :accessor text-redo)
    (modified  :initform nil :accessor text-modified)
-   (overwrite :initform nil :accessor text-overwrite)))
+   (overwrite :initform nil :accessor text-overwrite)
+   (wrap      :initarg :wrap :initform nil :accessor text-wrap))) ; word-wrap mode
 
 (declaim (inline text-top-line text-left-col))
 (defun text-top-line (tv) (point-y (scroller-delta tv)))
@@ -49,11 +50,29 @@
     v))
 
 (defun text-update-limit (tv)
-  "Set the scroller's virtual size from the current line widths and count."
+  "Set the scroller's virtual size from the current line widths and count.  In
+word-wrap mode the virtual width is just the view width (no horizontal scroll)."
   (let ((maxw 1))
-    (dotimes (i (fill-pointer (text-lines tv)))
-      (setf maxw (max maxw (1+ (length (aref (text-lines tv) i))))))
+    (if (text-wrap tv)
+        (setf maxw (max 1 (point-x (view-size tv))))
+        (dotimes (i (fill-pointer (text-lines tv)))
+          (setf maxw (max maxw (1+ (length (aref (text-lines tv) i)))))))
     (set-scroller-limit tv maxw (fill-pointer (text-lines tv)))))
+
+;;; word-wrap geometry: a logical line of LEN chars occupies this many visual
+;;; rows of width W (room for the cursor one past the end on a full row).
+(defun %line-rows (len w) (1+ (floor (max 0 len) (max 1 w))))
+(defun %vrows-between (tv top line w)
+  "Number of visual rows occupied by logical lines [TOP, LINE)."
+  (loop for i from top below line sum (%line-rows (length (nth-line tv i)) w)))
+
+(defun set-text-wrap (tv on)
+  "Turn word-wrap on/off and reflow."
+  (setf (text-wrap tv) on)
+  (when on (setf (text-left-col tv) 0))
+  (text-update-limit tv)
+  (ensure-visible tv)
+  (draw-view tv))
 
 (defun set-text (tv string)
   "Replace the contents of TV with STRING (split on newlines)."
@@ -110,14 +129,21 @@ Used to stream output, e.g. REPL results."
 that the cursor is on screen."
   (text-update-limit tv)
   (let ((h (point-y (view-size tv)))
-        (w (max 1 (point-x (view-size tv))))
-        (dy (text-top-line tv))
-        (dx (text-left-col tv)))
-    (when (< (text-cur-line tv) dy) (setf dy (text-cur-line tv)))
-    (when (>= (text-cur-line tv) (+ dy h)) (setf dy (1+ (- (text-cur-line tv) h))))
-    (when (< (text-cur-col tv) dx) (setf dx (text-cur-col tv)))
-    (when (>= (text-cur-col tv) (+ dx w)) (setf dx (1+ (- (text-cur-col tv) w))))
-    (scroll-to tv (max 0 dx) (max 0 dy))))
+        (w (max 1 (point-x (view-size tv)))))
+    (if (text-wrap tv)
+        ;; vertical scroll is by logical line; keep the cursor's visual row in view
+        (let ((top (min (text-top-line tv) (text-cur-line tv))))
+          (loop for crow = (+ (%vrows-between tv top (text-cur-line tv) w)
+                              (floor (text-cur-col tv) w))
+                while (and (>= crow h) (< top (text-cur-line tv)))
+                do (incf top))
+          (scroll-to tv 0 (max 0 top)))
+        (let ((dy (text-top-line tv)) (dx (text-left-col tv)))
+          (when (< (text-cur-line tv) dy) (setf dy (text-cur-line tv)))
+          (when (>= (text-cur-line tv) (+ dy h)) (setf dy (1+ (- (text-cur-line tv) h))))
+          (when (< (text-cur-col tv) dx) (setf dx (text-cur-col tv)))
+          (when (>= (text-cur-col tv) (+ dx w)) (setf dx (1+ (- (text-cur-col tv) w))))
+          (scroll-to tv (max 0 dx) (max 0 dy))))))
 
 ;;; --- positions, selection, protected region --------------------------------
 
@@ -156,6 +182,9 @@ START precedes END; (values nil nil) when there is no selection."
 ;;; --- drawing ---------------------------------------------------------------
 
 (defmethod draw ((tv ttext-view))
+  (if (text-wrap tv) (%draw-wrapped tv) (%draw-flat tv)))
+
+(defun %draw-flat (tv)
   (let* ((w (point-x (view-size tv)))
          (h (point-y (view-size tv)))
          (c (get-color tv 1))
@@ -182,6 +211,37 @@ START precedes END; (values nil nil) when there is no selection."
     (when (logtest (view-state tv) +sf-focused+)
       (set-cursor tv (- (text-cur-col tv) (text-left-col tv))
                   (- (text-cur-line tv) (text-top-line tv))))))
+
+(defun %draw-wrapped (tv)
+  (let* ((w (max 1 (point-x (view-size tv))))
+         (h (point-y (view-size tv)))
+         (c (get-color tv 1)) (hi (get-color tv 2))
+         (db (make-draw-buffer w))
+         (row 0) (li (text-top-line tv)))
+    (multiple-value-bind (sels sele) (selection-range tv)
+      (loop while (< row h) do
+        (cond
+          ((< li (line-count tv))
+           (let* ((line (nth-line tv li)) (len (length line))
+                  (nseg (%line-rows len w)))
+             (dotimes (seg nseg)
+               (when (>= row h) (return))
+               (let* ((start (* seg w)) (end (min len (+ start w))))
+                 (db-fill db #\Space c)
+                 (when (< start end) (db-move-str db 0 (subseq line start end) c))
+                 (when (and sels (<= (car sels) li (car sele)))
+                   (let* ((hs (if (= li (car sels)) (cdr sels) 0))
+                          (he (if (= li (car sele)) (cdr sele) len))
+                          (vs (max 0 (- hs start))) (ve (min w (- he start))))
+                     (when (< vs ve) (db-put-attribute db vs hi (- ve vs)))))
+                 (write-line* tv 0 row w 1 db))
+               (incf row))
+             (incf li)))
+          (t (db-fill db #\Space c) (write-line* tv 0 row w 1 db) (incf row)))))
+    (when (logtest (view-state tv) +sf-focused+)
+      (set-cursor tv (mod (text-cur-col tv) w)
+                  (+ (%vrows-between tv (text-top-line tv) (text-cur-line tv) w)
+                     (floor (text-cur-col tv) w))))))
 
 ;;; --- editing primitives ----------------------------------------------------
 
@@ -320,10 +380,23 @@ subclass overrides this to evaluate the current input instead.")
 
 (defun %mouse-to-cursor (tv event)
   "Move the cursor to the click/drag position of EVENT."
-  (let ((lp (make-local tv (event-mouse-where event))))
-    (setf (text-cur-line tv) (min (1- (line-count tv))
-                                  (+ (text-top-line tv) (max 0 (point-y lp))))
-          (text-cur-col tv) (+ (text-left-col tv) (max 0 (point-x lp))))
+  (let* ((lp (make-local tv (event-mouse-where event)))
+         (mx (max 0 (point-x lp))) (my (max 0 (point-y lp))))
+    (if (text-wrap tv)
+        (let ((w (max 1 (point-x (view-size tv)))) (li (text-top-line tv)) (acc 0) (done nil))
+          (loop while (and (not done) (< li (line-count tv))) do
+            (let ((nseg (%line-rows (length (nth-line tv li)) w)))
+              (if (< my (+ acc nseg))
+                  (progn
+                    (setf (text-cur-line tv) li
+                          (text-cur-col tv) (+ (* (- my acc) w) mx)
+                          done t))
+                  (progn (incf acc nseg) (incf li)))))
+          (unless done
+            (setf (text-cur-line tv) (1- (line-count tv))
+                  (text-cur-col tv) (length (nth-line tv (1- (line-count tv)))))))
+        (setf (text-cur-line tv) (min (1- (line-count tv)) (+ (text-top-line tv) my))
+              (text-cur-col tv) (+ (text-left-col tv) mx)))
     (clamp-cursor tv)))
 
 (defun %move-cursor (tv k)
