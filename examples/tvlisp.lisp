@@ -54,6 +54,8 @@
 (defparameter +cm-whorefs+     334)
 (defparameter +cm-step+        335)
 (defparameter +cm-new-file+    336)
+(defparameter +cm-save+        337)
+(defparameter +cm-saveas+      338)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -81,6 +83,8 @@
       (menu-item "~C~lear"           +cm-clear+    :key-code +kb-f3+ :key-text "F3")
       (menu-separator)
       (menu-item "Open in ~e~ditor..." +cm-editor+)
+      (menu-item "~S~ave"            +cm-save+     :key-text "Ctrl-S")
+      (menu-item "Save ~A~s..."      +cm-saveas+)
       (menu-item "~L~oad file..."    +cm-load+     :key-code +kb-f7+ :key-text "F7")
       (menu-item "Save ~t~ranscript..." +cm-savetx+)
       (menu-separator)
@@ -527,6 +531,32 @@
           (insert desk w)
           (focus w))))))
 
+(defun current-editor-window (app)
+  (let ((w (group-current (program-desktop app))))
+    (and (typep w 'teditor-window) w)))
+
+(defun do-saveas-editor (app)
+  "Save the focused editor window under a new path; return T if saved."
+  (let ((w (current-editor-window app)))
+    (when w
+      (let ((path (file-save-dialog :title "Save As")))
+        (when path
+          (let ((ed (editor-window-editor w)))
+            (text-save-file ed path)
+            (setf (editor-filename ed) path
+                  (window-title w) (file-namestring path))
+            (draw-view w)
+            t))))))
+
+(defun do-save-editor (app)
+  "Save the focused editor window (Save As if it has no filename yet)."
+  (let ((w (current-editor-window app)))
+    (when w
+      (let* ((ed (editor-window-editor w)) (path (editor-filename ed)))
+        (if path
+            (progn (text-save-file ed path) (draw-view w))
+            (do-saveas-editor app))))))
+
 (defun do-load-buffer (app)
   (let* ((win (group-current (program-desktop app)))
          (ed (and (typep win 'teditor-window) (editor-window-editor win)))
@@ -651,6 +681,8 @@
         ((= k +kb-ctrl-f+) (do-find app) (clear-event event))
         ((= k +kb-ctrl-l+) (do-find-next app) (clear-event event))
         ((= k +kb-ctrl-r+) (do-history-search (current-repl app)) (clear-event event))
+        ((and (= k 19) (current-editor-window app)) ; Ctrl-S: save focused editor
+         (do-save-editor app) (clear-event event))
         ((and (logtest (event-modifiers event) +md-alt+) (= (event-char-code event) 46)) ; M-.
          (do-goto-definition (current-repl app) app) (clear-event event)))))
   ;; auto-close parens
@@ -697,6 +729,8 @@
           ((= c +cm-histsearch+)  (do-history-search rv) (clear-event event))
           ((= c +cm-new-file+)    (do-new-editor app) (clear-event event))
           ((= c +cm-editor+)      (do-open-editor app) (clear-event event))
+          ((= c +cm-save+)        (do-save-editor app) (clear-event event))
+          ((= c +cm-saveas+)      (do-saveas-editor app) (clear-event event))
           ((= c +cm-interrupt+)   (when rv (repl-interrupt rv)) (clear-event event))
           ((= c +cm-session-save+) (do-session-save app) (clear-event event))
           ((= c +cm-session-load+) (do-session-load app) (clear-event event))
