@@ -48,6 +48,43 @@
 
 (defun %html-ws-p (c) (member c '(#\Space #\Tab #\Newline #\Return #\Page)))
 
+(defun %html-decode-string (s)
+  "Return S with HTML entities decoded."
+  (with-output-to-string (out)
+    (let ((i 0) (n (length s)))
+      (loop while (< i n) do
+        (let ((c (char s i)))
+          (if (char= c #\&)
+              (multiple-value-bind (rep next) (%html-decode-entity s i)
+                (write-string rep out) (setf i next))
+              (progn (write-char c out) (incf i))))))))
+
+(defun %html-collapse-ws (s)
+  "Collapse runs of whitespace in S to single spaces."
+  (string-trim
+   '(#\Space)
+   (with-output-to-string (out)
+     (let ((sp nil))
+       (loop for c across s do
+         (if (%html-ws-p c)
+             (setf sp t)
+             (progn (when sp (write-char #\Space out) (setf sp nil))
+                    (write-char c out))))))))
+
+(defun html-document-title (html)
+  "The text of HTML's <title> element (entities decoded, whitespace collapsed),
+or NIL if there is none."
+  (let* ((lo (string-downcase html))
+         (open (search "<title" lo)))
+    (when open
+      (let ((gt (position #\> html :start open)))
+        (when gt
+          (let ((close (search "</title" lo :start2 (1+ gt))))
+            (when close
+              (let ((title (%html-collapse-ws
+                            (%html-decode-string (subseq html (1+ gt) close)))))
+                (when (plusp (length title)) title)))))))))
+
 ;;; ---------------------------------------------------------------------------
 ;;; Parsing HTML into a flat token stream
 ;;;

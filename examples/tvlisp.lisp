@@ -352,10 +352,15 @@ on START) or NIL on cancel.  Enter or OK selects."
       (if (and slash (< (1+ slash) (length s))) (subseq s (1+ slash)) s))))
 
 (defclass thtml-window (twindow)
-  ((view :initform nil :accessor hw-view)
-   (base :initform "" :accessor hw-base)
-   (back :initform '() :accessor hw-back-stack)    ; pages behind the current one
-   (fwd  :initform '() :accessor hw-fwd-stack)))   ; pages ahead (after going Back)
+  ((view   :initform nil :accessor hw-view)
+   (base   :initform "" :accessor hw-base)
+   (back   :initform '() :accessor hw-back-stack)   ; pages behind the current one
+   (fwd    :initform '() :accessor hw-fwd-stack)    ; pages ahead (after going Back)
+   (titles :initform '() :accessor hw-titles)))     ; (location . <title>) seen so far
+
+(defun hw-label (w loc)
+  "How LOC should appear in the history: its <title> if we have one, else the URL."
+  (or (cdr (assoc loc (hw-titles w) :test #'string=)) loc))
 
 (defun hw-load (loc) (if (%url-p loc) (%http-get loc) (%read-file-string loc)))
 
@@ -375,6 +380,12 @@ a successful load."
          (push (hw-base w) (hw-back-stack w))
          (setf (hw-fwd-stack w) '()))
        (setf (hw-base w) loc)
+       ;; remember the page's <title> for the history list
+       (let ((title (html-document-title content)))
+         (when title
+           (setf (hw-titles w)
+                 (cons (cons loc title)
+                       (remove loc (hw-titles w) :key #'car :test #'string=)))))
        (hw-set-title w)
        (set-html (hw-view w) content)
        (focus (hw-view w))
@@ -472,7 +483,7 @@ around it."
       (t (let* ((items (hw-history-list w))
                 (cur (hw-history-index w))
                 (labels (loop for loc in items for i from 0
-                              collect (format nil "~:[  ~;> ~]~a" (= i cur) loc))))
+                              collect (format nil "~:[  ~;> ~]~a" (= i cur) (hw-label w loc)))))
            (let ((sel (choose-index "Browser history" labels :start cur)))
              (when sel (hw-goto-index w sel))))))))
 
