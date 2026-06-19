@@ -39,6 +39,7 @@
                              (:file "outline")
                              (:file "history")
                              (:file "filedialog")
+                             (:file "chdir")
                              (:file "colordialog")
                              (:file "help")
                              (:file "persist")
