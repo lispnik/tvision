@@ -104,6 +104,7 @@
    ;; cluster / radio / checkboxes
    #:tcluster #:tcheck-boxes #:tradio-buttons #:cluster-labels #:cluster-value
    #:cluster-mark #:cluster-press #:multi-state-p #:checkbox-value
+   #:tmulti-check-boxes #:mcb-states #:mcb-state #:mcb-bits
    ;; validators
    #:tvalidator #:tfilter-validator #:trange-validator #:tpicture-validator
    #:tstring-lookup-validator #:make-string-lookup-validator

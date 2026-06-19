@@ -107,3 +107,29 @@
   (format nil "(~a) " (if (cluster-item-on-p c i) (code-char #x2022) #\Space)))  ; bullet
 (defmethod cluster-press ((c tradio-buttons) i)
   (setf (cluster-value c) i))
+
+;;; --- TMultiCheckBoxes ------------------------------------------------------
+;;; Each box cycles through several states (e.g. " X" or " ?X"); the per-item
+;;; state index is packed into VALUE using just enough bits per item.
+
+(defclass tmulti-check-boxes (tcluster)
+  ((states :initarg :states :initform " X" :accessor mcb-states))
+  (:documentation "Multi-state check boxes; STATES is a string of one glyph per
+state (its length is the number of states).  VALUE packs each item's state."))
+
+(defun mcb-bits (c) (max 1 (integer-length (1- (length (mcb-states c))))))
+
+(defun mcb-state (c i)
+  "The current state index (0-based) of item I."
+  (ldb (byte (mcb-bits c) (* i (mcb-bits c))) (cluster-value c)))
+
+(defun (setf mcb-state) (v c i)
+  (setf (ldb (byte (mcb-bits c) (* i (mcb-bits c))) (cluster-value c)) v)
+  v)
+
+(defmethod cluster-mark ((c tmulti-check-boxes) i)
+  (format nil "[~a] " (char (mcb-states c)
+                            (min (mcb-state c i) (1- (length (mcb-states c)))))))
+
+(defmethod cluster-press ((c tmulti-check-boxes) i)
+  (setf (mcb-state c i) (mod (1+ (mcb-state c i)) (length (mcb-states c)))))
