@@ -62,6 +62,7 @@
 (defparameter +cm-browse+      341)
 (defparameter +cm-bhistory+    342)
 (defparameter +cm-hslookup+    343)
+(defparameter +cm-inspect-pkg+ 344)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -669,16 +670,49 @@ current line)."
       (handler-case (repl-inspect (eval (read-in rv s)) s)
         (error (e) (err-box e))))))
 
+;;; A package picker: Enter/OK switches the listener's current package;
+;;; the Inspect button opens the selected package in an Inspector window.
+(defclass tpackages-dialog (tdialog) ())
+
+(defmethod handle-event ((d tpackages-dialog) event)
+  (cond
+    ((and (= (event-type event) +ev-command+)
+          (= (event-command event) +cm-inspect-pkg+)
+          (logtest (view-state d) +sf-modal+))
+     (end-modal d +cm-inspect-pkg+) (clear-event event))
+    (t (call-next-method))))
+
+(defun pkg-switch (rv p)
+  (when (and rv p)
+    (setf (repl-package rv) p)
+    (repl-print rv (format nil "~%; switched to package ~a~%" (package-name p)))
+    (tvision::repl-fresh-prompt rv)
+    (draw-view rv)))
+
 (defun do-packages (rv)
-  (let ((chosen (choose-from-list "Packages"
-                                  (sort (mapcar #'package-name (list-all-packages)) #'string<))))
-    (when (and rv chosen)
-      (let ((p (find-package chosen)))
-        (when p
-          (setf (repl-package rv) p)
-          (repl-print rv (format nil "~%; switched to package ~a~%" (package-name p)))
-          (tvision::repl-fresh-prompt rv)
-          (draw-view rv))))))
+  (when *application*
+    (let* ((names (sort (mapcar #'package-name (list-all-packages)) #'string<))
+           (desk (program-desktop *application*))
+           (w 58) (h 18)
+           (d (make-instance 'tpackages-dialog :title "Packages" :bounds (make-trect 0 0 w h)))
+           (vsb (standard-scrollbar d t))
+           (lb (make-instance 'tsorted-list-box :items names :command +cm-ok+
+                              :bounds (make-trect 1 1 (1- w) (- h 3)))))
+      (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (insert d (make-button (make-trect (- w 40) (- h 3) (- w 30) (- h 1)) "~O~K" +cm-ok+ t))
+      (insert d (make-button (make-trect (- w 28) (- h 3) (- w 16) (- h 1)) "~I~nspect" +cm-inspect-pkg+))
+      (insert d (make-button (make-trect (- w 14) (- h 3) (- w 4) (- h 1)) "Cancel" +cm-cancel+))
+      (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
+               (max 0 (floor (- (point-y (view-size desk)) h) 2)))
+      (focus lb)
+      (let ((cmd (exec-view desk d)))
+        (when (plusp (list-count lb))
+          (let ((p (find-package (list-item lb (list-focused lb)))))
+            (when p
+              (cond
+                ((= cmd +cm-ok+) (pkg-switch rv p))
+                ((= cmd +cm-inspect-pkg+)
+                 (repl-inspect p (format nil "package ~a" (package-name p))))))))))))
 
 (defun do-systems ()
   (let ((chosen (choose-from-list "ASDF Systems"
