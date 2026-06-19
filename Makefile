@@ -27,9 +27,16 @@ endef
 FRAMEWORK := tvision.asd $(wildcard src/*.lisp)
 
 .DEFAULT_GOAL := all
-.PHONY: all clean run-demo run-textedit run-tvlisp help
+.PHONY: all clean run-demo run-textedit run-tvlisp test help
 
 all: tvision-demo textedit tvlisp
+
+# Run the headless control test suite (exit non-zero on any failure).
+test: $(FRAMEWORK) tests/tvision-tests.lisp
+	$(SBCL) --non-interactive \
+		--eval '(asdf:initialize-source-registry (list :source-registry (list :tree (uiop:getcwd)) :inherit-configuration))' \
+		--eval '(handler-bind ((warning (function muffle-warning))) (asdf:load-system :tvision/tests))' \
+		--eval '(sb-ext:exit :code (if (zerop (tvision-tests:run-tests)) 0 1))'
 
 tvision-demo: $(FRAMEWORK) examples/demo.lisp
 	$(call asdf-make,tvision/examples)
@@ -54,4 +61,4 @@ clean:
 	rm -rf $(HOME)/.cache/common-lisp/*tvision* 2>/dev/null || true
 
 help:
-	@echo "Targets: all (default), tvision-demo, textedit, tvlisp, run-*, clean"
+	@echo "Targets: all (default), tvision-demo, textedit, tvlisp, run-*, test, clean"

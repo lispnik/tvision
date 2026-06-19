@@ -47,6 +47,15 @@
                              (:file "threadmon")
                              (:file "repl")))))
 
+(asdf:defsystem "tvision/tests"
+  :description "Headless test suite for the Turbo Vision controls."
+  :depends-on ("tvision")
+  :serial t
+  :components ((:module "tests"
+                :components ((:file "tvision-tests"))))
+  :perform (asdf:test-op (o c)
+             (uiop:symbol-call :tvision-tests :run-tests)))
+
 (asdf:defsystem "tvision/examples"
   :description "Demo applications for the Turbo Vision Common Lisp port."
   :depends-on ("tvision")
