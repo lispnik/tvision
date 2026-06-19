@@ -887,24 +887,41 @@ candidate list when several remain."
       (if (> (length s) 56) (concatenate 'string (subseq s 0 53) "...") s))))
 
 (defun object->outline (obj label &optional (depth 3))
-  "Build a depth-limited TOutline node tree describing OBJ."
+  "Build a depth-limited TOutline node tree describing OBJ.  Robust against
+objects whose slots/elements error when read (e.g. system structures): a
+failing branch becomes an `<error>' leaf rather than crashing the inspector."
   (let ((children '()))
     (when (plusp depth)
-      (flet ((kid (v lbl) (push (object->outline v lbl (1- depth)) children)))
-        (typecase obj
-          (string nil)
-          (cons (loop for x in obj for i from 0 below 200 do (kid x (format nil "[~d]" i))))
-          (vector (loop for x across obj for i from 0 below 200 do (kid x (format nil "[~d]" i))))
-          (hash-table
-           (let ((i 0))
-             (maphash (lambda (k v)
-                        (when (< i 200) (kid v (format nil "~a =>" (%short-repr k))) (incf i)))
-                      obj)))
-          ((or structure-object standard-object)
-           (dolist (slot (handler-case (sb-mop:class-slots (class-of obj)) (error () nil)))
-             (let ((name (sb-mop:slot-definition-name slot)))
-               (when (slot-boundp obj name)
-                 (kid (slot-value obj name) (format nil "~a" name)))))))))
+      (flet ((kid (v lbl)
+               ;; never let a recursive step escape -- it would kill the UI loop
+               (push (handler-case (object->outline v lbl (1- depth))
+                       (serious-condition (e)
+                         (make-outline-node (format nil "~a = <~a>" lbl (type-of e)))))
+                     children)))
+        (handler-case
+            (typecase obj
+              (string nil)
+              ;; packages are structure-objects in SBCL, but their raw slots are
+              ;; huge internal symbol tables -- show the useful summary instead.
+              (package
+               (kid (package-name obj) "name")
+               (kid (package-nicknames obj) "nicknames")
+               (kid (package-use-list obj) "use-list")
+               (kid (package-used-by-list obj) "used-by-list"))
+              (cons (loop for x in obj for i from 0 below 200 do (kid x (format nil "[~d]" i))))
+              (vector (loop for x across obj for i from 0 below 200 do (kid x (format nil "[~d]" i))))
+              (hash-table
+               (let ((i 0))
+                 (maphash (lambda (k v)
+                            (when (< i 200) (kid v (format nil "~a =>" (%short-repr k))) (incf i)))
+                          obj)))
+              ((or structure-object standard-object)
+               (dolist (slot (handler-case (sb-mop:class-slots (class-of obj)) (error () nil)))
+                 (let ((name (sb-mop:slot-definition-name slot)))
+                   (when (handler-case (slot-boundp obj name) (error () nil))
+                     (kid (handler-case (slot-value obj name) (serious-condition (e) e))
+                          (format nil "~a" name)))))))
+          (serious-condition () nil))))
     (let ((node (make-outline-node (format nil "~a = ~a" label (%short-repr obj))
                                    (nreverse children))))
       (setf (outline-node-expanded node) t)
