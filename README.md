@@ -133,7 +133,8 @@ parked with its stack live:
 
 - **Lisp syntax highlighting** in editor windows — comments, strings, `#\chars`
   and `:keywords` are coloured, and the paren matching the one at the cursor is
-  highlighted.  **Undo / redo** (Ctrl-Z / Ctrl-Y).
+  highlighted.  **Auto-indent** on Enter (body forms indent two columns, calls
+  align under their first argument).  **Undo / redo** (Ctrl-Z / Ctrl-Y).
 
 ![Lisp syntax highlighting in an editor window](media/syntax-highlight.gif)
 - **Eval from an editor** — Lisp ▸ Eval defun (the top-level form at the cursor)

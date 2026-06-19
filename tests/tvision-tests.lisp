@@ -396,7 +396,15 @@ broadcasts and drawing); return the control."
     ;; an unterminated string carries the state to the next line
     (multiple-value-bind (attrs instr) (tvision::%lisp-colorize "\"open" base nil)
       (declare (ignore attrs))
-      (ok "unterminated string carries over" instr))))
+      (ok "unterminated string carries over" instr)))
+  ;; auto-indent
+  (flet ((ind (s) (tvision::%lisp-indent-at s (length s))))
+    (is= "body form indents +2"       (ind "(defun f (x)") 2)
+    (is= "let body indents +2"        (ind "  (let ((x 1))") 4)
+    (is= "args align under first arg" (ind "(foo bar") 5)
+    (is= "bare open indents +1"       (ind "(") 1)
+    (is= "closed form -> 0"           (ind "(foo)") 0)
+    (is= "paren in string ignored"    (ind "(foo \";)\" ") 5)))
 
 ;;; ===========================================================================
 ;;; Memo + editor

@@ -280,6 +280,74 @@ cursor and its match -- or NIL."
           (let ((m (%paren-match-offset (text-string tv) target)))
             (when m (list (lc target) (lc m)))))))))
 
+;;; --- Lisp auto-indent ------------------------------------------------------
+
+(defparameter *lisp-body-forms*
+  '("defun" "defmacro" "defmethod" "defgeneric" "defvar" "defparameter"
+    "defconstant" "define-condition" "let" "let*" "flet" "labels" "macrolet"
+    "when" "unless" "cond" "case" "ccase" "ecase" "typecase" "etypecase"
+    "dolist" "dotimes" "loop" "do" "do*" "lambda" "progn" "prog1" "prog2"
+    "block" "tagbody" "handler-case" "handler-bind" "restart-case"
+    "unwind-protect" "with-open-file" "with-output-to-string" "with-input-from-string"
+    "with-slots" "with-accessors" "destructuring-bind" "multiple-value-bind"
+    "if" "catch" "eval-when" "defclass" "defstruct" "defpackage" "in-package"
+    "ignore-errors" "when-let" "if-let" "loop-finish")
+  "Operators whose body indents by a fixed two columns rather than aligning
+under the first argument.")
+
+(defun %lisp-token (str i)
+  "Read the symbol token starting at index I in STR, lowercased."
+  (let ((n (length str)) (j i))
+    (loop while (and (< j n)
+                     (not (member (char str j)
+                                  '(#\Space #\Tab #\Newline #\Return #\( #\) #\" #\;))))
+          do (incf j))
+    (string-downcase (subseq str i j))))
+
+(defun %lisp-indent-at (str off)
+  "The indentation column for a fresh line broken at OFF in STR."
+  (let ((n (min off (length str))) (i 0) (col 0) (stack '()) (fresh t))
+    (flet ((note (icol)
+             (when stack
+               (let ((top (car stack)))
+                 (cond ((null (second top)) (setf (second top) (%lisp-token str (the fixnum icol))))
+                       ((null (third top)) (setf (third top) col)))))))
+      ;; NOTE takes the string index of a token start; convert below by passing i
+      (loop while (< i n) do
+        (let ((c (char str i)))
+          (cond
+            ((char= c #\Newline) (setf col 0 fresh t) (incf i))
+            ((char= c #\;) (loop while (and (< i n) (char/= (char str i) #\Newline)) do (incf i)))
+            ((member c '(#\Space #\Tab #\Return)) (incf i) (incf col) (setf fresh t))
+            ((char= c #\")
+             (note i)
+             (incf i) (incf col)
+             (loop while (< i n) do
+               (let ((d (char str i)))
+                 (cond ((char= d #\Newline) (setf col 0 i (1+ i)))
+                       ((char= d #\\) (incf i 2) (incf col 2))
+                       ((char= d #\") (incf i) (incf col) (return))
+                       (t (incf i) (incf col)))))
+             (setf fresh nil))
+            ((and (char= c #\#) (< (1+ i) n) (char= (char str (1+ i)) #\\))
+             (note i) (incf i 3) (incf col 3) (setf fresh nil))
+            ((char= c #\() (push (list col nil nil) stack) (incf i) (incf col) (setf fresh t))
+            ((char= c #\)) (when stack (pop stack)) (incf i) (incf col) (setf fresh nil))
+            (t (when fresh (note i)) (incf i) (incf col) (setf fresh nil))))))
+    (if (null stack)
+        0
+        (destructuring-bind (open-col head first-arg-col) (car stack)
+          (cond
+            ((null head) (1+ open-col))
+            ((member head *lisp-body-forms* :test #'string=) (+ open-col 2))
+            (first-arg-col first-arg-col)
+            (t (+ open-col 2)))))))
+
+(defun %cursor-offset (tv)
+  (let ((o 0))
+    (dotimes (i (text-cur-line tv)) (incf o (1+ (length (nth-line tv i)))))
+    (+ o (text-cur-col tv))))
+
 (defmethod draw ((tv ttext-view))
   (if (text-wrap tv) (%draw-wrapped tv) (%draw-flat tv)))
 
@@ -866,6 +934,14 @@ counterpart of the windowed editor).  Its data is the whole text string."))
 
 (defmethod initialize-instance :after ((ed tfile-editor) &key)
   (setf (text-highlight ed) t))   ; Lisp syntax colouring on for file editors
+
+(defmethod text-return ((ed tfile-editor))
+  "Break the line and auto-indent the new one for Lisp."
+  (if (text-highlight ed)
+      (let ((indent (%lisp-indent-at (text-string ed) (%cursor-offset ed))))
+        (split-line-at-cursor ed)
+        (dotimes (_ indent) (insert-char-at-cursor ed #\Space)))
+      (call-next-method)))
 
 (defclass teditor-window (twindow)
   ((editor :initform nil :accessor editor-window-editor))
