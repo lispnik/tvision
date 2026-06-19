@@ -113,6 +113,13 @@ parked with its stack live:
 - **Class browser** (super/sub-classes + slots via `sb-mop`), **Package
   browser** (switch the current package), **ASDF System browser** (load on
   Enter), **Load buffer** (evaluate an editor window into the REPL).
+- **Profiler** — statistical (`sb-sprof`) and deterministic (`sb-profile`).
+  Runs on the worker thread so the UI stays live, then shows the results in a
+  sortable `TTableView` grid (Self% / Cumul% / Samples / Function — click a
+  header or press `s`/`r` to re-sort); **Enter** jumps to a function's source
+  and **`g`** opens the call-graph as a `TOutline` tree.
+
+![The tvlisp statistical profiler: sortable results table and call-graph outline](media/profiler.gif)
 
 **Editing & windows**
 
