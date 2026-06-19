@@ -113,7 +113,8 @@
    #:is-valid #:is-valid-input #:validator-error-message #:input-validator
    #:picture-match
    ;; history
-   #:thistory-input #:history-id #:history-add #:history-list #:history-clear
+   #:thistory-input #:thistory-viewer #:thistory-window
+   #:history-id #:history-add #:history-list #:history-clear
    #:history-record
    ;; dialog
    #:tdialog #:message-box #:input-box

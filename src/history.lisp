@@ -19,6 +19,12 @@
 
 (defun history-clear (id) (remhash id *histories*))
 
+;;; The drop-down list of remembered values, and the window that frames it.
+(defclass thistory-viewer (tlist-box) ()
+  (:documentation "The list of remembered values shown by a history input line."))
+(defclass thistory-window (tdialog) ()
+  (:documentation "The pop-up window framing a THistoryViewer."))
+
 (defclass thistory-input (tinputline)
   ((history-id :initarg :history-id :initform "default" :accessor history-id)))
 
@@ -38,9 +44,9 @@
       (multiple-value-bind (gx gy) (view-global-origin il)
         (let* ((h (min (+ 2 (length items)) 10))
                (w (max (point-x (view-size il)) 20))
-               (d (make-instance 'tdialog :title "History"
+               (d (make-instance 'thistory-window :title "History"
                                  :bounds (make-trect 0 0 (+ w 2) h)))
-               (lb (make-instance 'tlist-box :items items
+               (lb (make-instance 'thistory-viewer :items items
                                   :command +cm-ok+
                                   :bounds (make-trect 1 1 (+ w 1) (1- h)))))
           (insert d lb)
