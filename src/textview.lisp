@@ -635,3 +635,41 @@ if the file is missing, a directory, or unreadable (never errors)."
                            (if (text-overwrite src) "OVR" "INS"))
                    c))
     (write-line* ind 0 0 w 1 db)))
+
+;;; --- TMemo: a multi-line edit control for use inside dialogs ----------------
+;;; TEditor in a window is TFileEditor; TMemo is the same editor engine used as a
+;;; bounded dialog control whose get-data/set-data is the whole text string.
+
+(defclass tmemo (ttext-view) ()
+  (:documentation "A multi-line editable text control for dialogs (the in-dialog
+counterpart of the windowed editor).  Its data is the whole text string."))
+
+;;; --- TFileEditor / TEditWindow: the windowed editor classes ----------------
+
+(defclass tfile-editor (ttext-view)
+  ((filename :initarg :filename :initform nil :accessor editor-filename))
+  (:documentation "An editor bound to a file (TEditor + a filename)."))
+
+(defclass teditor-window (twindow)
+  ((editor :initform nil :accessor editor-window-editor))
+  (:documentation "A window framing a TFileEditor with a scroll bar + indicator."))
+
+(defun make-edit-window (bounds &key (title "Editor") filename)
+  "Build a TEditWindow: a window containing a TFileEditor, a vertical scroll bar
+and a position indicator.  Loads FILENAME if it exists.  Returns (values window
+editor)."
+  (let* ((w (make-instance 'teditor-window :title title :bounds bounds))
+         (iw (point-x (view-size w))) (ih (point-y (view-size w)))
+         (vsb (standard-scrollbar w t))
+         (ed (make-instance 'tfile-editor :filename filename
+                            :bounds (make-trect 1 1 (1- iw) (- ih 2))))
+         (ind (make-instance 'tindicator :source ed
+                             :bounds (make-trect 2 (1- ih) 18 ih))))
+    (insert w ed)
+    (insert w ind)
+    (text-attach-scrollbars ed :vscroll vsb)
+    (when (and filename (probe-file filename))
+      (ignore-errors (text-load-file ed filename)))
+    (setf (editor-window-editor w) ed)
+    (focus ed)
+    (values w ed)))
