@@ -146,6 +146,10 @@ parked with its stack live:
 - **Window list** (Window ▸ List, Alt-0) — a picker of every open window
   (numbered, the active one marked); Enter / OK raises and focuses the chosen
   window, like the classic Turbo Vision IDE's Alt-0.
+- **Close** (Window ▸ Close) closes the active window; a modified editor first
+  prompts Save / Discard / Cancel so you don't lose unsaved changes.
+
+![Window ▸ Close prompts Save / Discard / Cancel for an unsaved editor](media/window-close.gif)
 
 ![Window list (Alt-0): pick any open window to raise it](media/window-list.gif)
 - **HyperSpec browser** (Help ▸ HyperSpec / browse…) — a `THtmlView` hypertext
