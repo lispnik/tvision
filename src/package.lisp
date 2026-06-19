@@ -87,6 +87,7 @@
    #:tlist-box #:list-focused #:list-count #:list-item #:list-set-items
    #:list-focus-item #:list-select #:list-command #:list-columns
    #:+cm-list-item-selected+ #:+cm-list-focus-changed+
+   #:tlist-viewer #:tsorted-list-box #:slb-search #:slb-find
    ;; outline (tree view)
    #:toutline #:outline-node #:make-outline-node #:outline-node-text
    #:outline-node-children #:outline-node-expanded #:outline-node-data

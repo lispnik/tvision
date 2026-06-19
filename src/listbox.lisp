@@ -5,7 +5,12 @@
 (defconstant +cm-list-item-selected+ 61)
 (defconstant +cm-list-focus-changed+ 62)
 
-(defclass tlist-box (tscroller)
+;;; TListViewer is Turbo Vision's abstract base for scrollable, focusable lists.
+;;; TListBox below is the concrete list backed by an item collection.
+(defclass tlist-viewer (tscroller) ()
+  (:documentation "Abstract base for list viewers (scroll + focus + selection)."))
+
+(defclass tlist-box (tlist-viewer)
   ((items   :initarg :items   :initform #() :accessor %list-items)
    (focused :initform 0       :accessor list-focused)
    (command :initarg :command :initform 0 :accessor list-command)
@@ -127,3 +132,51 @@
 (defmethod data-size ((lb tlist-box)) 1)
 (defmethod get-data ((lb tlist-box)) (list-focused lb))
 (defmethod set-data ((lb tlist-box) data) (list-focus-item lb (or data 0)))
+
+;;; --- TSortedListBox: incremental type-ahead search -------------------------
+;;; Typing letters jumps to the first item beginning with what you've typed
+;;; (the items are expected to be sorted); Backspace shortens the search.
+
+(defclass tsorted-list-box (tlist-box)
+  ((search :initform "" :accessor slb-search)))
+
+(defun %slb-prefixp (prefix string)
+  (and (<= (length prefix) (length string))
+       (string= prefix string :end2 (length prefix))))
+
+(defun slb-find (lb prefix)
+  "Index of the first item starting with PREFIX (case-insensitive), or NIL."
+  (let ((p (string-downcase prefix)))
+    (dotimes (i (list-count lb))
+      (when (%slb-prefixp p (string-downcase (list-item lb i))) (return i)))))
+
+(defun slb-typeahead (lb event)
+  (let ((k (event-key-code event)))
+    (if (= k +kb-back+)
+        (when (plusp (length (slb-search lb)))
+          (setf (slb-search lb) (subseq (slb-search lb) 0 (1- (length (slb-search lb))))))
+        (setf (slb-search lb)
+              (concatenate 'string (slb-search lb)
+                           (string (code-char (event-char-code event))))))
+    (let ((pos (slb-find lb (slb-search lb))))
+      (if pos
+          (list-focus-item lb pos)
+          ;; no match: drop the just-typed char so the buffer keeps the matched prefix
+          (when (and (/= k +kb-back+) (plusp (length (slb-search lb))))
+            (setf (slb-search lb) (subseq (slb-search lb) 0 (1- (length (slb-search lb))))))))))
+
+(defmethod handle-event ((lb tsorted-list-box) event)
+  (cond
+    ((and (= (event-type event) +ev-key-down+)
+          (logtest (view-state lb) +sf-focused+)
+          (zerop (event-modifiers event))
+          (or (= (event-key-code event) +kb-back+)
+              (and (plusp (event-char-code event))
+                   (let ((c (code-char (event-char-code event))))
+                     (and c (graphic-char-p c) (char/= c #\Space))))))
+     (slb-typeahead lb event)
+     (clear-event event))
+    (t
+     ;; any navigation/other key restarts the type-ahead buffer
+     (when (= (event-type event) +ev-key-down+) (setf (slb-search lb) ""))
+     (call-next-method))))
