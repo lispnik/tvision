@@ -58,6 +58,7 @@
 (defparameter +cm-save+        337)
 (defparameter +cm-saveas+      338)
 (defparameter +cm-profile+     339)
+(defparameter +cm-profile-det+ 340)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -117,6 +118,7 @@
       (menu-separator)
       (menu-item "S~t~ep form..."     +cm-step+)
       (menu-item "Profi~l~e..."       +cm-profile+)
+      (menu-item "Determi~n~istic profile..." +cm-profile-det+)
       (menu-item "~M~acroexpand..."   +cm-macroexpand+)
       (menu-item "~D~escribe..."      +cm-describe+)
       (menu-item "Doc~u~mentation..." +cm-documentation+)
@@ -550,6 +552,30 @@
                              (logior +mf-information+ +mf-ok-button+))))
         (error (e) (err-box e))))))
 
+(defun do-profile-deterministic (rv)
+  "Deterministic profiler (sb-profile): instrument every function in a package,
+run a form, and show the call-count/time report."
+  (let ((pkg (and rv (prompt-line "Deterministic profile" "Profile functions in package:"
+                                  (package-name (repl-package rv))))))
+    (when pkg
+      (let ((form (prompt-line "Deterministic profile" "Form to run:")))
+        (when form
+          (handler-case
+              (let ((*package* (repl-package rv)))
+                (sb-profile:reset)
+                (eval (list 'sb-profile:profile pkg))
+                (unwind-protect
+                     (progn
+                       (eval (read-from-string form))
+                       (show-text-window
+                        (format nil "Deterministic profile: ~a" pkg)
+                        (with-output-to-string (s)
+                          (let ((*standard-output* s) (*trace-output* s))
+                            (sb-profile:report)))))
+                  (eval (list 'sb-profile:unprofile pkg))
+                  (sb-profile:reset)))
+            (error (e) (err-box e))))))))
+
 (defun do-function-browser (rv app)
   (let ((s (prompt-line "Function / GF browser" "Function name:")))
     (when (and rv s)
@@ -815,6 +841,7 @@
           ((= c +cm-funcbrowser+) (do-function-browser rv app) (clear-event event))
           ((= c +cm-step+)        (do-step rv) (clear-event event))
           ((= c +cm-profile+)     (do-profile rv app) (clear-event event))
+          ((= c +cm-profile-det+) (do-profile-deterministic rv) (clear-event event))
           ((= c +cm-whocalls+)    (do-xref rv app :calls) (clear-event event))
           ((= c +cm-whorefs+)     (do-xref rv app :references) (clear-event event))
           ((= c +cm-packages+)    (do-packages rv) (clear-event event))
