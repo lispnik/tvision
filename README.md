@@ -132,10 +132,17 @@ parked with its stack live:
 - **Thread monitor** (F9, Window ▸ Threads) lists the worker threads with
   Refresh / Kill; new REPL (F2), Clear (F3), Tile (F4), Cascade (F5), Next (F6),
   Help (F1).
+- **HyperSpec browser** (Help ▸ HyperSpec / browse…) — a `THtmlView` hypertext
+  control that renders the simple, CSS/JS-free HTML used by references like the
+  Common Lisp HyperSpec.  Tab / Shift-Tab move between links, Enter (or a click)
+  follows one, Backspace goes Back.  Remote pages are fetched with `curl` (no
+  in-image TLS needed); local files are read directly.
 
 ![Open in editor: choosing a file and loading it into an editor window](media/open-in-editor.gif)
 
 ![Browsing directories in the file dialog by keyboard](media/file-dialog-nav.gif)
+
+![Browsing the Common Lisp HyperSpec in the THtmlView control](media/hyperspec.gif)
 
 ```sh
 make tvlisp && ./tvlisp
