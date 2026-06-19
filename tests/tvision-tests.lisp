@@ -439,6 +439,27 @@ broadcasts and drawing); return the control."
       (ok "filter narrows to .asd files"
           (and files (every (lambda (f) (tvision::%wild-match "*.asd" f)) files))))))
 
+(deftest file-dialog-navigation
+  (let ((d (make-file-dialog "Open" :directory (truename "."))))
+    (flet ((items () (loop for i below (list-count (tvision::fd-list d))
+                           collect (list-item (tvision::fd-list d) i)))
+           (ok-cmd () (handle-event d (make-event :type +ev-command+ :command +cm-ok+))))
+      ;; typing a bare subdirectory name and pressing OK enters it and updates
+      ;; the listing to that directory (resolved against the current dir)
+      (set-data (tvision::fd-input d) "src")
+      (ok-cmd)
+      (ok "relative dir name navigates into src"
+          (search "/src/" (namestring (tvision::fd-dir d))))
+      (ok "listing updates to src contents"
+          (member "package.lisp" (items) :test #'string=))
+      (ok "a directory is never accepted as a file"
+          (not (member "src" (items) :test #'string=)))  ; we moved, didn't accept
+      ;; a typed parent path navigates back up
+      (set-data (tvision::fd-input d) (namestring (tvision::%parent-dir (tvision::fd-dir d))))
+      (ok-cmd)
+      (ok "navigates back up to a dir containing src/"
+          (member "src/" (items) :test #'string=)))))
+
 ;;; ===========================================================================
 ;;; Change-directory dialog helpers
 ;;; ===========================================================================

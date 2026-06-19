@@ -169,14 +169,22 @@ into the Name field, and (when OPEN) the dialog is accepted."
   (call-next-method))
 
 (defmethod handle-event ((d tfile-dialog) event)
-  ;; OK on a directory path navigates into it; OK on a wildcard refilters;
-  ;; otherwise it accepts the typed name.
+  ;; OK on a directory navigates into it (so the listing updates to that dir);
+  ;; OK on a wildcard refilters; otherwise it accepts the typed name.  Names are
+  ;; resolved against the current directory, so a bare subdirectory name like
+  ;; "src" enters DIR/src and a relative file name is returned as an absolute
+  ;; path.
   (when (and (= (event-type event) +ev-command+)
              (= (event-command event) +cm-ok+))
-    (let ((val (get-data (fd-input d))))
+    (let* ((val (get-data (fd-input d)))
+           (resolved (and (plusp (length val))
+                          (ignore-errors (merge-pathnames val (fd-dir d))))))
       (cond
-        ((directory-pathname-p val) (fd-navigate d val) (clear-event event))
-        ((fd-apply-filter d val) (clear-event event)))))
+        ((and resolved (directory-pathname-p resolved))
+         (fd-navigate d resolved) (clear-event event))
+        ((fd-apply-filter d val) (clear-event event))
+        ;; a file to accept: hand back an absolute path
+        (resolved (set-data (fd-input d) (namestring resolved))))))
   (call-next-method))
 
 (defun make-file-dialog (title &key (directory (truename (user-homedir-pathname))))
