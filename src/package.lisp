@@ -190,7 +190,8 @@
    #:text-replace-selection #:text-load-file #:text-save-file
    #:tindicator #:indicator-source #:tmemo #:text-wrap #:set-text-wrap
    #:tfile-editor #:teditor-window #:make-edit-window #:editor-filename
-   #:editor-window-editor
+   #:editor-window-editor #:text-highlight
+   #:lisp-indent-line #:lisp-indent-region #:lisp-indent-sexp #:*lisp-indent-hook*
    ;; resize
    #:apply-resize #:install-resize-handler
    ;; program / application

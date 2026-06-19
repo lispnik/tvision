@@ -397,14 +397,25 @@ broadcasts and drawing); return the control."
     (multiple-value-bind (attrs instr) (tvision::%lisp-colorize "\"open" base nil)
       (declare (ignore attrs))
       (ok "unterminated string carries over" instr)))
-  ;; auto-indent
+  ;; auto-indent (per-symbol specs after cl-indent)
   (flet ((ind (s) (tvision::%lisp-indent-at s (length s))))
-    (is= "body form indents +2"       (ind "(defun f (x)") 2)
+    (is= "defun body indents +2"      (ind "(defun f (x)") 2)
     (is= "let body indents +2"        (ind "  (let ((x 1))") 4)
     (is= "args align under first arg" (ind "(foo bar") 5)
     (is= "bare open indents +1"       (ind "(") 1)
+    (is= "operator alone -> +1"       (ind "(foo") 1)
     (is= "closed form -> 0"           (ind "(foo)") 0)
-    (is= "paren in string ignored"    (ind "(foo \";)\" ") 5)))
+    (is= "paren in string ignored"    (ind "(foo \";)\" ") 5)
+    (is= "if distinguished arg +4"    (ind "(if test") 4)
+    (is= "with-open-file body +2"     (ind "(with-open-file (s p)") 2)
+    (is= "cond clauses +2"            (ind "(cond") 2))
+  ;; lisp-indent-sexp reflows a whole top-level form
+  (let ((ed (host (make-instance 'tfile-editor :bounds (make-trect 0 0 40 12)
+                                 :text (format nil "(defun f ()~%(when x~%(foo)))")))))
+    (lisp-indent-sexp ed)
+    (is= "defun line unchanged" (nth-line ed 0) "(defun f ()")
+    (is= "when reindented to +2" (nth-line ed 1) "  (when x")
+    (is= "body reindented to +4" (nth-line ed 2) "    (foo)))")))
 
 ;;; ===========================================================================
 ;;; Memo + editor

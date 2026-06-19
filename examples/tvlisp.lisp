@@ -1300,6 +1300,23 @@ debugger support, exactly as if typed)."
              (format nil "(~(~a~)~{ ~(~a~)~})" sym
                      (sb-introspect:function-lambda-list sym)))))))
 
+(defun %macro-indent-spec (name)
+  "Indentation spec for operator NAME (a lowercased string) when it is a macro
+with a &body/&rest argument -- the count of params before it, so the editor
+indents user macros like built-in special forms.  NIL otherwise."
+  (let ((sym (or (ignore-errors (find-symbol (string-upcase name) *package*))
+                 (ignore-errors (find-symbol (string-upcase name) :cl)))))
+    (when (and sym (macro-function sym))
+      (let ((ll (ignore-errors (sb-introspect:function-lambda-list sym))) (count 0))
+        (when (listp ll)
+          (dolist (p ll nil)
+            (cond ((member p '(&body &rest)) (return count))
+                  ((and (symbolp p) (plusp (length (symbol-name p)))
+                        (char= (char (symbol-name p) 0) #\&)) nil)  ; skip &optional/&key/...
+                  (t (incf count)))))))))
+
+(setf tvision:*lisp-indent-hook* #'%macro-indent-spec)
+
 (defun maybe-auto-close (app event)
   "When auto-close is on, typing ( inserts () with the cursor between."
   (when (and (auto-close app)
@@ -1335,6 +1352,14 @@ debugger support, exactly as if typed)."
              (logtest (event-modifiers event) +md-alt+)
              (= (event-char-code event) (char-code #\0)))
     (do-window-list app) (clear-event event))
+  ;; Alt-Q -> re-indent the whole top-level form in the focused editor
+  (when (and (= (event-type event) +ev-key-down+)
+             (logtest (event-modifiers event) +md-alt+)
+             (= (event-char-code event) (char-code #\q))
+             (current-editor-window app))
+    (let ((ed (editor-window-editor (current-editor-window app))))
+      (tvision::text-snapshot ed) (lisp-indent-sexp ed) (draw-view ed))
+    (clear-event event))
   ;; Ctrl-keys handled before the text view swallows them -- but NOT when a
   ;; browser window is focused, so it can claim Ctrl-B/F/R for navigation.
   (when (and (= (event-type event) +ev-key-down+)

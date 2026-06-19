@@ -282,18 +282,42 @@ cursor and its match -- or NIL."
 
 ;;; --- Lisp auto-indent ------------------------------------------------------
 
-(defparameter *lisp-body-forms*
-  '("defun" "defmacro" "defmethod" "defgeneric" "defvar" "defparameter"
-    "defconstant" "define-condition" "let" "let*" "flet" "labels" "macrolet"
-    "when" "unless" "cond" "case" "ccase" "ecase" "typecase" "etypecase"
-    "dolist" "dotimes" "loop" "do" "do*" "lambda" "progn" "prog1" "prog2"
-    "block" "tagbody" "handler-case" "handler-bind" "restart-case"
-    "unwind-protect" "with-open-file" "with-output-to-string" "with-input-from-string"
-    "with-slots" "with-accessors" "destructuring-bind" "multiple-value-bind"
-    "if" "catch" "eval-when" "defclass" "defstruct" "defpackage" "in-package"
-    "ignore-errors" "when-let" "if-let" "loop-finish")
-  "Operators whose body indents by a fixed two columns rather than aligning
-under the first argument.")
+;;; Indentation specs, after Emacs cl-indent: N = number of "distinguished"
+;;; arguments (which indent +4); the rest of the body indents +2.  Operators
+;;; with no spec are ordinary calls -- their args align under the first one.
+(defparameter *lisp-indent-specs* (make-hash-table :test 'equal))
+
+(dolist (spec '(("defun" . 2) ("defmacro" . 2) ("defmethod" . 2) ("defgeneric" . 2)
+                ("defvar" . 1) ("defparameter" . 1) ("defconstant" . 1)
+                ("define-condition" . 2) ("defclass" . 2) ("defstruct" . 1)
+                ("defpackage" . 1) ("define-symbol-macro" . 1) ("define-modify-macro" . 2)
+                ("lambda" . 1) ("let" . 1) ("let*" . 1) ("flet" . 1) ("labels" . 1)
+                ("macrolet" . 1) ("symbol-macrolet" . 1)
+                ("when" . 1) ("unless" . 1) ("case" . 1) ("ccase" . 1) ("ecase" . 1)
+                ("typecase" . 1) ("etypecase" . 1) ("ctypecase" . 1) ("if" . 2)
+                ("dolist" . 1) ("dotimes" . 1) ("do" . 2) ("do*" . 2)
+                ("multiple-value-bind" . 2) ("destructuring-bind" . 2)
+                ("with-open-file" . 1) ("with-output-to-string" . 1)
+                ("with-input-from-string" . 1) ("with-slots" . 2) ("with-accessors" . 2)
+                ("handler-case" . 1) ("handler-bind" . 1) ("restart-case" . 1)
+                ("unwind-protect" . 1) ("block" . 1) ("catch" . 1) ("return-from" . 1)
+                ("eval-when" . 1) ("prog1" . 1) ("prog2" . 2)
+                ("progn" . 0) ("cond" . 0) ("tagbody" . 0) ("locally" . 0)
+                ("ignore-errors" . 0)))
+  (setf (gethash (car spec) *lisp-indent-specs*) (cdr spec)))
+
+(defvar *lisp-indent-hook* nil
+  "Optional (OPERATOR-NAME-STRING) -> N | NIL, consulted for operators not in
+*LISP-INDENT-SPECS* -- e.g. to indent a user macro with a &body argument like a
+special form.")
+
+(defun %lisp-operator-spec (name)
+  "The distinguished-argument count for operator NAME, or NIL for an ordinary
+call (whose args align under the first argument)."
+  (multiple-value-bind (n found) (gethash name *lisp-indent-specs*)
+    (cond (found n)
+          (*lisp-indent-hook* (funcall *lisp-indent-hook* name))
+          (t nil))))
 
 (defun %lisp-token (str i)
   "Read the symbol token starting at index I in STR, lowercased."
@@ -305,14 +329,15 @@ under the first argument.")
     (string-downcase (subseq str i j))))
 
 (defun %lisp-indent-at (str off)
-  "The indentation column for a fresh line broken at OFF in STR."
+  "The indentation column for a fresh line broken at OFF in STR.  Each open form
+on the stack tracks (OPEN-COL ELEMENT-COUNT HEAD FIRST-ARG-COL)."
   (let ((n (min off (length str))) (i 0) (col 0) (stack '()) (fresh t))
-    (flet ((note (icol)
+    (flet ((start-elem (istart is-token)
              (when stack
-               (let ((top (car stack)))
-                 (cond ((null (second top)) (setf (second top) (%lisp-token str (the fixnum icol))))
-                       ((null (third top)) (setf (third top) col)))))))
-      ;; NOTE takes the string index of a token start; convert below by passing i
+               (let ((e (car stack)))
+                 (incf (second e))
+                 (cond ((= (second e) 1) (setf (third e) (if is-token (%lisp-token str istart) "")))
+                       ((= (second e) 2) (setf (fourth e) col)))))))
       (loop while (< i n) do
         (let ((c (char str i)))
           (cond
@@ -320,7 +345,7 @@ under the first argument.")
             ((char= c #\;) (loop while (and (< i n) (char/= (char str i) #\Newline)) do (incf i)))
             ((member c '(#\Space #\Tab #\Return)) (incf i) (incf col) (setf fresh t))
             ((char= c #\")
-             (note i)
+             (start-elem i nil)
              (incf i) (incf col)
              (loop while (< i n) do
                (let ((d (char str i)))
@@ -330,23 +355,88 @@ under the first argument.")
                        (t (incf i) (incf col)))))
              (setf fresh nil))
             ((and (char= c #\#) (< (1+ i) n) (char= (char str (1+ i)) #\\))
-             (note i) (incf i 3) (incf col 3) (setf fresh nil))
-            ((char= c #\() (push (list col nil nil) stack) (incf i) (incf col) (setf fresh t))
+             (start-elem i nil) (incf i 3) (incf col 3) (setf fresh nil))
+            ((char= c #\()
+             (start-elem i nil)
+             (push (list col 0 nil nil) stack) (incf i) (incf col) (setf fresh t))
             ((char= c #\)) (when stack (pop stack)) (incf i) (incf col) (setf fresh nil))
-            (t (when fresh (note i)) (incf i) (incf col) (setf fresh nil))))))
+            (t (when fresh (start-elem i t)) (incf i) (incf col) (setf fresh nil))))))
     (if (null stack)
         0
-        (destructuring-bind (open-col head first-arg-col) (car stack)
-          (cond
-            ((null head) (1+ open-col))
-            ((member head *lisp-body-forms* :test #'string=) (+ open-col 2))
-            (first-arg-col first-arg-col)
-            (t (+ open-col 2)))))))
+        (destructuring-bind (open-col nelems head first-arg-col) (car stack)
+          (let ((spec (and head (%lisp-operator-spec head))))
+            (cond
+              ((zerop nelems) (1+ open-col))                 ; immediately after "("
+              (spec (if (<= nelems spec) (+ open-col 4)      ; a distinguished argument
+                        (+ open-col 2)))                     ; the body
+              (first-arg-col first-arg-col)                  ; ordinary call: align under arg 1
+              (t (1+ open-col))))))))                        ; head only, no spec
 
 (defun %cursor-offset (tv)
   (let ((o 0))
     (dotimes (i (text-cur-line tv)) (incf o (1+ (length (nth-line tv i)))))
     (+ o (text-cur-col tv))))
+
+(defun %offset->lc (tv off)
+  "Convert character offset OFF (into TEXT-STRING) to a (LINE . COL) cons."
+  (let ((l 0) (lc (line-count tv)))
+    (loop (let ((len (length (nth-line tv l))))
+            (when (or (<= off len) (>= (1+ l) lc)) (return (cons l (min (max 0 off) len))))
+            (decf off (1+ len)) (incf l)))))
+
+(defun lisp-indent-line (tv li)
+  "Re-indent line LI of TV for Lisp (in place), keeping the cursor sensible."
+  (when (< li (line-count tv))
+    (let* ((line (nth-line tv li))
+           (lead (let ((k 0))
+                   (loop while (and (< k (length line)) (member (char line k) '(#\Space #\Tab)))
+                         do (incf k))
+                   k))
+           (start-off (let ((o 0)) (dotimes (i li) (incf o (1+ (length (nth-line tv i))))) o))
+           (want (%lisp-indent-at (text-string tv) start-off))
+           (new (concatenate 'string (make-string want :initial-element #\Space) (subseq line lead))))
+      (unless (string= new line)
+        (set-line tv li new)
+        (when (= (text-cur-line tv) li)
+          (let ((cc (text-cur-col tv)))
+            (setf (text-cur-col tv) (if (<= cc lead) want (max 0 (+ cc (- want lead)))))))
+        (text-update-limit tv)))))
+
+(defun lisp-indent-region (tv l0 l1)
+  "Re-indent lines L0..L1 top-to-bottom (each sees the lines above reindented)."
+  (loop for li from (max 0 l0) to (min l1 (1- (line-count tv))) do (lisp-indent-line tv li)))
+
+(defun %toplevel-span (str off)
+  "Return (values START END) char-offsets of the top-level form containing OFF."
+  (let ((n (length str)) (i 0) (depth 0) (start nil))
+    (loop while (< i n) do
+      (let ((c (char str i)))
+        (cond
+          ((char= c #\;) (loop while (and (< i n) (char/= (char str i) #\Newline)) do (incf i)))
+          ((char= c #\")
+           (incf i)
+           (loop while (< i n) do
+             (let ((d (char str i))) (incf i) (cond ((char= d #\\) (incf i)) ((char= d #\") (return))))))
+          ((and (char= c #\#) (< (1+ i) n) (char= (char str (1+ i)) #\\)) (incf i 3))
+          ((char= c #\() (when (zerop depth) (setf start i)) (incf depth) (incf i))
+          ((char= c #\))
+           (incf i) (when (plusp depth) (decf depth))
+           (when (and (zerop depth) start (<= start off) (<= off i))
+             (return-from %toplevel-span (values start i)))
+           (when (zerop depth) (setf start nil)))
+          (t (incf i)))))
+    (values nil nil)))
+
+(defun lisp-indent-sexp (tv)
+  "Re-indent the whole top-level form containing the cursor."
+  (multiple-value-bind (s e) (%toplevel-span (text-string tv) (%cursor-offset tv))
+    (when s (lisp-indent-region tv (car (%offset->lc tv s)) (car (%offset->lc tv e))))))
+
+(defgeneric text-tab (tv)
+  (:documentation "Handle the Tab key while editing (overridable).")
+  (:method ((tv ttext-view))
+    (when (text-anchor tv) (delete-selection tv))
+    (dotimes (_ (- 4 (mod (text-cur-col tv) 4))) (insert-char-at-cursor tv #\Space))))
 
 (defmethod draw ((tv ttext-view))
   (if (text-wrap tv) (%draw-wrapped tv) (%draw-flat tv)))
@@ -730,10 +820,7 @@ keeping the goal visual column across the move."
          ((= k +kb-tab+)
           (if (or (text-read-only tv) (not (can-edit-here-p tv)))
               (setf handled nil)
-              (progn (text-snapshot tv)
-                     (when (text-anchor tv) (delete-selection tv))
-                     (dotimes (_ (- 4 (mod (text-cur-col tv) 4)))
-                       (insert-char-at-cursor tv #\Space)))))
+              (progn (text-snapshot tv) (text-tab tv))))
          ((= k +kb-enter+)
           (if (text-read-only tv) (setf handled nil)
               (progn (text-snapshot tv)
@@ -941,6 +1028,16 @@ counterpart of the windowed editor).  Its data is the whole text string."))
       (let ((indent (%lisp-indent-at (text-string ed) (%cursor-offset ed))))
         (split-line-at-cursor ed)
         (dotimes (_ indent) (insert-char-at-cursor ed #\Space)))
+      (call-next-method)))
+
+(defmethod text-tab ((ed tfile-editor))
+  "Tab re-indents: the selected lines if there is a selection, else the current
+line."
+  (if (text-highlight ed)
+      (if (text-anchor ed)
+          (multiple-value-bind (s e) (selection-range ed)
+            (lisp-indent-region ed (car s) (car e)))
+          (lisp-indent-line ed (text-cur-line ed)))
       (call-next-method)))
 
 (defclass teditor-window (twindow)
