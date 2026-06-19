@@ -126,6 +126,7 @@
    #:make-status-def #:status-defs #:set-status-context
    ;; file dialog
    #:tfile-dialog #:make-file-dialog #:file-open-dialog #:file-save-dialog
+   #:tfile-input-line #:tfile-info-pane #:fd-filter #:%wild-match
    ;; change-directory dialog
    #:tchdir-dialog #:tdir-list-box #:chdir-dialog #:make-chdir-dialog
    ;; color dialog
