@@ -135,11 +135,14 @@ parked with its stack live:
   and `:keywords` are coloured, and the paren matching the one at the cursor is
   highlighted.  **Auto-indent** follows Emacs `cl-indent`: per-operator specs
   give each form's distinguished arguments a deeper indent and the body two
-  columns, ordinary calls align under their first argument, and user macros
-  with a `&body` argument are indented like special forms (looked up live in
-  the image).  Tab re-indents the current line (or the selected lines);
-  **Alt-Q** re-indents the whole top-level form.  **Undo / redo** (Ctrl-Z /
-  Ctrl-Y).
+  columns, ordinary calls align under their first argument, binding/literal
+  lists align under their first element, `loop` clauses align under the first
+  clause, and user macros with a `&body` argument are indented like special
+  forms (looked up live in the image).  Tab re-indents the current line (or the
+  selected lines); **Alt-Q** re-indents the whole top-level form.  **Undo /
+  redo** (Ctrl-Z / Ctrl-Y).
+
+![Lisp auto-indent and Alt-Q reflow in an editor window](media/auto-indent.gif)
 
 ![Lisp syntax highlighting in an editor window](media/syntax-highlight.gif)
 - **Eval from an editor** — Lisp ▸ Eval defun (the top-level form at the cursor)
