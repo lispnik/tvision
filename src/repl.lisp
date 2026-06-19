@@ -942,17 +942,23 @@ candidate list when several remain."
          (when (listp h) (setf (repl-history r) h)))))))
 
 (defun repl-load-file (r path)
-  "LOAD PATH into the REPL package, echoing output into the transcript."
-  (let ((*package* (repl-package r)))
-    (let ((out (with-output-to-string (s)
-                 (let ((*standard-output* s) (*error-output* s))
-                   (handler-case (load path)
-                     (error (e) (format s ";; ~a~%" e)))))))
-      (repl-ensure-fresh-line r)
-      (repl-print r (format nil "; loaded ~a~%" path))
-      (when (plusp (length out)) (repl-print r out)))
-    (setf (repl-package r) *package*))
-  (repl-fresh-prompt r))
+  "LOAD PATH on the worker thread (so the UI stays responsive), streaming output
+into the transcript and re-prompting when done.  Errors open the debugger; the
+sticky package follows any in-package in the file."
+  (repl-ensure-fresh-line r)
+  (repl-print r (format nil "; loading ~a~%" path))
+  (draw-view r)
+  (repl-call-on-worker r
+    (lambda ()
+      (unwind-protect (load path)
+        (let ((pkg *package*))
+          (run-on-ui (lambda ()
+                       (setf (repl-package r) pkg)
+                       (repl-ensure-fresh-line r)
+                       (repl-print r (format nil "; loaded ~a~%" path))
+                       (repl-fresh-prompt r)
+                       (draw-view r)
+                       (when *screen* (flush-screen *screen*)))))))))
 
 ;;; --- history recall (Up/Down at the prompt edges) --------------------------
 

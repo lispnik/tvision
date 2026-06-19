@@ -693,13 +693,19 @@ run a form, and show the call-count/time report."
     (cond
       ((not ed) (message-box "Focus an editor window first." (logior +mf-information+ +mf-ok-button+)))
       ((not rv) (message-box "No REPL open." (logior +mf-information+ +mf-ok-button+)))
-      (t (let ((out (with-output-to-string (o)
-                      (let ((*standard-output* o) (*error-output* o) (*package* (repl-package rv)))
-                        (handler-case
-                            (with-input-from-string (in (text-string ed))
-                              (loop for f = (read in nil :eof) until (eq f :eof) do (eval f)))
-                          (error (e) (format o ";; ~a~%" e)))))))
-           (show-text-window "Load buffer" (if (plusp (length out)) out "Loaded (no output).")))))))
+      (t (let ((text (text-string ed)) (pkg (repl-package rv)))
+           ;; evaluate the buffer on the worker so the UI stays responsive
+           (repl-call-on-worker rv
+             (lambda ()
+               (let ((out (with-output-to-string (o)
+                            (let ((*standard-output* o) (*error-output* o) (*package* pkg))
+                              (handler-case
+                                  (with-input-from-string (in text)
+                                    (loop for f = (read in nil :eof) until (eq f :eof) do (eval f)))
+                                (error (e) (format o ";; ~a~%" e)))))))
+                 (run-on-ui (lambda ()
+                              (show-text-window "Load buffer"
+                                                (if (plusp (length out)) out "Loaded (no output)."))))))))))))
 
 ;;; --- session save/restore --------------------------------------------------
 
