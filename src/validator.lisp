@@ -100,9 +100,21 @@
 (defmethod validator-error-message ((v tpicture-validator))
   (format nil "Input must match the pattern: ~a" (picture-mask v)))
 
+;;; --- TLookupValidator: abstract base for "value must be looked up" ----------
+
+(defclass tlookup-validator (tvalidator) ()
+  (:documentation "Abstract base whose IS-VALID delegates to VALIDATOR-LOOKUP, a
+predicate that decides whether a completed value is acceptable."))
+
+(defgeneric validator-lookup (v string)
+  (:documentation "True when STRING is an acceptable completed value.")
+  (:method ((v tlookup-validator) string) (declare (ignore string)) t))
+
+(defmethod is-valid ((v tlookup-validator) string) (validator-lookup v string))
+
 ;;; --- TStringLookupValidator: value must be one of a known set --------------
 
-(defclass tstring-lookup-validator (tvalidator)
+(defclass tstring-lookup-validator (tlookup-validator)
   ((strings :initarg :strings :initform '() :accessor lookup-strings)))
 
 (defun make-string-lookup-validator (strings)
@@ -114,7 +126,7 @@
       (some (lambda (e) (and (<= (length string) (length e))
                              (string-equal e string :end1 (length string))))
             (lookup-strings v))))
-(defmethod is-valid ((v tstring-lookup-validator) string)
+(defmethod validator-lookup ((v tstring-lookup-validator) string)
   (and (member string (lookup-strings v) :test #'string-equal) t))
 (defmethod validator-error-message ((v tstring-lookup-validator))
   (format nil "Must be one of: ~{~a~^, ~}" (lookup-strings v)))

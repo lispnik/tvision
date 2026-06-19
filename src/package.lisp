@@ -108,6 +108,7 @@
    #:tmulti-check-boxes #:mcb-states #:mcb-state #:mcb-bits
    ;; validators
    #:tvalidator #:tfilter-validator #:trange-validator #:tpicture-validator
+   #:tlookup-validator #:validator-lookup
    #:tstring-lookup-validator #:make-string-lookup-validator
    #:make-filter-validator #:make-range-validator #:make-picture-validator
    #:is-valid #:is-valid-input #:validator-error-message #:input-validator
