@@ -437,6 +437,23 @@ broadcasts and drawing); return the control."
     (is= "memo line count" (line-count m) 3)
     (is= "memo round-trip" (get-data m) (format nil "one~%two~%three"))))
 
+(deftest find-replace
+  (let ((m (focused (host (make-instance 'tmemo :bounds (make-trect 1 1 40 6))))))
+    (set-data m (format nil "(foo a)~%(bar)~%(foo c)"))
+    ;; find selects the next match (wrapping)
+    (ok "find first foo" (text-find-and-select m "foo" :wrap t))
+    (is= "match on line 0" (text-cur-line m) 0)
+    (ok "find next foo" (text-find-and-select m "foo" :wrap t))
+    (is= "match on line 2" (text-cur-line m) 2)
+    (ok "find missing returns nil" (not (text-find-and-select m "zzz" :wrap t)))
+    ;; replace-all returns the count and rewrites the buffer
+    (is= "replaced both foos" (text-replace-all m "foo" "baz") 2)
+    (ok "buffer updated" (search "(baz a)" (get-data m)))
+    (ok "no foo remains" (not (search "foo" (get-data m))))
+    ;; an empty replacement deletes the matches
+    (is= "delete via empty replacement" (text-replace-all m "baz" "") 2)
+    (ok "baz gone" (not (search "baz" (get-data m))))))
+
 ;;; ===========================================================================
 ;;; Validators
 ;;; ===========================================================================

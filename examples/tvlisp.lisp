@@ -39,6 +39,7 @@
 (defparameter +cm-classes+     318)
 (defparameter +cm-find+        319)
 (defparameter +cm-find-next+   320)
+(defparameter +cm-replace+     348)
 (defparameter +cm-editor+      321)
 (defparameter +cm-load-buffer+ 322)
 (defparameter +cm-session-save+ 323)
@@ -110,6 +111,7 @@
       (menu-separator)
       (menu-item "~F~ind..."    +cm-find+      :key-text "Ctrl-F")
       (menu-item "Find ~n~ext"  +cm-find-next+ :key-text "Ctrl-L")
+      (menu-item "~R~eplace..." +cm-replace+)
       (menu-item "~H~istory search" +cm-histsearch+ :key-text "Ctrl-R")
       (menu-separator)
       (menu-item "I~n~terrupt eval" +cm-interrupt+ :key-text "Ctrl-C")))
@@ -1076,20 +1078,39 @@ run a form, and show the call-count/time report."
 ;;; --- transcript search / history -------------------------------------------
 
 (defun do-find (app)
-  (let ((rv (current-repl app)))
-    (when rv
+  (let ((tv (%current-text-view app)))
+    (when tv
       (let ((s (prompt-line "Find" "Search for:" (find-last app))))
         (when s
           (setf (find-last app) s)
-          (unless (text-find-and-select rv s :wrap t)
+          (unless (text-find-and-select tv s :wrap t)
             (message-box "Not found." (logior +mf-information+ +mf-ok-button+)))
-          (draw-view rv))))))
+          (draw-view tv))))))
 
 (defun do-find-next (app)
-  (let ((rv (current-repl app)) (s (find-last app)))
-    (when (and rv (plusp (length s)))
-      (text-find-and-select rv s :wrap t)
-      (draw-view rv))))
+  (let ((tv (%current-text-view app)) (s (find-last app)))
+    (when (and tv (plusp (length s)))
+      (unless (text-find-and-select tv s :wrap t)
+        (message-box "Not found." (logior +mf-information+ +mf-ok-button+)))
+      (draw-view tv))))
+
+(defun do-replace (app)
+  "Replace every occurrence of a string in the focused editor window."
+  (let ((ew (current-editor-window app)))
+    (if (not ew)
+        (message-box "Replace works in an editor window." (logior +mf-information+ +mf-ok-button+))
+        (let* ((ed (editor-window-editor ew))
+               (from (prompt-line "Replace" "Replace:" (find-last app))))
+          (when from
+            (setf (find-last app) from)
+            ;; input-box directly so an empty replacement (delete) is allowed
+            (multiple-value-bind (cmd to)
+                (input-box "Replace" (format nil "Replace ~a with:" from) "" 200)
+              (when (= cmd +cm-ok+)
+                (let ((count (text-replace-all ed from to)))
+                  (draw-view ed)
+                  (message-box (format nil "Replaced ~d occurrence~:p." count)
+                               (logior +mf-information+ +mf-ok-button+))))))))))
 
 (defun do-history-search (rv)
   (when rv
@@ -1425,6 +1446,7 @@ indents user macros like built-in special forms.  NIL otherwise."
           ((= c +cm-eval-region+) (do-eval-region app) (clear-event event))
           ((= c +cm-find+)        (do-find app) (clear-event event))
           ((= c +cm-find-next+)   (do-find-next app) (clear-event event))
+          ((= c +cm-replace+)     (do-replace app) (clear-event event))
           ((= c +cm-histsearch+)  (do-history-search rv) (clear-event event))
           ((= c +cm-new-file+)    (do-new-editor app) (clear-event event))
           ((= c +cm-editor+)      (do-open-editor app) (clear-event event))
