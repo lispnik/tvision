@@ -14,7 +14,8 @@
 ;; sb-introspect (a contrib) powers the arglist hints; load it at compile time
 ;; so the SB-INTROSPECT package exists when this file is read.
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (require :sb-introspect))
+  (require :sb-introspect)
+  (require :sb-sprof))
 
 ;;; --- commands --------------------------------------------------------------
 
@@ -56,6 +57,7 @@
 (defparameter +cm-new-file+    336)
 (defparameter +cm-save+        337)
 (defparameter +cm-saveas+      338)
+(defparameter +cm-profile+     339)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -114,6 +116,7 @@
       (menu-item "Who ~r~eferences..."   +cm-whorefs+)
       (menu-separator)
       (menu-item "S~t~ep form..."     +cm-step+)
+      (menu-item "Profi~l~e..."       +cm-profile+)
       (menu-item "~M~acroexpand..."   +cm-macroexpand+)
       (menu-item "~D~escribe..."      +cm-describe+)
       (menu-item "Doc~u~mentation..." +cm-documentation+)
@@ -455,6 +458,98 @@
     (let ((s (prompt-line "Step" "Form to step:")))
       (when s (repl-step-eval rv s) (focus rv)))))
 
+;;; --- statistical profiler (sb-sprof) ---------------------------------------
+
+(defun %fn-name (node-name)
+  "A short printed name for an sb-sprof node name."
+  (let ((s (princ-to-string node-name)))
+    (if (> (length s) 48) (concatenate 'string (subseq s 0 45) "...") s)))
+
+(defun run-profile (form package)
+  "Evaluate FORM under sb-sprof (sampling only this thread) and return a plist
+ (:total samples :secs seconds :flat ((label name self cumul (callee-labels)) ...))."
+  (let ((*package* package) (t0 (get-internal-real-time)))
+    (sb-sprof:reset)
+    (sb-sprof:start-profiling :max-samples 200000 :sample-interval 0.001 :mode :time
+                              :threads (list sb-thread:*current-thread*))
+    (unwind-protect (eval form) (sb-sprof:stop-profiling))
+    (let* ((secs (/ (- (get-internal-real-time) t0) internal-time-units-per-second))
+           (cg (sb-sprof::make-call-graph sb-sprof::*samples* most-positive-fixnum))
+           (total (max 1 (sb-sprof::call-graph-nsamples cg)))
+           (flat (sb-sprof::call-graph-flat-nodes cg)))
+      (list :total total :secs secs
+            :flat (loop for n in flat
+                        for self = (sb-sprof::node-count n)
+                        for cumul = (sb-sprof::node-accrued-count n)
+                        for name = (sb-sprof::node-name n)
+                        collect (list (format nil "~5,1f  ~5,1f  ~7d   ~a"
+                                              (* 100.0 (/ self total))
+                                              (* 100.0 (/ cumul total)) self (%fn-name name))
+                                      name self cumul
+                                      (loop for e in (sb-sprof::node-edges n)
+                                            collect (%fn-name (sb-sprof::node-name
+                                                               (sb-sprof::edge-vertex e))))))))))
+
+(defclass tprofile-window (twindow)
+  ((data :initarg :data :initform nil :accessor profile-data)
+   (lb   :initarg :lb   :initform nil :accessor profile-lb)
+   (app  :initarg :app  :initform nil :accessor profile-app)))
+
+(defun show-profile-tree (w)
+  "Open a TOutline of the hottest functions, each expandable to its callees."
+  (let ((roots (loop for item in (subseq (getf (profile-data w) :flat) 0
+                                         (min 30 (length (getf (profile-data w) :flat))))
+                     collect (make-outline-node
+                              (first item)
+                              (mapcar (lambda (c) (make-outline-node c nil)) (fifth item))))))
+    (open-outline-window "Call graph (function -> callees)" roots)))
+
+(defmethod handle-event ((w tprofile-window) event)
+  (cond
+    ((and (= (event-type event) +ev-broadcast+)
+          (= (event-command event) +cm-list-item-selected+)
+          (profile-lb w))
+     (let ((item (nth (list-focused (profile-lb w)) (getf (profile-data w) :flat))))
+       (when (and item (symbolp (second item)) (profile-app w))
+         (goto-definition-of (profile-app w) (second item))))
+     (clear-event event))
+    ((and (= (event-type event) +ev-key-down+)
+          (member (event-char-code event) (list (char-code #\g) (char-code #\G))))
+     (show-profile-tree w)
+     (clear-event event))
+    (t (call-next-method))))
+
+(defun show-profile-results (app data)
+  (let* ((desk (program-desktop app))
+         (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+         (w (min 82 (- dw 2))) (h (min 22 (- dh 2)))
+         (win (make-instance 'tprofile-window :data data :app app
+                             :title (format nil "Profile — ~d samples, ~,2fs  (Enter: source, g: graph)"
+                                            (getf data :total) (getf data :secs))
+                             :bounds (make-trect 0 0 w h)))
+         (hdr (make-instance 'tstatic-text :text " Self%  Cumul%  Samples   Function"
+                             :bounds (make-trect 1 1 (1- w) 2)))
+         (vsb (standard-scrollbar win t))
+         (lb (make-instance 'tlist-box :items (mapcar #'first (getf data :flat)) :command 0
+                            :bounds (make-trect 1 2 (1- w) (1- h)))))
+    (insert win hdr) (insert win lb)
+    (attach-scrollbars lb :vscroll vsb)
+    (setf (profile-lb win) lb)
+    (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+    (insert desk win)
+    (focus lb)))
+
+(defun do-profile (rv app)
+  (let ((s (prompt-line "Profile" "Form to profile:")))
+    (when (and rv s)
+      (handler-case
+          (let ((data (run-profile (read-in rv s) (repl-package rv))))
+            (if (getf data :flat)
+                (show-profile-results app data)
+                (message-box "No samples collected (the form ran too quickly)."
+                             (logior +mf-information+ +mf-ok-button+))))
+        (error (e) (err-box e))))))
+
 (defun do-function-browser (rv app)
   (let ((s (prompt-line "Function / GF browser" "Function name:")))
     (when (and rv s)
@@ -719,6 +814,7 @@
           ((= c +cm-gotodef+)     (do-goto-definition rv app) (clear-event event))
           ((= c +cm-funcbrowser+) (do-function-browser rv app) (clear-event event))
           ((= c +cm-step+)        (do-step rv) (clear-event event))
+          ((= c +cm-profile+)     (do-profile rv app) (clear-event event))
           ((= c +cm-whocalls+)    (do-xref rv app :calls) (clear-event event))
           ((= c +cm-whorefs+)     (do-xref rv app :references) (clear-event event))
           ((= c +cm-packages+)    (do-packages rv) (clear-event event))
