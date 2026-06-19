@@ -53,6 +53,7 @@
 (defparameter +cm-whocalls+    333)
 (defparameter +cm-whorefs+     334)
 (defparameter +cm-step+        335)
+(defparameter +cm-new-file+    336)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -75,7 +76,8 @@
   (new-menu
    (sub-menu "~F~ile"
      (new-menu
-      (menu-item "~N~ew REPL"        +cm-new-repl+ :key-code +kb-f2+ :key-text "F2")
+      (menu-item "~N~ew"             +cm-new-file+)
+      (menu-item "New ~R~EPL"        +cm-new-repl+ :key-code +kb-f2+ :key-text "F2")
       (menu-item "~C~lear"           +cm-clear+    :key-code +kb-f3+ :key-text "F3")
       (menu-separator)
       (menu-item "Open in ~e~ditor..." +cm-editor+)
@@ -502,6 +504,17 @@
 
 ;;; --- editor + load buffer --------------------------------------------------
 
+(defun do-new-editor (app)
+  "Open a fresh, empty editor window."
+  (let* ((desk (program-desktop app))
+         (dw (point-x (view-size desk))) (dh (point-y (view-size desk))))
+    (multiple-value-bind (w ed)
+        (make-edit-window (make-trect 2 1 (min (- dw 2) 78) (min (- dh 1) 22))
+                          :title "Untitled")
+      (declare (ignore ed))
+      (insert desk w)
+      (focus w))))
+
 (defun do-open-editor (app)
   (let ((path (file-open-dialog :title "Open in editor")))
     (when path
@@ -682,6 +695,7 @@
           ((= c +cm-find+)        (do-find app) (clear-event event))
           ((= c +cm-find-next+)   (do-find-next app) (clear-event event))
           ((= c +cm-histsearch+)  (do-history-search rv) (clear-event event))
+          ((= c +cm-new-file+)    (do-new-editor app) (clear-event event))
           ((= c +cm-editor+)      (do-open-editor app) (clear-event event))
           ((= c +cm-interrupt+)   (when rv (repl-interrupt rv)) (clear-event event))
           ((= c +cm-session-save+) (do-session-save app) (clear-event event))
