@@ -127,6 +127,8 @@
    #:tfile-dialog #:make-file-dialog #:file-open-dialog #:file-save-dialog
    ;; color dialog
    #:color-dialog #:color-preview #:+color-names+
+   #:tcolor-selector #:cs-color #:cs-range #:tcolor-display #:cd-fg #:cd-bg
+   #:tmono-selector #:make-mono-selector #:mono-selector-attr #:+mono-attrs+
    ;; help
    #:register-help #:register-help-topic #:help-text #:help-topic #:open-help
    #:current-help-ctx #:refresh-status-context #:thelp-viewer #:parse-help-links
