@@ -140,6 +140,11 @@ parked with its stack live:
 - **Thread monitor** (F9, Window ▸ Threads) lists the worker threads with
   Refresh / Kill; new REPL (F2), Clear (F3), Tile (F4), Cascade (F5), Next (F6),
   Help (F1).
+- **Window list** (Window ▸ List, Alt-0) — a picker of every open window (the
+  active one marked); Enter / OK raises and focuses the chosen window, like the
+  classic Turbo Vision IDE's Alt-0.
+
+![Window list (Alt-0): pick any open window to raise it](media/window-list.gif)
 - **HyperSpec browser** (Help ▸ HyperSpec / browse…) — a `THtmlView` hypertext
   control that renders the simple, CSS/JS-free HTML used by references like the
   Common Lisp HyperSpec.  Tab / Shift-Tab move between links, Enter (or a click)
