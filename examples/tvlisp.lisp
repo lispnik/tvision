@@ -64,6 +64,8 @@
 (defparameter +cm-hslookup+    343)
 (defparameter +cm-pick-inspect+ 344)   ; "Inspect" button in a list picker
 (defparameter +cm-winlist+     345)
+(defparameter +cm-eval-defun+  346)
+(defparameter +cm-eval-region+ 347)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -134,6 +136,9 @@
       (menu-item "~C~lass browser..." +cm-classes+)
       (menu-item "Pac~k~ages..."      +cm-packages+)
       (menu-item "~S~ystems..."       +cm-systems+)
+      (menu-separator)
+      (menu-item "E~v~al defun"       +cm-eval-defun+)
+      (menu-item "Eval regi~o~n"      +cm-eval-region+)
       (menu-item "Load ~b~uffer"      +cm-load-buffer+)))
    (sub-menu "~O~ptions"
      (new-menu
@@ -611,6 +616,34 @@ Skips strings, #\\char literals and ; comments so their parens don't count."
         sel
         (or (ignore-errors (%sexp-at-offset (text-string ed) (%editor-offset ed)))
             (current-line-string ed)))))
+
+(defun %toplevel-form-at-offset (str off)
+  "The outermost ( ) form whose span contains OFF, or NIL.  Skips strings,
+#\\char literals and ; comments."
+  (let ((len (length str)) (i 0) (depth 0) (start nil))
+    (loop while (< i len) do
+      (let ((c (char str i)))
+        (cond
+          ((char= c #\;)
+           (loop while (and (< i len) (char/= (char str i) #\Newline)) do (incf i)))
+          ((char= c #\")
+           (incf i)
+           (loop while (< i len) do
+             (let ((d (char str i))) (incf i)
+               (cond ((char= d #\\) (incf i)) ((char= d #\") (return))))))
+          ((and (char= c #\#) (< (1+ i) len) (char= (char str (1+ i)) #\\)) (incf i 3))
+          ((char= c #\()
+           (when (zerop depth) (setf start i))
+           (incf depth) (incf i))
+          ((char= c #\))
+           (incf i)
+           (when (plusp depth) (decf depth))
+           (when (zerop depth)
+             (when (and start (<= start off) (<= off i))
+               (return-from %toplevel-form-at-offset (subseq str start i)))
+             (setf start nil)))
+          (t (incf i)))))
+    nil))
 
 (defun do-macroexpand (app)
   "Macroexpand-1 a form.  When an editor window is focused, the prompt defaults
@@ -1158,6 +1191,46 @@ run a form, and show the call-count/time report."
                               (show-text-window "Load buffer"
                                                 (if (plusp (length out)) out "Loaded (no output)."))))))))))))
 
+;;; --- evaluate from an editor window ----------------------------------------
+
+(defun %eval-in-repl (app text)
+  "Raise a REPL, show TEXT at its prompt, and evaluate it (with full output and
+debugger support, exactly as if typed)."
+  (let ((rv (some-repl app))
+        (form (string-trim '(#\Space #\Tab #\Newline #\Return) (or text ""))))
+    (cond
+      ((zerop (length form)) nil)
+      ((null rv) (message-box "No REPL is open." (logior +mf-information+ +mf-ok-button+)))
+      ((repl-busy rv) (message-box "The REPL is busy evaluating."
+                                   (logior +mf-information+ +mf-ok-button+)))
+      (t (let ((win (view-owner rv)))
+           (when (typep win 'twindow) (set-current (program-desktop app) win :normal-select)))
+         (repl-replace-input rv form)
+         (repl-submit rv form)
+         (draw-view rv)))))
+
+(defun do-eval-defun (app)
+  "Evaluate the top-level form at the cursor of the focused editor."
+  (let ((ew (current-editor-window app)))
+    (if (not ew)
+        (message-box "Focus an editor window first." (logior +mf-information+ +mf-ok-button+))
+        (let* ((ed (editor-window-editor ew))
+               (form (%toplevel-form-at-offset (text-string ed) (%editor-offset ed))))
+          (if form
+              (%eval-in-repl app form)
+              (message-box "No top-level form at the cursor."
+                           (logior +mf-information+ +mf-ok-button+)))))))
+
+(defun do-eval-region (app)
+  "Evaluate the selected text of the focused editor."
+  (let ((ew (current-editor-window app)))
+    (if (not ew)
+        (message-box "Focus an editor window first." (logior +mf-information+ +mf-ok-button+))
+        (let ((sel (selected-string (editor-window-editor ew))))
+          (if (and sel (plusp (length (string-trim '(#\Space #\Tab #\Newline) sel))))
+              (%eval-in-repl app sel)
+              (message-box "Select a region first." (logior +mf-information+ +mf-ok-button+)))))))
+
 ;;; --- session save/restore --------------------------------------------------
 
 (defun do-session-save (app)
@@ -1323,6 +1396,8 @@ run a form, and show the call-count/time report."
           ((= c +cm-packages+)    (do-packages rv) (clear-event event))
           ((= c +cm-systems+)     (do-systems) (clear-event event))
           ((= c +cm-load-buffer+) (do-load-buffer app) (clear-event event))
+          ((= c +cm-eval-defun+)  (do-eval-defun app) (clear-event event))
+          ((= c +cm-eval-region+) (do-eval-region app) (clear-event event))
           ((= c +cm-find+)        (do-find app) (clear-event event))
           ((= c +cm-find-next+)   (do-find-next app) (clear-event event))
           ((= c +cm-histsearch+)  (do-history-search rv) (clear-event event))
