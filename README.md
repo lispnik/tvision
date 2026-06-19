@@ -150,6 +150,10 @@ parked with its stack live:
 
 ![Starting from the HyperSpec index and following a link](media/hyperspec-index.gif)
 
+![Back / Forward through the browser history](media/browser-history.gif)
+
+![The Browser history window — jump straight to any visited page](media/browser-history-window.gif)
+
 ```sh
 make tvlisp && ./tvlisp
 # or: sbcl --eval '(asdf:make :tvision/examples/tvlisp)' --quit  (-> ./tvlisp)
