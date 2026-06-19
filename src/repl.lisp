@@ -309,46 +309,79 @@ the value's structure."
       (focus ol)
       (exec-view desk d))))
 
+(defparameter +cm-dbg-eval+ 71)
+
+(defun frame-eval-with-locals (locals package form-string)
+  "Evaluate FORM-STRING with the frame's captured LOCALS bound (snapshot
+semantics: the locals are the values captured at error time, not live).  Return
+a printed result string."
+  (handler-case
+      (let* ((*package* (or package *package*))
+             (form (read-from-string form-string))
+             (binds (loop for (name nil val) in locals
+                          for sym = (ignore-errors (read-from-string name nil nil))
+                          when (and sym (symbolp sym) (not (keywordp sym)))
+                          collect (cons sym val))))
+        (let ((*print-length* 50) (*print-level* 8) (*print-readably* nil))
+          (prin1-to-string
+           (eval `(let ,(mapcar (lambda (b) (list (car b) (list 'quote (cdr b)))) binds)
+                    (declare (ignorable ,@(mapcar #'car binds)))
+                    ,form)))))
+    (error (e) (format nil ";; ~a" e))))
+
 (defclass tlocals-dialog (tdialog)
-  ((locals :initarg :locals :initform nil :accessor locals-dialog-locals) ; (name str value)
-   (lb     :initarg :lb     :initform nil :accessor locals-dialog-lb))
-  (:documentation "A frame's local variables; Enter on one inspects its value."))
+  ((locals  :initarg :locals  :initform nil :accessor locals-dialog-locals) ; (name str value)
+   (package :initarg :package :initform nil :accessor locals-dialog-package)
+   (lb      :initarg :lb      :initform nil :accessor locals-dialog-lb))
+  (:documentation "A frame's local variables; Enter inspects a local's value, and
+Eval evaluates a form with the frame's locals bound."))
 
 (defmethod handle-event ((d tlocals-dialog) event)
-  (when (and (message-event-p event)
-             (= (event-command event) +cm-list-item-selected+)
-             (locals-dialog-lb d))
-    (let ((entry (nth (list-focused (locals-dialog-lb d)) (locals-dialog-locals d))))
-      (when entry (inspect-modal (third entry) (first entry))))
-    (clear-event event))
-  (call-next-method))
+  (cond
+    ((and (message-event-p event)
+          (= (event-command event) +cm-list-item-selected+)
+          (locals-dialog-lb d))
+     (let ((entry (nth (list-focused (locals-dialog-lb d)) (locals-dialog-locals d))))
+       (when entry (inspect-modal (third entry) (first entry))))
+     (clear-event event))
+    ((and (= (event-type event) +ev-command+) (= (event-command event) +cm-dbg-eval+))
+     (multiple-value-bind (cmd s)
+         (input-box "Eval in frame" "Form (uses the frame's locals):" "" 200)
+       (when (and (= cmd +cm-ok+) (plusp (length (string-trim '(#\Space #\Tab) s))))
+         (show-text-dialog "Eval in frame"
+                           (format nil "~a~%~%=> ~a" s
+                                   (frame-eval-with-locals (locals-dialog-locals d)
+                                                           (locals-dialog-package d) s)))))
+     (clear-event event))
+    (t (call-next-method))))
 
-(defun show-locals-dialog (frame)
-  "Modal locals browser for FRAME; Enter on a local inspects its value."
+(defun show-locals-dialog (frame &optional package)
+  "Modal locals browser for FRAME; Enter inspects a local, Eval evaluates a form
+with the frame's locals bound."
   (let ((label (getf frame :label)) (locals (getf frame :locals)))
-    (if (null locals)
-        (show-text-dialog "Frame locals" (format nil "~a~%~%(no locals available)" label))
-        (let* ((desk (program-desktop *application*))
-               (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
-               (w (min 70 (max 30 (- dw 2)))) (h (min 18 (max 8 (- dh 2))))
-               (items (mapcar (lambda (l) (format nil "~a = ~a" (first l) (second l))) locals))
-               (lb (make-instance 'tlist-box :items items :command 0
-                                  :bounds (make-trect 1 1 (1- w) (- h 4))))
-               (d (make-instance 'tlocals-dialog :locals locals :lb lb
-                                 :title (format nil "Locals: ~a — Enter to inspect"
-                                                (string-trim " " label))
-                                 :bounds (make-trect 0 0 w h)))
-               (vsb (standard-scrollbar d t)))
-          (insert d lb) (attach-scrollbars lb :vscroll vsb)
-          (insert d (make-button (make-trect (floor (- w 10) 2) (- h 3)
-                                             (+ (floor (- w 10) 2) 10) (- h 1)) "O~K~" +cm-ok+))
-          (move-to d (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
-          (focus lb)
-          (exec-view desk d)))))
+    (let* ((desk (program-desktop *application*))
+           (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+           (w (min 70 (max 34 (- dw 2)))) (h (min 18 (max 9 (- dh 2))))
+           (items (if locals
+                      (mapcar (lambda (l) (format nil "~a = ~a" (first l) (second l))) locals)
+                      (list "(no locals available)")))
+           (lb (make-instance 'tlist-box :items items :command 0
+                              :bounds (make-trect 1 1 (1- w) (- h 4))))
+           (d (make-instance 'tlocals-dialog :locals locals :lb lb :package package
+                             :title (format nil "Locals: ~a" (string-trim " " label))
+                             :bounds (make-trect 0 0 w h)))
+           (vsb (standard-scrollbar d t)))
+      (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (insert d (make-button (make-trect 2 (- h 3) 12 (- h 1)) "~E~val" +cm-dbg-eval+))
+      (insert d (make-button (make-trect (- w 12) (- h 3) (- w 2) (- h 1)) "O~K~" +cm-ok+))
+      (move-to d (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+      (focus lb)
+      (exec-view desk d))))
 
 (defclass tframe-dialog (tdialog)
-  ((frames :initarg :frames :initform nil :accessor frame-dialog-frames)
-   (lb     :initarg :lb     :initform nil :accessor frame-dialog-lb))
+  ((frames  :initarg :frames  :initform nil :accessor frame-dialog-frames)
+   (package :initarg :package :initform nil :accessor frame-dialog-package)
+   (lb      :initarg :lb      :initform nil :accessor frame-dialog-lb))
   (:documentation "The backtrace browser: a list of frames; Enter opens a frame's
 locals browser, from which a value can be inspected/drilled into."))
 
@@ -357,11 +390,11 @@ locals browser, from which a value can be inspected/drilled into."))
              (= (event-command event) +cm-list-item-selected+)
              (frame-dialog-lb d))
     (let ((frame (nth (list-focused (frame-dialog-lb d)) (frame-dialog-frames d))))
-      (when frame (show-locals-dialog frame)))
+      (when frame (show-locals-dialog frame (frame-dialog-package d))))
     (clear-event event))
   (call-next-method))
 
-(defun show-frames-dialog (frames)
+(defun show-frames-dialog (frames &optional package)
   "Modal backtrace browser; pick a frame (Enter) to inspect its locals."
   (when *application*
     (if (null frames)
@@ -372,7 +405,7 @@ locals browser, from which a value can be inspected/drilled into."))
                (lb (make-instance 'tlist-box
                                   :items (mapcar (lambda (f) (getf f :label)) frames)
                                   :command 0 :bounds (make-trect 1 1 (1- w) (- h 4))))
-               (d (make-instance 'tframe-dialog :frames frames :lb lb
+               (d (make-instance 'tframe-dialog :frames frames :lb lb :package package
                                  :title "Backtrace — Enter for locals"
                                  :bounds (make-trect 0 0 w h)))
                (vsb (standard-scrollbar d t)))
@@ -390,14 +423,15 @@ locals browser, from which a value can be inspected/drilled into."))
 (defparameter +cm-repl-backtrace+ 70)
 
 (defclass trestart-dialog (tdialog)
-  ((backtrace :initarg :backtrace :initform nil :accessor restart-dialog-backtrace))
+  ((backtrace :initarg :backtrace :initform nil :accessor restart-dialog-backtrace)
+   (package   :initarg :package   :initform nil :accessor restart-dialog-package))
   (:documentation "The debugger dialog; its Backtrace button opens the frame
 browser (frames + locals) without dismissing the restart list."))
 
 (defmethod handle-event ((d trestart-dialog) event)
   (when (and (= (event-type event) +ev-command+)
              (= (event-command event) +cm-repl-backtrace+))
-    (show-frames-dialog (restart-dialog-backtrace d))
+    (show-frames-dialog (restart-dialog-backtrace d) (restart-dialog-package d))
     (clear-event event))
   (call-next-method))
 
@@ -407,18 +441,19 @@ the debugger must prompt for one before invoking."
   (let ((n (restart-name restart)))
     (and n (member (symbol-name n) '("USE-VALUE" "STORE-VALUE") :test #'string=))))
 
-(defun repl-restart-dialog (condition restarts &optional backtrace)
+(defun repl-restart-dialog (condition restarts &optional backtrace package)
   "UI-thread only: show RESTARTS for CONDITION and, when the chosen restart needs
 a value (USE-VALUE/STORE-VALUE), prompt for a Lisp form supplying it.  A
-Backtrace button shows BACKTRACE.  Returns (values index value-form-string);
-INDEX is NIL when the user aborts.  Safe to call while a worker thread is blocked
-waiting for the answer."
+Backtrace button opens the frame browser (frames/locals; PACKAGE is used for
+eval-in-frame).  Returns (values index value-form-string); INDEX is NIL when the
+user aborts.  Safe to call while a worker thread is blocked waiting."
   (when (and *application* restarts)
     (let* ((labels (mapcar (lambda (rs) (format nil "~a" rs)) restarts))
            (desk (program-desktop *application*))
            (w 64) (h 17)
            (d (make-instance 'trestart-dialog :title "Error — pick a restart"
-                             :backtrace backtrace :bounds (make-trect 0 0 w h)))
+                             :backtrace backtrace :package package
+                             :bounds (make-trect 0 0 w h)))
            (st (make-instance 'tstatic-text
                               :text (format nil "~(~a~):~%~a" (type-of condition) condition)
                               :bounds (make-trect 2 1 (- w 2) 5)))
@@ -465,7 +500,7 @@ fails to read/evaluate.  Runs on the thread owning the error's dynamic extent."
   (if *repl-debugger*
       (let ((restarts (compute-restarts e))
             (bt (repl-capture-frames)))
-        (multiple-value-bind (idx vs) (repl-restart-dialog e restarts bt)
+        (multiple-value-bind (idx vs) (repl-restart-dialog e restarts bt *package*)
           (repl-invoke-restart restarts idx vs)))
       (invoke-restart (find-restart 'repl-abort))))
 
@@ -586,13 +621,13 @@ async is enabled and a UI loop is running, otherwise inline."
   "Worker thread, inside HANDLER-BIND: ask the UI thread to show the restart
 menu, block for the choice, then invoke the chosen restart here (so the live
 stack/dynamic extent of the error is intact).  Never returns normally."
-  (declare (ignore r))
   (let ((restarts (compute-restarts condition))
-        (bt (repl-capture-frames)))
+        (bt (repl-capture-frames))
+        (pkg (repl-package r)))
     (if (and *repl-debugger* *ui-callbacks*)
         (let ((sem (sb-thread:make-semaphore)) (choice (list nil nil)))
           (run-on-ui (lambda ()
-                       (multiple-value-bind (idx vs) (repl-restart-dialog condition restarts bt)
+                       (multiple-value-bind (idx vs) (repl-restart-dialog condition restarts bt pkg)
                          (setf (first choice) idx (second choice) vs))
                        (sb-thread:signal-semaphore sem)))
           (sb-thread:wait-on-semaphore sem)
