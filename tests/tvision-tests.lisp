@@ -247,6 +247,39 @@ broadcasts and drawing); return the control."
     (is= "nav resets search" (slb-search lb) "")))
 
 ;;; ===========================================================================
+;;; Table view (sortable grid)
+;;; ===========================================================================
+
+(deftest table-view
+  (let* ((rows (list (list :name "bob" :n 12)
+                     (list :name "amy" :n 30)
+                     (list :name "cy"  :n 5)))
+         (cols (vector (make-table-column "N" 6 (lambda (r) (getf r :n)) :numeric t)
+                       (make-table-column "Name" 10 (lambda (r) (getf r :name)))))
+         (tv (focused (host (make-instance 'ttable-view :columns cols :rows rows
+                                           :sort-col 0 :sort-asc nil
+                                           :bounds (make-trect 1 1 22 8))))))
+    ;; default: numeric column 0, descending -> 30 12 5
+    (is= "sort N desc" (mapcar (lambda (r) (getf r :n)) (coerce (table-rows tv) 'list))
+         '(30 12 5))
+    (is= "selected top" (getf (table-selected-row tv) :name) "amy")
+    ;; toggle direction on the same column -> ascending
+    (table-sort-by tv 0)
+    (is= "sort N asc" (mapcar (lambda (r) (getf r :n)) (coerce (table-rows tv) 'list))
+         '(5 12 30))
+    (ok "sort-asc flag" (table-sort-asc tv))
+    ;; sort by the string column -> alphabetical ascending by default
+    (table-sort-by tv 1)
+    (is= "sort by name" (mapcar (lambda (r) (getf r :name)) (coerce (table-rows tv) 'list))
+         '("amy" "bob" "cy"))
+    (is= "sort-col is 1" (table-sort-col tv) 1)
+    ;; keyboard navigation
+    (press-key tv +kb-down+) (press-key tv +kb-down+)
+    (is= "down twice focuses cy" (getf (table-selected-row tv) :name) "cy")
+    (press-key tv +kb-home+)
+    (is= "home focuses amy" (getf (table-selected-row tv) :name) "amy")))
+
+;;; ===========================================================================
 ;;; Scroller
 ;;; ===========================================================================
 

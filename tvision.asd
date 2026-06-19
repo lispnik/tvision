@@ -36,6 +36,7 @@
                              (:file "textview")
                              (:file "collection")
                              (:file "listbox")
+                             (:file "tableview")
                              (:file "outline")
                              (:file "history")
                              (:file "filedialog")

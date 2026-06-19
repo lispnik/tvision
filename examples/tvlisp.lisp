@@ -469,7 +469,8 @@
 
 (defun run-profile (form package)
   "Evaluate FORM under sb-sprof (sampling only this thread) and return a plist
- (:total samples :secs seconds :flat ((label name self cumul (callee-labels)) ...))."
+ (:total samples :secs seconds :rows (row-plist ...)); each row is
+ (:name N :self S :cumul C :self% f :cumul% f :callees (labels...))."
   (let ((*package* package) (t0 (get-internal-real-time)))
     (sb-sprof:reset)
     (sb-sprof:start-profiling :max-samples 200000 :sample-interval 0.001 :mode :time
@@ -480,40 +481,47 @@
            (total (max 1 (sb-sprof::call-graph-nsamples cg)))
            (flat (sb-sprof::call-graph-flat-nodes cg)))
       (list :total total :secs secs
-            :flat (loop for n in flat
+            :rows (loop for n in flat
                         for self = (sb-sprof::node-count n)
                         for cumul = (sb-sprof::node-accrued-count n)
-                        for name = (sb-sprof::node-name n)
-                        collect (list (format nil "~5,1f  ~5,1f  ~7d   ~a"
-                                              (* 100.0 (/ self total))
-                                              (* 100.0 (/ cumul total)) self (%fn-name name))
-                                      name self cumul
-                                      (loop for e in (sb-sprof::node-edges n)
-                                            collect (%fn-name (sb-sprof::node-name
-                                                               (sb-sprof::edge-vertex e))))))))))
+                        collect (list :name (sb-sprof::node-name n)
+                                      :self self :cumul cumul
+                                      :self% (* 100.0 (/ self total))
+                                      :cumul% (* 100.0 (/ cumul total))
+                                      :callees (loop for e in (sb-sprof::node-edges n)
+                                                     collect (%fn-name (sb-sprof::node-name
+                                                                        (sb-sprof::edge-vertex e))))))))))
+
+(defun %profile-columns ()
+  (vector (make-table-column "Self%"  6 (lambda (r) (getf r :self%))  :numeric t
+                             :format (lambda (v) (format nil "~,1f" v)))
+          (make-table-column "Cumul%" 7 (lambda (r) (getf r :cumul%)) :numeric t
+                             :format (lambda (v) (format nil "~,1f" v)))
+          (make-table-column "Samples" 8 (lambda (r) (getf r :self)) :numeric t)
+          (make-table-column "Function" 48 (lambda (r) (%fn-name (getf r :name))))))
 
 (defclass tprofile-window (twindow)
-  ((data :initarg :data :initform nil :accessor profile-data)
-   (lb   :initarg :lb   :initform nil :accessor profile-lb)
-   (app  :initarg :app  :initform nil :accessor profile-app)))
+  ((data  :initarg :data  :initform nil :accessor profile-data)
+   (table :initarg :table :initform nil :accessor profile-table)
+   (app   :initarg :app   :initform nil :accessor profile-app)))
 
 (defun show-profile-tree (w)
   "Open a TOutline of the hottest functions, each expandable to its callees."
-  (let ((roots (loop for item in (subseq (getf (profile-data w) :flat) 0
-                                         (min 30 (length (getf (profile-data w) :flat))))
+  (let ((roots (loop for r in (subseq (getf (profile-data w) :rows) 0
+                                      (min 30 (length (getf (profile-data w) :rows))))
                      collect (make-outline-node
-                              (first item)
-                              (mapcar (lambda (c) (make-outline-node c nil)) (fifth item))))))
+                              (format nil "~5,1f%  ~a" (getf r :self%) (%fn-name (getf r :name)))
+                              (mapcar (lambda (c) (make-outline-node c nil)) (getf r :callees))))))
     (open-outline-window "Call graph (function -> callees)" roots)))
 
 (defmethod handle-event ((w tprofile-window) event)
   (cond
     ((and (= (event-type event) +ev-broadcast+)
           (= (event-command event) +cm-list-item-selected+)
-          (profile-lb w))
-     (let ((item (nth (list-focused (profile-lb w)) (getf (profile-data w) :flat))))
-       (when (and item (symbolp (second item)) (profile-app w))
-         (goto-definition-of (profile-app w) (second item))))
+          (profile-table w))
+     (let ((row (table-selected-row (profile-table w))))
+       (when (and row (symbolp (getf row :name)) (profile-app w))
+         (goto-definition-of (profile-app w) (getf row :name))))
      (clear-event event))
     ((and (= (event-type event) +ev-key-down+)
           (member (event-char-code event) (list (char-code #\g) (char-code #\G))))
@@ -526,20 +534,19 @@
          (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
          (w (min 82 (- dw 2))) (h (min 22 (- dh 2)))
          (win (make-instance 'tprofile-window :data data :app app
-                             :title (format nil "Profile — ~d samples, ~,2fs  (Enter: source, g: graph)"
+                             :title (format nil "Profile — ~d samples, ~,2fs  (Enter:src g:graph s:sort)"
                                             (getf data :total) (getf data :secs))
                              :bounds (make-trect 0 0 w h)))
-         (hdr (make-instance 'tstatic-text :text " Self%  Cumul%  Samples   Function"
-                             :bounds (make-trect 1 1 (1- w) 2)))
          (vsb (standard-scrollbar win t))
-         (lb (make-instance 'tlist-box :items (mapcar #'first (getf data :flat)) :command 0
-                            :bounds (make-trect 1 2 (1- w) (1- h)))))
-    (insert win hdr) (insert win lb)
-    (attach-scrollbars lb :vscroll vsb)
-    (setf (profile-lb win) lb)
+         (tbl (make-instance 'ttable-view :columns (%profile-columns) :rows (getf data :rows)
+                             :sort-col 0 :sort-asc nil
+                             :bounds (make-trect 1 1 (1- w) (1- h)))))
+    (insert win tbl)
+    (attach-scrollbars tbl :vscroll vsb)
+    (setf (profile-table win) tbl)
     (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
     (insert desk win)
-    (focus lb)))
+    (focus tbl)))
 
 (defun do-profile (rv app)
   (let ((s (prompt-line "Profile" "Form to profile:")))
@@ -550,7 +557,7 @@
           (lambda ()
             (let ((data (run-profile form pkg)))
               (run-on-ui (lambda ()
-                           (if (getf data :flat)
+                           (if (getf data :rows)
                                (show-profile-results app data)
                                (message-box "No samples collected (the form ran too quickly)."
                                             (logior +mf-information+ +mf-ok-button+))))))))))))

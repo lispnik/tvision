@@ -88,6 +88,10 @@
    #:list-focus-item #:list-select #:list-command #:list-columns
    #:+cm-list-item-selected+ #:+cm-list-focus-changed+
    #:tlist-viewer #:tsorted-list-box #:slb-search #:slb-find
+   ;; table view (sortable grid)
+   #:ttable-view #:make-table-column #:table-columns #:table-rows #:table-set-rows
+   #:table-selected-row #:table-sort #:table-sort-by #:table-focused
+   #:table-sort-col #:table-sort-asc #:table-column-title #:table-column-width
    ;; outline (tree view)
    #:toutline #:outline-node #:make-outline-node #:outline-node-text
    #:outline-node-children #:outline-node-expanded #:outline-node-data
