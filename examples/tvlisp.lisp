@@ -52,6 +52,7 @@
 (defparameter +cm-funcbrowser+ 332)
 (defparameter +cm-whocalls+    333)
 (defparameter +cm-whorefs+     334)
+(defparameter +cm-step+        335)
 
 (defparameter +hc-repl+ 1)
 (defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
@@ -106,6 +107,7 @@
       (menu-item "~W~ho calls..."        +cm-whocalls+)
       (menu-item "Who ~r~eferences..."   +cm-whorefs+)
       (menu-separator)
+      (menu-item "S~t~ep form..."     +cm-step+)
       (menu-item "~M~acroexpand..."   +cm-macroexpand+)
       (menu-item "~D~escribe..."      +cm-describe+)
       (menu-item "Doc~u~mentation..." +cm-documentation+)
@@ -441,6 +443,12 @@
                                    s))))
                     (sb-mop:method-specializers m)))))
 
+(defun do-step (rv)
+  "Prompt for a form and evaluate it under the single-stepper."
+  (when rv
+    (let ((s (prompt-line "Step" "Form to step:")))
+      (when s (repl-step-eval rv s) (focus rv)))))
+
 (defun do-function-browser (rv app)
   (let ((s (prompt-line "Function / GF browser" "Function name:")))
     (when (and rv s)
@@ -665,6 +673,7 @@
           ((= c +cm-classes+)     (do-classes rv) (clear-event event))
           ((= c +cm-gotodef+)     (do-goto-definition rv app) (clear-event event))
           ((= c +cm-funcbrowser+) (do-function-browser rv app) (clear-event event))
+          ((= c +cm-step+)        (do-step rv) (clear-event event))
           ((= c +cm-whocalls+)    (do-xref rv app :calls) (clear-event event))
           ((= c +cm-whorefs+)     (do-xref rv app :references) (clear-event event))
           ((= c +cm-packages+)    (do-packages rv) (clear-event event))
@@ -714,6 +723,9 @@ F2 new REPL, F3 clear, F4 tile, F5 cascade, F6 next, F8 inspect, F9 threads.")))
 
 (defmethod tvision::setup ((app tvlisp-app))
   (register-tvlisp-help)
+  ;; Compile REPL-defined code with full debug so the stepper can step *into*
+  ;; user functions and the debugger shows frame locals.
+  (proclaim '(optimize (debug 3) (speed 1)))
   (setf (view-help-ctx (program-desktop app)) +hc-repl+)
   (open-repl-window app :maximized t))
 
