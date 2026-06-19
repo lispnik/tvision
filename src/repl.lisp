@@ -504,6 +504,97 @@ fails to read/evaluate.  Runs on the thread owning the error's dynamic extent."
           (repl-invoke-restart restarts idx vs)))
       (invoke-restart (find-restart 'repl-abort))))
 
+;;; --- single-stepper (drives SBCL's stepper via *stepper-hook*) -------------
+
+(defparameter +cm-step-into+ 72)
+(defparameter +cm-step-over+ 73)
+(defparameter +cm-step-out+  74)
+(defparameter +cm-step-run+  75)
+
+(defclass tstep-dialog (tdialog) ()
+  (:documentation "The stepper prompt; its buttons end the modal with their own
+command so the caller learns which action was chosen."))
+
+(defmethod handle-event ((d tstep-dialog) event)
+  (when (and (= (event-type event) +ev-command+)
+             (member (event-command event)
+                     (list +cm-step-into+ +cm-step-over+ +cm-step-out+ +cm-step-run+)))
+    (end-modal d (event-command event))
+    (clear-event event))
+  (call-next-method))
+
+(defun repl-step-dialog (form args)
+  "UI thread: show the form about to be evaluated and return the chosen action
+(:into / :next / :out / :continue / :abort)."
+  (if (null *application*)
+      :continue
+      (let* ((desk (program-desktop *application*))
+             (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+             (w (min 72 (max 40 (- dw 2)))) (h 11)
+             (d (make-instance 'tstep-dialog :title "Stepper" :bounds (make-trect 0 0 w h)))
+             (txt (let ((*print-length* 12) (*print-level* 4))
+                    (format nil "~a~@[~%args: ~{~s~^  ~}~]"
+                            form (and args (coerce args 'list)))))
+             (st (make-instance 'tstatic-text :text txt :bounds (make-trect 2 1 (- w 2) 5)))
+             (y (- h 3)))
+        (insert d st)
+        (insert d (make-button (make-trect 2 y 12 (1+ y)) "~I~nto" +cm-step-into+ t))
+        (insert d (make-button (make-trect 12 y 22 (1+ y)) "~O~ver" +cm-step-over+))
+        (insert d (make-button (make-trect 22 y 31 (1+ y)) "Ou~t~" +cm-step-out+))
+        (insert d (make-button (make-trect 31 y 40 (1+ y)) "~R~un" +cm-step-run+))
+        (insert d (make-button (make-trect 40 y 50 (1+ y)) "~A~bort" +cm-cancel+))
+        (move-to d (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+        (let ((c (exec-view desk d)))
+          (cond ((= c +cm-step-into+) :into)
+                ((= c +cm-step-over+) :next)
+                ((= c +cm-step-out+)  :out)
+                ((= c +cm-step-run+)  :continue)
+                (t :abort))))))
+
+(defun repl-step-ask (form args)
+  "Worker thread: ask the UI for a stepping action and block for the answer."
+  (if *ui-callbacks*
+      (let ((sem (sb-thread:make-semaphore)) (choice (list :continue)))
+        (run-on-ui (lambda () (setf (car choice) (repl-step-dialog form args))
+                     (sb-thread:signal-semaphore sem)))
+        (sb-thread:wait-on-semaphore sem)
+        (car choice))
+      :continue))
+
+(defun make-step-hook (r)
+  "A *stepper-hook* that drives SBCL's stepper from the UI: a dialog per form,
+and the value of each stepped form streamed to the transcript."
+  (lambda (c)
+    (typecase c
+      (sb-ext:step-form-condition
+       (ecase (repl-step-ask (sb-ext:step-condition-form c)
+                             (ignore-errors (sb-ext:step-condition-args c)))
+         (:into     (sb-ext:step-into c))
+         (:next     (sb-ext:step-next c))
+         (:out      (let ((rr (find-restart 'sb-ext:step-out c)))
+                      (if rr (invoke-restart rr) (sb-ext:step-next c))))
+         (:continue (sb-ext:step-continue c))
+         (:abort    (let ((rr (find-restart 'repl-abort)))
+                      (if rr (invoke-restart rr) (sb-ext:step-continue c))))))
+      (sb-ext:step-values-condition
+       (let ((form (ignore-errors (sb-ext:step-condition-form c)))
+             (res  (ignore-errors (sb-ext:step-condition-result c))))
+         (run-on-ui (lambda ()
+                      (repl-print r (format nil "~&; ~s => ~{~s~^, ~}~%" form res))
+                      (ensure-visible r) (draw-view r)
+                      (when *screen* (flush-screen *screen*)))))
+       nil)
+      (t nil))))
+
+(defun repl-step-eval (r input)
+  "Evaluate INPUT under the single-stepper (worker thread)."
+  (when (and *repl-async* *ui-callbacks*)
+    (repl-ensure-fresh-line r)
+    (repl-print r (format nil "; stepping: ~a~%" (string-trim '(#\Space #\Newline) input)))
+    (setf (repl-busy r) t)
+    (repl-ensure-worker r)
+    (mailbox-send (repl-to-worker r) (cons :step input))))
+
 ;;; --- evaluation + printing -------------------------------------------------
 
 (defun repl-eval (r input)
@@ -615,7 +706,8 @@ async is enabled and a UI loop is running, otherwise inline."
         (let ((job (mailbox-receive (repl-to-worker r))))
           (case (car job)
             (:quit (throw 'repl-worker-quit nil))
-            (:eval (repl-worker-eval r (cdr job)))))))))
+            (:eval (repl-worker-eval r (cdr job)))
+            (:step (repl-worker-eval r (cdr job) t))))))))
 
 (defun repl-worker-debug (r condition)
   "Worker thread, inside HANDLER-BIND: ask the UI thread to show the restart
@@ -634,15 +726,16 @@ stack/dynamic extent of the error is intact).  Never returns normally."
           (repl-invoke-restart restarts (first choice) (second choice)))
         (invoke-restart (find-restart 'repl-abort)))))
 
-(defun repl-worker-eval (r input)
+(defun repl-worker-eval (r input &optional step)
   "Worker thread: read+eval all forms in INPUT, streaming output to the UI and
-routing errors through the cross-thread debugger.  Posts the final results back
-to the UI thread."
+routing errors through the cross-thread debugger.  When STEP, evaluate each form
+under SBCL's single-stepper.  Posts the final results back to the UI thread."
   (let ((out (make-instance 'repl-output-stream :view r))
         (results '()) (errored nil) (last nil) (new-hist (repl-hist-vars r))
         (start (get-internal-real-time)))
     (let ((*standard-output* out) (*error-output* out) (*trace-output* out)
-          (*package* (repl-package r)))
+          (*package* (repl-package r))
+          (sb-ext:*stepper-hook* (if step (make-step-hook r) sb-ext:*stepper-hook*)))
       (unwind-protect
            (with-repl-history ((repl-hist-vars r) new-hist)
              (restart-case
@@ -651,7 +744,8 @@ to the UI thread."
                      (loop for form = (read in nil :repl-eof)
                            until (eq form :repl-eof)
                            do (setf - form)
-                              (let ((vals (multiple-value-list (eval form))))
+                              (let ((vals (multiple-value-list
+                                           (if step (eval (list 'step form)) (eval form)))))
                                 (push vals results)
                                 (setf +++ ++  ++ +  + form
                                       /// //  // /  / vals

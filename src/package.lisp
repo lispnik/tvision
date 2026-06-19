@@ -160,7 +160,7 @@
    #:save-repl-history #:load-repl-history #:*repl-debugger* #:popup-list
    #:repl-backend-completions #:repl-backend-eval #:longest-common-prefix
    #:*repl-async* #:repl-busy #:repl-interrupt #:repl-worker #:repl-submit
-   #:repl-hvar #:repl-hist-vars #:*repl-time*
+   #:repl-hvar #:repl-hist-vars #:*repl-time* #:repl-step-eval
    #:show-text-window #:show-text-dialog #:repl-replace-input
    ;; menu
    #:tmenu-bar #:menu #:menu-item #:new-menu #:sub-menu #:menu-separator
