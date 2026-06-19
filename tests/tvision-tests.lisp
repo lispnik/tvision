@@ -444,6 +444,7 @@ broadcasts and drawing); return the control."
     (flet ((items () (loop for i below (list-count (tvision::fd-list d))
                            collect (list-item (tvision::fd-list d) i)))
            (ok-cmd () (handle-event d (make-event :type +ev-command+ :command +cm-ok+))))
+      (setf (tvision::group-current d) (tvision::fd-input d))   ; Name field focused
       ;; typing a bare subdirectory name and pressing OK enters it and updates
       ;; the listing to that directory (resolved against the current dir)
       (set-data (tvision::fd-input d) "src")
@@ -458,6 +459,30 @@ broadcasts and drawing); return the control."
       (set-data (tvision::fd-input d) (namestring (tvision::%parent-dir (tvision::fd-dir d))))
       (ok-cmd)
       (ok "navigates back up to a dir containing src/"
+          (member "src/" (items) :test #'string=)))))
+
+(deftest file-dialog-list-enter
+  ;; Enter / OK while the browser is focused acts on the highlighted entry,
+  ;; even though the default OK button consumes the keystroke first.
+  (let ((d (make-file-dialog "Open" :directory (truename "."))))
+    (flet ((items () (loop for i below (list-count (tvision::fd-list d))
+                           collect (list-item (tvision::fd-list d) i)))
+           (ok-cmd () (handle-event d (make-event :type +ev-command+ :command +cm-ok+))))
+      (setf (tvision::group-current d) (tvision::fd-list d))   ; browser focused
+      ;; highlight the "src/" entry and activate it
+      (let ((idx (position "src/" (items) :test #'string=)))
+        (ok "src/ present in listing" idx)
+        (list-focus-item (tvision::fd-list d) idx)
+        (ok-cmd)
+        (ok "Enter on a directory entry navigates into it"
+            (search "/src/" (namestring (tvision::fd-dir d))))
+        (ok "listing now shows that directory"
+            (member "package.lisp" (items) :test #'string=))
+        (ok "highlight reset to the top (..) after navigating"
+            (= (list-focused (tvision::fd-list d)) 0)))
+      ;; Enter on ".." (row 0) goes back up
+      (ok-cmd)
+      (ok "Enter on .. navigates to parent"
           (member "src/" (items) :test #'string=)))))
 
 ;;; ===========================================================================

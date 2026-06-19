@@ -83,7 +83,10 @@ Return T when a filter was applied."
 
 (defun fd-navigate (d dir)
   (let ((tn (ignore-errors (truename dir))))
-    (when tn (setf (fd-dir d) tn) (fd-refresh d))))
+    (when tn
+      (setf (fd-dir d) tn)
+      (fd-refresh d)
+      (list-focus-item (fd-list d) 0))))   ; highlight the top of the new listing
 
 (defun fd-activate (d &key open)
   "Act on the focused list item.  Directories are entered; files are selected
@@ -176,15 +179,24 @@ into the Name field, and (when OPEN) the dialog is accepted."
   ;; path.
   (when (and (= (event-type event) +ev-command+)
              (= (event-command event) +cm-ok+))
-    (let* ((val (get-data (fd-input d)))
-           (resolved (and (plusp (length val))
-                          (ignore-errors (merge-pathnames val (fd-dir d))))))
-      (cond
-        ((and resolved (directory-pathname-p resolved))
-         (fd-navigate d resolved) (clear-event event))
-        ((fd-apply-filter d val) (clear-event event))
-        ;; a file to accept: hand back an absolute path
-        (resolved (set-data (fd-input d) (namestring resolved))))))
+    (cond
+      ;; Enter / OK while the browser is focused acts on the highlighted entry:
+      ;; a directory is entered (and the listing updates to it), a file accepted.
+      ;; The default OK button consumes Enter before the list can, so we route
+      ;; it here rather than in the list's own handler.
+      ((eq (group-current d) (fd-list d))
+       (fd-activate d :open t)
+       (clear-event event))
+      (t
+       (let* ((val (get-data (fd-input d)))
+              (resolved (and (plusp (length val))
+                             (ignore-errors (merge-pathnames val (fd-dir d))))))
+         (cond
+           ((and resolved (directory-pathname-p resolved))
+            (fd-navigate d resolved) (clear-event event))
+           ((fd-apply-filter d val) (clear-event event))
+           ;; a file to accept: hand back an absolute path
+           (resolved (set-data (fd-input d) (namestring resolved))))))))
   (call-next-method))
 
 (defun make-file-dialog (title &key (directory (truename (user-homedir-pathname))))
