@@ -369,6 +369,12 @@ on the stack tracks (OPEN-COL ELEMENT-COUNT HEAD FIRST-ARG-COL)."
               ((zerop nelems) (1+ open-col))                 ; immediately after "("
               (spec (if (<= nelems spec) (+ open-col 4)      ; a distinguished argument
                         (+ open-col 2)))                     ; the body
+              ;; a data list (binding list, literal) -- the head is itself a
+              ;; list or a non-symbol -- aligns under its first element
+              ((or (string= head "")
+                   (let ((c0 (char head 0)))
+                     (or (digit-char-p c0) (char= c0 #\#))))
+               (1+ open-col))
               (first-arg-col first-arg-col)                  ; ordinary call: align under arg 1
               (t (1+ open-col))))))))                        ; head only, no spec
 

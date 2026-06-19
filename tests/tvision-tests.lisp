@@ -408,7 +408,10 @@ broadcasts and drawing); return the control."
     (is= "paren in string ignored"    (ind "(foo \";)\" ") 5)
     (is= "if distinguished arg +4"    (ind "(if test") 4)
     (is= "with-open-file body +2"     (ind "(with-open-file (s p)") 2)
-    (is= "cond clauses +2"            (ind "(cond") 2))
+    (is= "cond clauses +2"            (ind "(cond") 2)
+    (is= "loop clauses align under first clause" (ind "(loop for x in xs") 6)
+    (is= "literal list aligns under first element" (ind "(1 2 3") 1)
+    (is= "binding list aligns under first binding" (ind "(let ((a 1) (b 2)") 6))
   ;; lisp-indent-sexp reflows a whole top-level form
   (let ((ed (host (make-instance 'tfile-editor :bounds (make-trect 0 0 40 12)
                                  :text (format nil "(defun f ()~%(when x~%(foo)))")))))
