@@ -10,6 +10,11 @@
 
 (in-package #:tvision-textedit)
 
+;; sb-introspect powers go-to-definition; load at compile time so the package
+;; exists when this file is read.
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (require :sb-introspect))
+
 ;;; --- commands --------------------------------------------------------------
 
 (defparameter +cm-new+      200)
@@ -24,6 +29,10 @@
 (defparameter +cm-replace+  222)
 (defparameter +cm-goto+     223)
 (defparameter +cm-isearch+  224)
+(defparameter +cm-wrap+        225)
+(defparameter +cm-macroexpand+ 226)
+(defparameter +cm-describe+    227)
+(defparameter +cm-gotodef+     228)
 (defparameter +cm-tile+     230)
 (defparameter +cm-cascade+  231)
 
@@ -78,6 +87,14 @@
       (menu-item "Find ~N~ext"   +cm-findnext+ :key-code +kb-f5+ :key-text "F5")
       (menu-item "~R~eplace..."  +cm-replace+  :key-code +kb-f8+ :key-text "F8")
       (menu-item "~G~oto line..." +cm-goto+    :key-code +kb-f6+ :key-text "F6")))
+   (sub-menu "~L~isp"
+     (new-menu
+      (menu-item "~M~acroexpand"      +cm-macroexpand+)
+      (menu-item "~D~escribe"         +cm-describe+)
+      (menu-item "~G~o to definition" +cm-gotodef+ :key-text "Alt-.")))
+   (sub-menu "~O~ptions"
+     (new-menu
+      (menu-item "~W~ord wrap" +cm-wrap+)))
    (sub-menu "~W~indow"
      (new-menu
       (menu-item "~N~ext"     +cm-next+    :key-code +kb-f9+ :key-text "F9")
@@ -93,8 +110,9 @@
 
 ;;; --- creating editor windows -----------------------------------------------
 
-;;; A text view that pops up an edit context menu on right-click.
-(defclass edit-view (ttext-view) ())
+;;; The editor: a TFileEditor (the framework's windowed-editor class) that also
+;;; pops up a context menu on right-click.
+(defclass edit-view (tfile-editor) ())
 
 (defun edit-context-menu ()
   (new-menu
@@ -325,6 +343,75 @@
                        (jump) (prompt))))))))
           (update-title w))))))
 
+;;; --- word wrap + Lisp tools ------------------------------------------------
+
+(defun ed-toggle-wrap (ed)
+  (set-text-wrap ed (not (text-wrap ed))))
+
+(defun %sym-char-p (ch) (or (alphanumericp ch) (find ch "+-*/<>=!?._%&$~^@:[]{}")))
+
+(defun symbol-at-point (ed)
+  "The symbol token surrounding the cursor on the current line, or NIL."
+  (let* ((line (current-line-string ed))
+         (col (min (text-cur-col ed) (length line)))
+         (start col) (end col))
+    (loop while (and (> start 0) (%sym-char-p (char line (1- start)))) do (decf start))
+    (loop while (and (< end (length line)) (%sym-char-p (char line end))) do (incf end))
+    (when (< start end) (subseq line start end))))
+
+(defun form-at-point (ed)
+  "The selection, or the current line, as text to read as a form."
+  (or (selected-string ed) (current-line-string ed)))
+
+(defun %read-cl (s) (let ((*package* (find-package :cl-user))) (read-from-string s)))
+
+(defun ed-describe (ed)
+  (let ((name (symbol-at-point ed)))
+    (if (null name)
+        (message-box "No symbol at the cursor." (logior +mf-information+ +mf-ok-button+))
+        (handler-case
+            (show-text-window (format nil "Describe ~a" name)
+                              (with-output-to-string (s) (describe (%read-cl name) s)))
+          (error (e) (message-box (format nil "~a" e) (logior +mf-error+ +mf-ok-button+)))))))
+
+(defun ed-macroexpand (ed)
+  (let ((txt (form-at-point ed)))
+    (if (or (null txt) (zerop (length (string-trim '(#\Space #\Tab) txt))))
+        (message-box "Nothing to expand (select a form or place the cursor on a line)."
+                     (logior +mf-information+ +mf-ok-button+))
+        (handler-case
+            (let ((*print-pretty* t))
+              (show-text-window "Macroexpand-1" (prin1-to-string (macroexpand-1 (%read-cl txt)))))
+          (error (e) (message-box (format nil "~a" e) (logior +mf-error+ +mf-ok-button+)))))))
+
+(defun %off-to-line (path off)
+  (or (ignore-errors
+       (with-open-file (s path)
+         (let ((ln 1))
+           (dotimes (i (or off 0) ln)
+             (let ((c (read-char s nil nil)))
+               (unless c (return ln))
+               (when (char= c #\Newline) (incf ln)))))))
+      1))
+
+(defun ed-gotodef (app ed)
+  (let ((name (symbol-at-point ed)))
+    (when name
+      (handler-case
+          (let* ((sym (%read-cl name))
+                 (src (loop for ty in '(:function :macro :generic-function
+                                        :variable :class :structure :type)
+                            thereis (ignore-errors
+                                     (first (sb-introspect:find-definition-sources-by-name sym ty)))))
+                 (path (and src (sb-introspect:definition-source-pathname src))))
+            (if (and path (probe-file path))
+                (let ((w (make-editor-window app (namestring path))))
+                  (text-goto (ew-editor w)
+                             (%off-to-line path (sb-introspect:definition-source-character-offset src))))
+                (message-box (format nil "No source location for ~a." name)
+                             (logior +mf-information+ +mf-ok-button+))))
+        (error (e) (message-box (format nil "~a" e) (logior +mf-error+ +mf-ok-button+)))))))
+
 ;;; --- exit handling ---------------------------------------------------------
 
 (defun can-quit-p (app)
@@ -342,6 +429,12 @@
     (unless (can-quit-p app)
       (clear-event event)
       (return-from handle-event)))
+  ;; M-. -> go to definition of the symbol at the cursor
+  (when (and (= (event-type event) +ev-key-down+)
+             (logtest (event-modifiers event) +md-alt+)
+             (= (event-char-code event) 46))
+    (let ((ed (current-editor app)))
+      (when ed (ed-gotodef app ed) (clear-event event))))
   (call-next-method)
   (when (= (event-type event) +ev-command+)
     (let ((c (event-command event))
@@ -371,6 +464,10 @@
           ((= c +cm-replace+)  (ed-replace app) (clear-event event))
           ((= c +cm-goto+)     (ed-goto app) (clear-event event))
           ((= c +cm-isearch+)  (ed-isearch app) (clear-event event))
+          ((= c +cm-wrap+)        (when ed (ed-toggle-wrap ed)) (clear-event event))
+          ((= c +cm-macroexpand+) (when ed (ed-macroexpand ed)) (clear-event event))
+          ((= c +cm-describe+)    (when ed (ed-describe ed)) (clear-event event))
+          ((= c +cm-gotodef+)     (when ed (ed-gotodef app ed)) (clear-event event))
           ((= c +cm-tile+)     (tile (program-desktop app)) (clear-event event))
           ((= c +cm-cascade+)  (cascade (program-desktop app)) (clear-event event)))))))
 
