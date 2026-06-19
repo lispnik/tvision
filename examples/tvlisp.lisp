@@ -467,7 +467,7 @@ around it."
     w))
 
 (defparameter +hyperspec-default+
-  "https://www.lispworks.com/documentation/HyperSpec/Front/index.htm")
+  "https://www.lispworks.com/documentation/HyperSpec/Front/index_tx.htm")
 
 (defun do-browse (app)
   (let ((loc (prompt-line "HyperSpec / browse" "URL or file:" +hyperspec-default+)))
