@@ -102,6 +102,16 @@
 
 (defparameter +kb-ctrl-c+ 3)
 
+(defun repl-context-menu ()
+  "The right-click context menu (a TMenuPopup) for a REPL window."
+  (new-menu
+   (menu-item "Cu~t~"       +cm-cut+      :key-text "Ctrl-X")
+   (menu-item "~C~opy"      +cm-copy+     :key-text "Ctrl-C")
+   (menu-item "~P~aste"     +cm-paste+    :key-text "Ctrl-V")
+   (menu-separator)
+   (menu-item "~I~nspect *" +cm-inspect+  :key-text "F8")
+   (menu-item "I~n~terrupt" +cm-interrupt+)))
+
 (defmethod handle-event ((app tvlisp-app) event)
   ;; Ctrl-C interrupts the running evaluation -- map it to the command before
   ;; the text view can swallow it.
@@ -111,6 +121,13 @@
       (when (and rv (repl-busy rv))
         (repl-interrupt rv)
         (clear-event event))))
+  ;; Right-click pops up a context menu (TMenuPopup) over the focused REPL.
+  (when (and (= (event-type event) +ev-mouse-down+)
+             (logtest (event-mouse-buttons event) +mb-right+)
+             (current-repl app))
+    (let ((p (event-mouse-where event)))
+      (popup-menu (repl-context-menu) (point-x p) (1+ (point-y p))))
+    (clear-event event))
   (call-next-method)
   (when (= (event-type event) +ev-command+)
     (let ((c (event-command event))

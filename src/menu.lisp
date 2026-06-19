@@ -357,24 +357,54 @@ tracking loop until a command is chosen or the menu is cancelled."
                (return :cancel))))))))
 
 ;;; ---------------------------------------------------------------------------
-;;; Context (pop-up) menus
+;;; TMenuPopup --- context (pop-up) menus
 ;;; ---------------------------------------------------------------------------
+;;;
+;;; The Turbo Vision class for a menu rooted at a box rather than the bar (used
+;;; for right-click context menus).  It is a TMenuView-style view carrying a MENU
+;;; and an origin; MENU-POPUP-EXEC runs it modally -- reusing the same dropdown
+;;; tracker (submenus, hotkeys, shadow, mouse) as the menu bar -- and returns the
+;;; chosen command.
 
-(defun popup-menu (menu x y)
-  "Display MENU as a context menu at absolute (X,Y), clamped to the screen.
-Track it like a dropdown; deliver the chosen command as an ev-command and also
-return it (NIL if cancelled)."
+(defclass tmenu-popup (tview)
+  ((menu :initarg :menu :initform (new-menu) :accessor menu-popup-menu))
+  (:documentation "A pop-up / context menu.  EXEC it with MENU-POPUP-EXEC (or the
+POPUP-MENU shorthand); it returns the chosen command integer, or NIL."))
+
+(defmethod get-palette ((mp tmenu-popup)) (make-palette 31 32 33 34))
+
+(defun menu-popup-size (mp)
+  "Return (values width height) of the box for pop-up menu MP."
+  (box-dims (menu-popup-menu mp)))
+
+(defun make-menu-popup (menu &optional (x 0) (y 0))
+  "Build a TMenuPopup for MENU positioned at (X,Y)."
+  (multiple-value-bind (w h) (box-dims menu)
+    (make-instance 'tmenu-popup :menu menu :bounds (make-trect x y (+ x w) (+ y h)))))
+
+(defun menu-popup-exec (mp &optional x y)
+  "Display pop-up menu view MP at absolute (X,Y) -- defaulting to its own origin,
+clamped to the screen -- and track it modally.  Deliver the chosen command as an
+ev-command to the application and also return it (NIL if cancelled)."
   (when (and *application* *screen*)
-    (let* ((mb (program-menu-bar *application*))
-           (*menu-normal*   (if mb (get-color mb 1) *menu-normal*))
-           (*menu-selected* (if mb (get-color mb 2) *menu-selected*))
-           (*menu-disabled* (if mb (get-color mb 3) *menu-disabled*))
-           (*menu-hot*      (if mb (get-color mb 4) *menu-hot*)))
+    (let* ((menu (menu-popup-menu mp))
+           (ox (or x (point-x (view-origin mp))))
+           (oy (or y (point-y (view-origin mp))))
+           (bar (program-menu-bar *application*))
+           (*menu-normal*   (if bar (get-color bar 1) *menu-normal*))
+           (*menu-selected* (if bar (get-color bar 2) *menu-selected*))
+           (*menu-disabled* (if bar (get-color bar 3) *menu-disabled*))
+           (*menu-hot*      (if bar (get-color bar 4) *menu-hot*)))
       (multiple-value-bind (w h) (box-dims menu)
-        (let* ((px (max 0 (min x (- (screen-width *screen*) w))))
-               (py (max 0 (min y (- (screen-height *screen*) h))))
-               (result (run-menu-box mb menu px py
+        (let* ((px (max 0 (min ox (- (screen-width *screen*) w))))
+               (py (max 0 (min oy (- (screen-height *screen*) h))))
+               (result (run-menu-box bar menu px py
                                      (lambda () (draw-view *application*)))))
           (when (integerp result)
             (put-event *application* (make-event :type +ev-command+ :command result))
             result))))))
+
+(defun popup-menu (menu x y)
+  "Convenience: build a TMenuPopup for MENU and run it at absolute (X,Y).
+Returns the chosen command integer, or NIL if cancelled."
+  (menu-popup-exec (make-menu-popup menu x y)))

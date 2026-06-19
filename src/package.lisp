@@ -156,6 +156,8 @@
    #:tmenu-bar #:menu #:menu-item #:new-menu #:sub-menu #:menu-separator
    #:menu-items #:menu-bar-menu #:track-menu #:application-menu #:init-menu-bar
    #:program-menu-bar #:find-shortcut #:popup-menu
+   #:tmenu-popup #:make-menu-popup #:menu-popup-exec #:menu-popup-menu
+   #:menu-popup-size
    ;; text view
    #:ttext-view #:text-lines #:text-string #:set-text #:append-text
    #:text-cur-line #:text-cur-col #:text-return #:text-read-only
