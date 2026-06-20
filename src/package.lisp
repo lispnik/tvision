@@ -15,6 +15,7 @@
    #:tpalette #:make-palette #:palette-ref
    #:*color-mode* #:detect-color-mode #:*rgb-theme* #:set-color-theme
    #:make-rgb-theme #:+theme-vga+ #:+theme-modern+
+   #:make-rgb #:rgb-attr #:pack-rgb #:attr-rgb-p #:attr-rgb-fg #:attr-rgb-bg
    ;; draw buffer
    #:draw-buffer #:make-draw-buffer #:db-width
    #:db-move-char #:db-move-str #:db-move-cstr #:db-put-attribute

@@ -248,7 +248,7 @@ repeating it on each of the H lines.  This is the workhorse used by `draw'."
 (defun write-str (v x y string color)
   "Write STRING at (X,Y) using mapped colour index COLOR."
   (let* ((attr (get-color v color))
-         (vec (map '(simple-array (unsigned-byte 24) (*))
+         (vec (map '(simple-array (unsigned-byte 48) (*))
                    (lambda (ch) (cell-make-code (char-code ch) attr))
                    string)))
     (%write-cells v x y (length string) 1

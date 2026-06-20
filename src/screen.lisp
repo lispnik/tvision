@@ -11,8 +11,8 @@
   (width 80 :type fixnum)
   (height 25 :type fixnum)
   ;; back buffer = what we want on screen; front buffer = what is on screen
-  (back  (make-array 0 :element-type '(unsigned-byte 24)) :type (simple-array (unsigned-byte 24) (*)))
-  (front (make-array 0 :element-type '(unsigned-byte 24)) :type (simple-array (unsigned-byte 24) (*)))
+  (back  (make-array 0 :element-type '(unsigned-byte 48)) :type (simple-array (unsigned-byte 48) (*)))
+  (front (make-array 0 :element-type '(unsigned-byte 48)) :type (simple-array (unsigned-byte 48) (*)))
   (out nil)
   (saved-stty nil)
   (cursor-x 0 :type fixnum)
@@ -132,16 +132,16 @@ LINES/COLUMNS environment variables and finally to a sane 24x80 default."
   (let ((n (* cols rows))
         (blank (cell-make-code 32 #x07)))
     (setf (screen-back s)
-          (make-array n :element-type '(unsigned-byte 24) :initial-element blank))
+          (make-array n :element-type '(unsigned-byte 48) :initial-element blank))
     ;; front initialised to an impossible value so the first flush paints all
     (setf (screen-front s)
-          (make-array n :element-type '(unsigned-byte 24) :initial-element #xffffff)))
+          (make-array n :element-type '(unsigned-byte 48) :initial-element +impossible-cell+)))
   s)
 
 (defun screen-invalidate (&optional (s *screen*))
   "Force the next FLUSH-SCREEN to repaint every cell (used after a colour-theme
 change, where the cells are unchanged but their rendering is not)."
-  (when s (fill (screen-front s) #xffffff)))
+  (when s (fill (screen-front s) +impossible-cell+)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Drawing into the back buffer

@@ -46,6 +46,7 @@
 (defparameter +cm-isearch+     352)
 (defparameter +cm-wrap+        353)
 (defparameter +cm-rgb-theme+   354)
+(defparameter +cm-color-demo+  355)
 (defparameter +cm-editor+      321)
 (defparameter +cm-load-buffer+ 322)
 (defparameter +cm-session-save+ 323)
@@ -162,6 +163,7 @@
      (new-menu
       (menu-item "Desktop c~o~lor..." +cm-theme+)
       (menu-item "Color the~m~e"       +cm-rgb-theme+)
+      (menu-item "Color ~d~emo"        +cm-color-demo+)
       (menu-item "~P~retty-print"      +cm-pprint+)
       (menu-item "Eval t~i~ming"       +cm-timing+)
       (menu-item "~A~uto-close parens" +cm-autoclose+)))
@@ -1297,6 +1299,42 @@ Backspace shortens, Esc cancels (restores point), Enter keeps the match."
                                        :test #'string= :from-end t))))
       (when chosen (repl-replace-input rv chosen) (draw-view rv)))))
 
+;;; --- true-colour demo ------------------------------------------------------
+
+(defun %hsv->rgb (h v)
+  "HSV with saturation 1 -> (values R G B), H in 0..360, V in 0..1."
+  (let* ((c (float v)) (x (* c (- 1 (abs (- (mod (/ h 60.0) 2) 1))))))
+    (multiple-value-bind (r g b)
+        (cond ((< h  60) (values c x 0)) ((< h 120) (values x c 0))
+              ((< h 180) (values 0 c x)) ((< h 240) (values 0 x c))
+              ((< h 300) (values x 0 c)) (t          (values c 0 x)))
+      (values (round (* 255 r)) (round (* 255 g)) (round (* 255 b))))))
+
+(defclass tcolor-demo-view (tview) ()
+  (:documentation "Paints a hue x brightness true-colour gradient -- a per-cell
+24-bit colour field, impossible in the 16-colour model."))
+
+(defmethod draw ((v tcolor-demo-view))
+  (let* ((w (point-x (view-size v))) (h (point-y (view-size v)))
+         (db (make-draw-buffer w)))
+    (dotimes (y h)
+      (let ((val (- 1.0 (* 0.85 (/ y (max 1 (1- h)))))))
+        (dotimes (x w)
+          (multiple-value-bind (r g b) (%hsv->rgb (* 360.0 (/ x (max 1 w))) val)
+            (db-fill db #\Space (make-rgb 255 255 255 r g b) x 1))))
+      (write-line* v 0 y w 1 db))))
+
+(defun do-color-demo (app)
+  "Open a window showing a 24-bit colour gradient (true-colour proof)."
+  (let* ((desk (program-desktop app))
+         (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+         (w (make-instance 'twindow :title "True-colour gradient"
+                           :bounds (make-trect 3 1 (min (- dw 3) 70) (min (- dh 1) 20))))
+         (gv (make-instance 'tcolor-demo-view
+                            :bounds (make-trect 1 1 (1- (point-x (view-size w)))
+                                                (1- (point-y (view-size w)))))))
+    (insert w gv) (insert desk w) (focus w)))
+
 ;;; --- editor + load buffer --------------------------------------------------
 
 (defun do-new-editor (app)
@@ -1682,6 +1720,7 @@ and named functions resolve to a source location."
           ((= c +cm-session-load+) (do-session-load app) (clear-event event))
           ((= c +cm-theme+)       (do-theme app) (clear-event event))
           ((= c +cm-rgb-theme+)   (do-rgb-theme app) (clear-event event))
+          ((= c +cm-color-demo+)  (do-color-demo app) (clear-event event))
           ((= c +cm-pprint+)      (setf *print-pretty* (not *print-pretty*))
                                   (toggle-msg "Pretty-print" *print-pretty*) (clear-event event))
           ((= c +cm-timing+)      (setf *repl-time* (not *repl-time*))

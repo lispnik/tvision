@@ -1,12 +1,13 @@
 ;;;; draw-buffer.lisp --- TDrawBuffer: a one-dimensional run of screen cells.
 ;;;;
-;;;; Each cell packs a character code (low 16 bits) and an attribute byte
-;;;; (bits 16-23) into a single (unsigned-byte 24), exactly mirroring the
-;;;; word-per-cell layout that Turbo Vision uses for video memory.
+;;;; Each cell packs a character code (low 16 bits) and an attribute (bits
+;;;; 16-47) into a single (unsigned-byte 48).  The attribute is either a 4-bit
+;;;; DOS byte (legacy palette colours) or a tagged true-colour value -- see
+;;;; colors.lisp.  This generalises Turbo Vision's word-per-cell video memory.
 
 (in-package #:tvision)
 
-(deftype cell () '(unsigned-byte 24))
+(deftype cell () '(unsigned-byte 48))
 
 (declaim (inline cell-make cell-char cell-attr cell-char-code))
 (defun cell-make (char attr)
@@ -15,15 +16,19 @@
   (logior (logand code #xffff) (ash attr 16)))
 (defun cell-char-code (c) (logand c #xffff))
 (defun cell-char (c) (code-char (logand c #xffff)))
-(defun cell-attr (c) (logand (ash c -16) #xff))
+(defun cell-attr (c) (logand (ash c -16) #xffffffff))
+
+(defconstant +impossible-cell+ #xffffffffffff
+  "A 48-bit cell value no real cell ever takes (char #xffff + an un-interned RGB
+attr); used as the front-buffer sentinel so the first flush repaints everything.")
 
 (defstruct (draw-buffer (:constructor %make-draw-buffer))
-  (data (make-array 0 :element-type '(unsigned-byte 24)) :type (simple-array (unsigned-byte 24) (*)))
+  (data (make-array 0 :element-type '(unsigned-byte 48)) :type (simple-array (unsigned-byte 48) (*)))
   (width 0 :type fixnum))
 
 (defun make-draw-buffer (width)
   (%make-draw-buffer
-   :data (make-array (max 0 width) :element-type '(unsigned-byte 24)
+   :data (make-array (max 0 width) :element-type '(unsigned-byte 48)
                                    :initial-element (cell-make-code 32 #x07))
    :width width))
 

@@ -147,6 +147,30 @@ broadcasts and drawing); return the control."
   (ok "detect-color-mode returns a known tier"
       (member (tvision::detect-color-mode) '(:truecolor :256 :16))))
 
+(deftest truecolor-attrs
+  ;; an RGB attr packs into a 48-bit cell alongside the char, and reads back
+  (let* ((a (make-rgb 255 128 0  10 20 30))
+         (c (tvision::cell-make-code 65 a)))
+    (ok "attr is tagged RGB" (attr-rgb-p a))
+    (is= "char survives in the cell" (tvision::cell-char c) #\A)
+    (is= "attr survives in the cell" (tvision::cell-attr c) a)
+    (is= "fg unpacks" (attr-rgb-fg a) (pack-rgb 255 128 0))
+    (is= "bg unpacks" (attr-rgb-bg a) (pack-rgb 10 20 30)))
+  ;; interning: equal colours share an integer (so the diff renderer's `=' holds)
+  (is= "equal RGB interns to one attr" (make-rgb 1 2 3 4 5 6) (make-rgb 1 2 3 4 5 6))
+  (ok "different RGB -> different attr" (/= (make-rgb 1 2 3 4 5 6) (make-rgb 9 9 9 0 0 0)))
+  ;; emission per mode
+  (let ((a (make-rgb 255 128 0  10 20 30)))
+    (let ((tvision::*color-mode* :truecolor))
+      (is= "truecolour RGB SGR" (attr->ansi a)
+           (format nil "~c[0;38;2;255;128;0;48;2;10;20;30m" #\Escape)))
+    (let ((tvision::*color-mode* :256))
+      (is= "256 RGB SGR" (attr->ansi a) (format nil "~c[0;38;5;208;48;5;16m" #\Escape)))
+    ;; legacy attrs and RGB attrs coexist; legacy 16-colour output is unchanged
+    (let ((tvision::*color-mode* :16))
+      (is= "legacy attr still exact 16-colour"
+           (attr->ansi (make-attr 14 1)) (format nil "~c[0;93;44m" #\Escape)))))
+
 ;;; ===========================================================================
 ;;; Draw buffer + a render round-trip
 ;;; ===========================================================================

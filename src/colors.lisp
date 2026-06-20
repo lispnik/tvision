@@ -6,17 +6,58 @@
 
 (in-package #:tvision)
 
-(deftype attr () '(unsigned-byte 8))
+;;; An attribute is a 32-bit value.  When bit 31 is clear it is a legacy 4-bit
+;;; DOS byte (fg 0-15 / bg 0-7 / blink), resolved through a 16-colour theme.
+;;; When bit 31 is set it is a true-colour attribute: the low 31 bits index an
+;;; interned (fg . bg) RGB pair, so equal colours share an integer and the
+;;; diffing renderer keeps comparing cells by `='.
+(deftype attr () '(unsigned-byte 32))
 
 (declaim (inline make-attr attr-fg attr-bg))
 (defun make-attr (fg bg &optional (blink nil))
-  "Build an attribute byte from foreground FG (0-15) and background BG (0-7)."
+  "Build a legacy DOS attribute from foreground FG (0-15) and background BG (0-7)."
   (logior (logand fg #x0f)
           (ash (logand bg #x07) 4)
           (if blink #x80 0)))
 
 (defun attr-fg (a) (logand a #x0f))
 (defun attr-bg (a) (logand (ash a -4) #x07))
+
+;;; --- true-colour attributes ------------------------------------------------
+
+(defconstant +attr-rgb-flag+ #x80000000)
+
+(declaim (inline pack-rgb attr-rgb-p))
+(defun pack-rgb (r g b)
+  "Pack an (R G B) triple (0-255 each) into a 24-bit integer."
+  (logior (ash (logand r #xff) 16) (ash (logand g #xff) 8) (logand b #xff)))
+(defun attr-rgb-p (a) (logtest a +attr-rgb-flag+))
+
+(defvar *rgb-pairs* (make-array 64 :adjustable t :fill-pointer 0)
+  "Interned (fg<<24 | bg) 48-bit colour pairs; the RGB attr's index points here.")
+(defvar *rgb-index* (make-hash-table)
+  "Maps a packed fg/bg key to its interned RGB attr (for dedup).")
+
+(defun rgb-attr (fg-rgb bg-rgb)
+  "Intern a true-colour attribute from 24-bit packed FG-RGB and BG-RGB; return it."
+  (let ((key (logior (ash (logand fg-rgb #xffffff) 24) (logand bg-rgb #xffffff))))
+    (or (gethash key *rgb-index*)
+        (let ((a (logior +attr-rgb-flag+ (fill-pointer *rgb-pairs*))))
+          (vector-push-extend key *rgb-pairs*)
+          (setf (gethash key *rgb-index*) a)
+          a))))
+
+(defun make-rgb (fr fg fb br bg bb)
+  "Intern a true-colour attribute from foreground (FR FG FB) and background
+(BR BG BB) channel values (0-255)."
+  (rgb-attr (pack-rgb fr fg fb) (pack-rgb br bg bb)))
+
+(defun attr-rgb-fg (a)
+  "The 24-bit packed foreground of an RGB attribute A."
+  (ash (aref *rgb-pairs* (logand a #x7fffffff)) -24))
+(defun attr-rgb-bg (a)
+  "The 24-bit packed background of an RGB attribute A."
+  (logand (aref *rgb-pairs* (logand a #x7fffffff)) #xffffff))
 
 ;;; Map DOS colour indices (IRGB ordering) onto ANSI SGR colour indices
 ;;; (the ANSI order is black,red,green,yellow,blue,magenta,cyan,white).
@@ -87,27 +128,48 @@ a *-256color $TERM -> 256; otherwise 16."
         (if (< r 8) 16 (if (> r 238) 231 (+ 232 (floor (- r 8) 10))))
         (+ 16 (* 36 (q r)) (* 6 (q g)) (q b)))))
 
+(defun %nearest-dos (r g b)
+  "DOS colour index 0-15 whose theme RGB is closest to (R G B)."
+  (let ((best 0) (bestd most-positive-fixnum) (th *rgb-theme*))
+    (dotimes (i 16 best)
+      (let* ((j (* 3 i))
+             (dr (- r (aref th j))) (dg (- g (aref th (+ j 1)))) (db (- b (aref th (+ j 2))))
+             (d (+ (* dr dr) (* dg dg) (* db db))))
+        (when (< d bestd) (setf bestd d best i))))))
+
+(defun %sgr-rgb (fr fg fb br bg bb)
+  "An SGR string setting fg (FR FG FB) and bg (BR BG BB), honouring *COLOR-MODE*."
+  (ecase *color-mode*
+    (:truecolor
+     (format nil "~c[0;38;2;~d;~d;~d;48;2;~d;~d;~dm" #\Escape fr fg fb br bg bb))
+    (:256
+     (format nil "~c[0;38;5;~d;48;5;~dm" #\Escape
+             (%rgb->256 fr fg fb) (%rgb->256 br bg bb)))
+    (:16
+     (let* ((dfg (%nearest-dos fr fg fb)) (dbg (%nearest-dos br bg bb))
+            (afg (aref +dos->ansi+ (logand dfg 7))) (abg (aref +dos->ansi+ (logand dbg 7))))
+       (format nil "~c[0;~d;~dm" #\Escape
+               (if (>= dfg 8) (+ 90 afg) (+ 30 afg)) (+ 40 abg))))))
+
 (defun attr->ansi (a)
-  "Return an ANSI SGR escape string that selects attribute byte A, honouring
-*COLOR-MODE* and the active *RGB-THEME*."
-  (let* ((fg (attr-fg a)) (bg (attr-bg a)))
-    (ecase *color-mode*
-      (:truecolor
-       (multiple-value-bind (fr fg* fb) (%theme-rgb fg)
-         (multiple-value-bind (br bg* bb) (%theme-rgb bg)
-           (format nil "~c[0;38;2;~d;~d;~d;48;2;~d;~d;~dm"
-                   #\Escape fr fg* fb br bg* bb))))
-      (:256
-       (multiple-value-bind (fr fg* fb) (%theme-rgb fg)
-         (multiple-value-bind (br bg* bb) (%theme-rgb bg)
-           (format nil "~c[0;38;5;~d;48;5;~dm" #\Escape
-                   (%rgb->256 fr fg* fb) (%rgb->256 br bg* bb)))))
-      (:16
-       (let ((afg (aref +dos->ansi+ (logand fg 7)))
-             (abg (aref +dos->ansi+ bg))
-             (bright (>= fg 8)))
-         (format nil "~c[0;~d;~dm" #\Escape
-                 (if bright (+ 90 afg) (+ 30 afg)) (+ 40 abg)))))))
+  "Return an ANSI SGR escape string for attribute A, honouring *COLOR-MODE* and
+the active *RGB-THEME*.  Legacy DOS attrs resolve through the theme; true-colour
+attrs emit their exact RGB (downgraded to the cube / nearest-16 when needed)."
+  (cond
+    ((attr-rgb-p a)
+     (let ((fg (attr-rgb-fg a)) (bg (attr-rgb-bg a)))
+       (%sgr-rgb (ldb (byte 8 16) fg) (ldb (byte 8 8) fg) (ldb (byte 8 0) fg)
+                 (ldb (byte 8 16) bg) (ldb (byte 8 8) bg) (ldb (byte 8 0) bg))))
+    ;; legacy 4-bit attr: keep the exact 16-colour codes (back-compatible)
+    ((eq *color-mode* :16)
+     (let ((fg (attr-fg a)) (bg (attr-bg a)))
+       (format nil "~c[0;~d;~dm" #\Escape
+               (let ((afg (aref +dos->ansi+ (logand fg 7)))) (if (>= fg 8) (+ 90 afg) (+ 30 afg)))
+               (+ 40 (aref +dos->ansi+ bg)))))
+    (t
+     (multiple-value-bind (fr fg fb) (%theme-rgb (attr-fg a))
+       (multiple-value-bind (br bg bb) (%theme-rgb (attr-bg a))
+         (%sgr-rgb fr fg fb br bg bb))))))
 
 (defun set-color-theme (theme)
   "Set the active RGB theme (a name :vga / :modern, or an RGB-THEME vector)."
