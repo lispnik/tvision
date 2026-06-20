@@ -1,0 +1,17 @@
+3bz, ghcr.io/ocicl/3bz@sha256:6d5b46b201ad7a477265823ad9be40b0db67015a9eb83de470b384e895bf22d7, 3bz-20240503-4f8a90e/3bz.asd
+cl-tga, ghcr.io/ocicl/cl-tga@sha256:2e321784df925dc46d8ce17fad7936b38a96ed7624c54aded400613287941810, cl-tga-20240503-4dc2f7b/cl-tga.asd
+com.gigamonkeys.binary-data, ghcr.io/ocicl/com.gigamonkeys.binary-data@sha256:1e43273fe575082bd116238ec1ab640c2b3b257e6e776bb02f4b9bde358eef4c, monkeylib-binary-data-20240503-22e9089/com.gigamonkeys.binary-data.asd
+deflate, ghcr.io/ocicl/deflate@sha256:f8d9b939c1b3b56e6bc4bca279bff1a29a48c05d998add7365ca6a9b2e2dcb69, Deflate-20240503-3c6d7a7/deflate.asd
+ieee-floats, ghcr.io/ocicl/ieee-floats@sha256:dcc1ef35f12ab6c611839a64338dc55a1c8e9b211274ffa8cbfd95d15b55c766, ieee-floats-20240503-9566ce8/ieee-floats.asd
+mmap, ghcr.io/ocicl/mmap@sha256:7ac8a8fa66fb88671c112e085a78eee1a80b26efa6b661b4821976b1e7003dbf, mmap-20260218-d8d4fad/mmap.asd
+mmap-test, ghcr.io/ocicl/mmap@sha256:7ac8a8fa66fb88671c112e085a78eee1a80b26efa6b661b4821976b1e7003dbf, mmap-20260218-d8d4fad/mmap-test.asd
+opticl, ghcr.io/ocicl/opticl@sha256:77240979296b1e49e6be717fbdc8a44e993f2fa0f18be627443b976d427cbeac, opticl-20240503-f6fc4dc/opticl.asd
+opticl-core, ghcr.io/ocicl/opticl-core@sha256:322b4a5fada29c653311f7011686eefcafd00dfba80f9a5ccf546613858403b9, opticl-core-20240503-b7cd13d/opticl-core.asd
+opticl-doc, ghcr.io/ocicl/opticl@sha256:77240979296b1e49e6be717fbdc8a44e993f2fa0f18be627443b976d427cbeac, opticl-20240503-f6fc4dc/opticl-doc.asd
+pathname-utils, ghcr.io/ocicl/pathname-utils@sha256:3f51de441bea45b3f83d6780f7b418ea1a243a8f6e2aa119e8dbf9f5d35f60b0, pathname-utils-20260218-c0aa51a/pathname-utils.asd
+pathname-utils-test, ghcr.io/ocicl/pathname-utils@sha256:3f51de441bea45b3f83d6780f7b418ea1a243a8f6e2aa119e8dbf9f5d35f60b0, pathname-utils-20260218-c0aa51a/pathname-utils-test.asd
+pngload, ghcr.io/ocicl/pngload@sha256:3a7ea5b2d783568b41284179153c0c10540509f26d8c7e4478c8009f532bf1f4, pngload-20240828-aef35ca/pngload.asd
+pngload.test, ghcr.io/ocicl/pngload@sha256:3a7ea5b2d783568b41284179153c0c10540509f26d8c7e4478c8009f532bf1f4, pngload-20240828-aef35ca/pngload.test.asd
+retrospectiff, ghcr.io/ocicl/retrospectiff@sha256:38312a2e4e6aac98fc32a818ab0e5223cff19226a6423664382c2258827b6669, retrospectiff-20240503-2fbf8c6/retrospectiff.asd
+skippy, ghcr.io/ocicl/skippy@sha256:923f29159fd11965890d48db7af64c72ae6e9773679406c7f3a23d9f60c89e4b, skippy-20240503-e456210/skippy.asd
+zpb-exif, ghcr.io/ocicl/zpb-exif@sha256:9368e8cdd83553c0ef974e1bbf2c0d94af3bc68373e9752ff77ec0880df3c957, zpb-exif-1.2.5/zpb-exif.asd

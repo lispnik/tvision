@@ -29,12 +29,14 @@ the current directory is on the ASDF source registry (configured by ocicl in
 third-party dependencies there is nothing to `ocicl install`; `systems.csv` is
 kept as a placeholder for any dependencies you add later.
 
-## Running the demo
+## Running the examples
+
+Two example applications ship with the port: a Lisp REPL / mini-IDE (`tvlisp`)
+and a multi-window text editor (`textedit`).
 
 ```sh
-./run-demo.sh
-# or:
-sbcl --script run.lisp
+make tvlisp && ./tvlisp        # the Lisp REPL / mini-IDE
+make textedit && ./textedit    # the text editor (pass files to open them)
 ```
 
 ### Text editor example
@@ -219,14 +221,12 @@ make tvlisp && ./tvlisp
 ### Standalone executables
 
 ```sh
-make                 # build all three: ./tvision-demo, ./textedit, ./tvlisp
+make                 # build both: ./textedit, ./tvlisp
 make textedit        # build just the editor
 make tvlisp          # build just the REPL app
-make run-demo        # build and launch the demo
 make clean           # remove the binaries and this project's fasl cache
 
 # or directly, without make:
-sbcl --eval '(asdf:make :tvision/examples)' --quit            # -> ./tvision-demo
 sbcl --eval '(asdf:make :tvision/examples/textedit)' --quit   # -> ./textedit  [file...]
 sbcl --eval '(asdf:make :tvision/examples/tvlisp)' --quit     # -> ./tvlisp
 ```
@@ -235,22 +235,11 @@ sbcl --eval '(asdf:make :tvision/examples/tvlisp)' --quit     # -> ./tvlisp
 `tvision.asd` to dump self-contained binaries.  `./textedit file1 file2` opens
 those files on startup.
 
-The demo opens a **Lisp REPL** on startup (File ▸ REPL / F2): type a form and
-press Enter to evaluate it (an open form continues on the next line), Up/Down
-recall history, output is read-only, and `*`/`**`/`***` hold recent values.
-
-Keys in the demo: **F1** help · **F10** menu bar (or **Alt+letter**) · **F2**
-REPL · **F7** editor · **F9** scroller · **F8** sample form (Tab/Shift-Tab,
-history field, validated field, radio buttons) · **F3** about · **F4** greeting ·
-**F5** tile · **F6** cycle windows · **Alt-1..9** select window · **Alt-X** quit ·
-**Ctrl-W** close.  The Palette menu switches colour / black-white / monochrome;
-File ▸ Save/Load desktop persists windows.  Inside an open menu, arrows or the
-highlighted letter choose, Esc cancels.  When no window is open the Tile /
-Cascade / Close commands grey out.  **Resize the terminal** and the UI reflows.
-In the editor: Shift+arrows select, Ctrl-C/X/V clipboard, Ctrl-Z undo, Tab
-inserts spaces.  The mouse works throughout: click/drag a scroll bar, double-
-click a list item, drag a title bar, drag the bottom-right corner to resize,
-click `[×]`/`[↑]`, and the wheel scrolls.
+The mouse works throughout both apps: click/drag a scroll bar, double-click a
+list item, drag a title bar, drag the bottom-right corner to resize, click
+`[×]`/`[↑]`, and the wheel scrolls.  **F10** opens the menu bar (or **Alt+letter**),
+**Alt-1..9** select a window, **Alt-X** quits, and **resizing the terminal**
+reflows the UI.
 
 ## Using the library
 
@@ -426,10 +415,16 @@ harness) drives each control — constructing it, feeding events through
 `handle-event`, and asserting on state, data or rendered cells:
 
 ```sh
-make test                                         # 115 checks across 25 tests
+make test         # the headless control suite + the tvlisp pty smoke tests
+make test-lisp    # just the headless control suite (205 checks across 33 tests)
+make test-pty     # just the end-to-end pty smoke tests (builds & drives ./tvlisp)
 # or:  sbcl --eval '(asdf:test-op :tvision/tests)'
 # or from Lisp: (asdf:load-system :tvision/tests) (tvision-tests:run-tests)
 ```
+
+`make test-pty` (in `tests/pty_smoke.py`) launches the built `tvlisp` binary in
+a pseudo-tty and asserts on the reconstructed screen, so the end-to-end example
+flows (REPL eval, editor, save, window list) are regression-guarded too.
 
 It exits non-zero on any failure (CI-ready) and covers geometry, the draw
 buffer, every control (clusters, lists, validators, collections, history,

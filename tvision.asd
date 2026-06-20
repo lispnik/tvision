@@ -58,19 +58,6 @@
   :perform (asdf:test-op (o c)
              (uiop:symbol-call :tvision-tests :run-tests)))
 
-(asdf:defsystem "tvision/examples"
-  :description "Demo applications for the Turbo Vision Common Lisp port."
-  :depends-on ("tvision")
-  :serial t
-  ;; `asdf:make :tvision/examples` dumps a standalone executable named
-  ;; tvision-demo (in this directory) whose entry point launches the demo.
-  :build-operation "program-op"
-  :build-pathname "tvision-demo"
-  :entry-point "tvision-demo:toplevel"
-  :components ((:module "examples"
-                :serial t
-                :components ((:file "demo")))))
-
 (asdf:defsystem "tvision/examples/textedit"
   :description "A multi-window text editor example for the Turbo Vision port."
   :depends-on ("tvision")
