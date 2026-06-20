@@ -109,6 +109,8 @@ parked with its stack live:
 - **Inspect `*`** (F8) or **Inspect expr…** — a `TOutline` tree of any value;
   Enter (or `i`) on a node drills into that value in a fresh inspector, and `g`
   jumps to its definition (for symbols, classes and named functions).
+
+  ![Inspecting a value and drilling into a nested element](media/inspector-drill.gif)
 - **Macroexpand**, **Describe**, **Documentation**, **Disassemble** — into
   scrollable windows.
 - **Apropos** — type a substring, pick from a type-ahead list, describe it.
