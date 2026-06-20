@@ -1,7 +1,5 @@
 *.fasl
 *.o
 .cache/
-/tvision-demo
-/textedit
 /systems/
 /tvlisp

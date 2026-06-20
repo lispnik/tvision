@@ -34,7 +34,8 @@ wants a gradient or image.
   use SBCL's own facilities (`sb-thread`, `sb-mop`, `sb-di`, and the
   `sb-introspect` contrib, all bundled with SBCL).
 * Running the **test suite** additionally needs [FiveAM](https://github.com/lispci/fiveam)
-  (a test-only dependency; `ql:quickload :fiveam` or `ocicl install fiveam`).
+  (a test-only dependency).  It is pinned in `systems.csv`, so `ocicl` restores
+  it (and its deps) on a fresh checkout; with Quicklisp use `ql:quickload :fiveam`.
 
 The project is structured to be loadable through [ocicl](https://github.com/ocicl/ocicl):
 the current directory is on the ASDF source registry (configured by ocicl in
