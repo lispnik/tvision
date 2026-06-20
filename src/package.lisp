@@ -19,7 +19,7 @@
    ;; draw buffer
    #:draw-buffer #:make-draw-buffer #:db-width
    #:db-move-char #:db-move-str #:db-move-cstr #:db-put-attribute
-   #:db-put-char #:db-move-buf #:db-fill
+   #:db-put-char #:db-move-buf #:db-fill #:char-width #:string-width
    ;; events
    #:event #:make-event #:event-type #:event-key-code #:event-char-code
    #:event-mouse-where #:event-mouse-buttons #:event-command #:event-info

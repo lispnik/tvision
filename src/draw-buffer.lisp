@@ -24,6 +24,22 @@
 an un-interned RGB attr); the front-buffer sentinel so the first flush repaints
 everything.")
 
+(defconstant +wide-cont+ #x1ffffe
+  "Char code marking the second cell of a double-width glyph: the renderer skips
+it (the wide glyph to its left already covers that column).")
+
+(declaim (inline char-width))
+(defun char-width (ch)
+  "Display width of CH in terminal columns: 2 for East-Asian wide/fullwidth
+characters (CJK, most emoji), 1 otherwise.  ASCII and the low BMP fast-path to 1."
+  (let ((code (char-code ch)))
+    (if (< code #x1100) 1
+        (case (sb-unicode:east-asian-width ch) ((:w :f) 2) (t 1)))))
+
+(defun string-width (s &optional (start 0) (end (length s)))
+  "Total display width of S[START,END) in terminal columns."
+  (loop for i from start below end sum (char-width (char s i))))
+
 (defstruct (draw-buffer (:constructor %make-draw-buffer))
   (data (make-array 0 :element-type '(unsigned-byte 53)) :type (simple-array (unsigned-byte 53) (*)))
   (width 0 :type fixnum))
@@ -51,6 +67,15 @@ everything.")
     (when (and (>= index 0) (< index (draw-buffer-width b)))
       (let ((a (or attr (cell-attr (aref data index)))))
         (setf (aref data index) (cell-make-code (char-code char) a)))))
+  b)
+
+(defun db-put-code (b index code &optional attr)
+  "Store raw char CODE at INDEX (keeping the existing attribute unless ATTR is
+given).  Used to mark a wide glyph's continuation cell with +wide-cont+."
+  (let ((data (draw-buffer-data b)))
+    (when (and (>= index 0) (< index (draw-buffer-width b)))
+      (let ((a (or attr (cell-attr (aref data index)))))
+        (setf (aref data index) (cell-make-code code a)))))
   b)
 
 (defun db-put-attribute (b index attr &optional (count 1))

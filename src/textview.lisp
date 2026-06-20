@@ -503,39 +503,49 @@ DATAP marks a quoted/binding/literal list (its elements align, no body rule)."
          (instr (and hl (%string-start-state tv (text-top-line tv))))
          (parens (and hl (logtest (view-state tv) +sf-focused+) (%matching-parens tv)))
          (paren-hi (%synfg c 15)))   ; matching paren: bright
-    (multiple-value-bind (sels sele) (selection-range tv)
-      (dotimes (row h)
-        (db-fill db #\Space c)
-        (let ((li (+ (text-top-line tv) row)))
-          (when (< li (line-count tv))
-            (let* ((line (nth-line tv li))
-                   (start (min dx (length line)))
-                   (vis (subseq line start (min (length line) (+ start w)))))
-              (db-move-str db 0 vis c)
-              ;; Lisp syntax colouring
-              (when hl
-                (multiple-value-bind (attrs s) (%lisp-colorize line c instr)
-                  (setf instr s)
-                  (loop for col from start below (min (length line) (+ start w))
-                        for sx from 0
-                        do (db-put-attribute db sx (aref attrs col) 1))))
-              ;; matching-paren accent
-              (when parens
-                (dolist (p parens)
-                  (when (= (car p) li)
-                    (let ((sx (- (cdr p) dx)))
-                      (when (and (>= sx 0) (< sx w)) (db-put-attribute db sx paren-hi 1))))))
-              ;; highlight the selected span on this line
-              (when (and sels (<= (car sels) li (car sele)))
-                (let* ((hs (if (= li (car sels)) (cdr sels) 0))
-                       (he (if (= li (car sele)) (cdr sele) (length line)))
-                       (vs (max 0 (- hs dx)))
-                       (ve (min w (- he dx))))
-                  (when (< vs ve) (db-put-attribute db vs hi (- ve vs)))))))
-          (write-line* tv 0 row w 1 db))))
-    (when (logtest (view-state tv) +sf-focused+)
-      (set-cursor tv (- (text-cur-col tv) (text-left-col tv))
-                  (- (text-cur-line tv) (text-top-line tv))))))
+    (flet ((vcol (line col start)
+             ;; visual column (db x) of code-point index COL, given left edge START
+             (if (>= col start) (string-width line start (min col (length line))) 0)))
+      (multiple-value-bind (sels sele) (selection-range tv)
+        (dotimes (row h)
+          (db-fill db #\Space c)
+          (let ((li (+ (text-top-line tv) row)))
+            (when (< li (line-count tv))
+              (let* ((line (nth-line tv li)) (len (length line))
+                     (start (min dx len))
+                     (attrs (when hl
+                              (multiple-value-bind (a s) (%lisp-colorize line c instr)
+                                (setf instr s) a))))
+                ;; lay out glyphs by display width; a wide glyph claims two cells
+                (loop with vx = 0
+                      for i from start below len
+                      for ch = (char line i)
+                      for cw = (char-width ch)
+                      while (< vx w) do
+                        (let ((attr (if attrs (aref attrs i) c)))
+                          (db-fill db ch attr vx 1)
+                          (when (and (= cw 2) (< (1+ vx) w))
+                            (db-put-code db (1+ vx) +wide-cont+ attr)))
+                        (incf vx cw))
+                ;; matching-paren accent
+                (when parens
+                  (dolist (p parens)
+                    (when (and (= (car p) li) (>= (cdr p) start) (< (cdr p) len))
+                      (let ((sx (vcol line (cdr p) start)))
+                        (when (< sx w)
+                          (db-put-attribute db sx paren-hi (char-width (char line (cdr p)))))))))
+                ;; highlight the selected span on this line
+                (when (and sels (<= (car sels) li (car sele)))
+                  (let* ((hs (if (= li (car sels)) (cdr sels) 0))
+                         (he (if (= li (car sele)) (cdr sele) len))
+                         (vs (max 0 (vcol line hs start)))
+                         (ve (min w (vcol line he start))))
+                    (when (< vs ve) (db-put-attribute db vs hi (- ve vs)))))))
+            (write-line* tv 0 row w 1 db))))
+      (when (logtest (view-state tv) +sf-focused+)
+        (let ((line (nth-line tv (text-cur-line tv))))
+          (set-cursor tv (vcol line (text-cur-col tv) (min dx (length line)))
+                      (- (text-cur-line tv) (text-top-line tv))))))))
 
 (defun %draw-wrapped (tv)
   (let* ((w (max 1 (point-x (view-size tv))))
@@ -720,8 +730,18 @@ subclass overrides this to evaluate the current input instead.")
           (unless done
             (setf (text-cur-line tv) (1- (line-count tv))
                   (text-cur-col tv) (length (nth-line tv (1- (line-count tv)))))))
-        (setf (text-cur-line tv) (min (1- (line-count tv)) (+ (text-top-line tv) my))
-              (text-cur-col tv) (+ (text-left-col tv) mx)))
+        (let* ((li (min (1- (line-count tv)) (+ (text-top-line tv) my)))
+               (line (nth-line tv li))
+               (start (min (text-left-col tv) (length line))))
+          (setf (text-cur-line tv) li
+                ;; walk visual columns to find the code-point index under MX
+                (text-cur-col tv)
+                (loop with vx = 0
+                      for i from start below (length line)
+                      for cw = (char-width (char line i))
+                      when (> (+ vx cw) mx) do (return i)
+                      do (incf vx cw)
+                      finally (return (length line))))))
     (clamp-cursor tv)))
 
 (defun %wrap-vmove (tv dir)

@@ -164,6 +164,26 @@ broadcasts and drawing); return the control."
     (is= "incomplete sequence waits" (decode #xF0 #x9F) (list nil nil))
     (is= "stray continuation byte consumed as-is" (decode #x80) (list #x80 1))))
 
+(deftest wide-chars
+  ;; double-width metrics
+  (is= "wide CJK is 2 columns" (char-width #\中) 2)
+  (is= "ASCII is 1 column" (char-width #\a) 1)
+  (is= "string-width sums display widths" (string-width "中a中b") 6)
+  ;; a wide glyph occupies two cells: the glyph + a continuation marker, so the
+  ;; following character lands two columns over (no overlap)
+  (let ((tv (focused (host (make-instance 'tmemo :bounds (make-trect 1 1 22 6))))))
+    (set-text tv "中a中b")
+    (setf (text-cur-col tv) 2)            ; after 中a
+    (draw-view tv)
+    (flet ((cc (x) (tvision::cell-char-code
+                    (aref (screen-back-buffer *screen*) (tvision::screen-index *screen* x 1)))))
+      (is= "中 at column 1" (cc 1) (char-code #\中))
+      (ok  "continuation marker at column 2" (= (cc 2) tvision::+wide-cont+))
+      (is= "a at column 3 (pushed past the wide glyph)" (cc 3) (char-code #\a))
+      (ok  "second 中 + continuation" (and (= (cc 4) (char-code #\中)) (= (cc 5) tvision::+wide-cont+)))
+      (is= "b at column 6" (cc 6) (char-code #\b)))
+    (is= "cursor visual column after 中a is 3" (point-x (tvision::view-cursor tv)) 3)))
+
 (deftest truecolor-attrs
   ;; an RGB attr packs into the cell alongside the char, and reads back
   (let* ((a (make-rgb 255 128 0  10 20 30))
