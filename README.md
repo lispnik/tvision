@@ -4,7 +4,9 @@ A port of Borland's [Turbo Vision](https://en.wikipedia.org/wiki/Turbo_Vision)
 character-mode UI framework to Common Lisp (SBCL).  It gives you overlapping
 movable windows, dialogs, controls, a mouse-aware event system and a DOS-style
 colour/palette model — all rendered with ANSI escape sequences in any modern
-terminal.
+terminal.  Views draw in the classic 4-bit palette, but the renderer resolves
+it through a **24-bit RGB theme** and matches the terminal automatically
+(true-colour → xterm-256 → 16-colour), so colours are exact and themeable.
 
 ```
 ▒▒▒▒╔═[×]════════════ Window 1 ════════════[↑]═╗▒▒▒▒▒
@@ -14,6 +16,8 @@ terminal.
 ▒▒▒▒╚══════════════════════════════════════════╝▒▒▒▒▒
  Alt-X Exit  F2 New  F3 About  F4 Greet  F5 Tile  ...
 ```
+
+![True-colour rendering: exact VGA palette and live theme switching](media/truecolor.gif)
 
 ## Requirements
 
