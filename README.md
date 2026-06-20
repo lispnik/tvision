@@ -338,6 +338,11 @@ boundary — enough for both the REPL and the editor example below.
 
   ![Editing Greek, Cyrillic, accents and math symbols](media/unicode.gif)
 
+  Word-wrap reflows wide glyphs whole — an emoji that won't fit is pushed to
+  the next visual row rather than split across the boundary:
+
+  ![Word-wrap with emoji: wide glyphs stay whole at the wrap boundary](media/wrap-emoji.gif)
+
 ## Status / scope
 
 Implemented: views, groups, windows, frames, desktop, dialogs, status line,
