@@ -150,7 +150,11 @@ parked with its stack live:
   and Eval region (the selection) submit into a REPL.
 - **Find / Find-next** (Ctrl-F / Ctrl-L) in the focused REPL transcript *or
   editor window*, and **Replace** (Edit ▸ Replace) across an editor buffer (an
-  empty replacement deletes the matches).  **Right-click context menu**,
+  empty replacement deletes the matches).
+
+  ![Find and Replace in an editor window](media/find-replace.gif)
+
+  **Right-click context menu**,
   **open a file in an editor window** (a `TEditWindow`) via a
   reusable `TFileDialog` — type a path or browse: Enter on a directory descends
   into it, Enter on `..` goes back up, Enter on a file opens it.
