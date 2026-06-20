@@ -887,7 +887,10 @@ keeping the goal visual column across the move."
                 ((text-anchor tv) (text-snapshot tv) (delete-selection tv))
                 ((can-edit-here-p tv) (text-snapshot tv) (delete-char-at-cursor tv))
                 (t (setf handled nil))))
-         ((and (>= ch 32) (< ch 127) (not ctrl))
+         ;; a printable character: ASCII or any non-control Unicode code point
+         ;; (input.lisp assembles multi-byte UTF-8 into a single code point)
+         ((and (>= ch 32) (/= ch 127) (< ch char-code-limit) (not ctrl)
+               (let ((c (code-char ch))) (and c (graphic-char-p c))))
           (cond ((text-read-only tv) (setf handled nil))
                 ((not (can-edit-here-p tv)) (setf handled nil))
                 (t (text-snapshot tv)

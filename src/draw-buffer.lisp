@@ -1,34 +1,36 @@
 ;;;; draw-buffer.lisp --- TDrawBuffer: a one-dimensional run of screen cells.
 ;;;;
-;;;; Each cell packs a character code (low 16 bits) and an attribute (bits
-;;;; 16-47) into a single (unsigned-byte 48).  The attribute is either a 4-bit
-;;;; DOS byte (legacy palette colours) or a tagged true-colour value -- see
-;;;; colors.lisp.  This generalises Turbo Vision's word-per-cell video memory.
+;;;; Each cell packs a character code (low 21 bits -- the full Unicode range) and
+;;;; an attribute (bits 21-52) into a single (unsigned-byte 53).  The attribute
+;;;; is either a 4-bit DOS byte (legacy palette colours) or a tagged true-colour
+;;;; value -- see colors.lisp.  This generalises Turbo Vision's word-per-cell
+;;;; video memory while admitting any Unicode code point, not just the BMP.
 
 (in-package #:tvision)
 
-(deftype cell () '(unsigned-byte 48))
+(deftype cell () '(unsigned-byte 53))
 
 (declaim (inline cell-make cell-char cell-attr cell-char-code))
 (defun cell-make (char attr)
-  (logior (logand (char-code char) #xffff) (ash attr 16)))
+  (logior (logand (char-code char) #x1fffff) (ash attr 21)))
 (defun cell-make-code (code attr)
-  (logior (logand code #xffff) (ash attr 16)))
-(defun cell-char-code (c) (logand c #xffff))
-(defun cell-char (c) (code-char (logand c #xffff)))
-(defun cell-attr (c) (logand (ash c -16) #xffffffff))
+  (logior (logand code #x1fffff) (ash attr 21)))
+(defun cell-char-code (c) (logand c #x1fffff))
+(defun cell-char (c) (code-char (logand c #x1fffff)))
+(defun cell-attr (c) (logand (ash c -21) #xffffffff))
 
-(defconstant +impossible-cell+ #xffffffffffff
-  "A 48-bit cell value no real cell ever takes (char #xffff + an un-interned RGB
-attr); used as the front-buffer sentinel so the first flush repaints everything.")
+(defconstant +impossible-cell+ #x1fffffffffffff
+  "A 53-bit cell value no real cell ever takes (an out-of-range char code +
+an un-interned RGB attr); the front-buffer sentinel so the first flush repaints
+everything.")
 
 (defstruct (draw-buffer (:constructor %make-draw-buffer))
-  (data (make-array 0 :element-type '(unsigned-byte 48)) :type (simple-array (unsigned-byte 48) (*)))
+  (data (make-array 0 :element-type '(unsigned-byte 53)) :type (simple-array (unsigned-byte 53) (*)))
   (width 0 :type fixnum))
 
 (defun make-draw-buffer (width)
   (%make-draw-buffer
-   :data (make-array (max 0 width) :element-type '(unsigned-byte 48)
+   :data (make-array (max 0 width) :element-type '(unsigned-byte 53)
                                    :initial-element (cell-make-code 32 #x07))
    :width width))
 

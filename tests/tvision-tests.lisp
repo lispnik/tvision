@@ -145,8 +145,27 @@ broadcasts and drawing); return the control."
   (ok "detect-color-mode returns a known tier"
       (member (tvision::detect-color-mode) '(:truecolor :256 :16))))
 
+(deftest unicode-input
+  ;; the cell holds a full 21-bit code point (astral plane), not just the BMP
+  (let* ((cp #x1F600)                       ; U+1F600 grinning face
+         (a (make-rgb 1 2 3 4 5 6))
+         (c (tvision::cell-make-code cp a)))
+    (is= "astral code point survives in the cell" (tvision::cell-char-code c) cp)
+    (is= "attr still survives alongside it" (tvision::cell-attr c) a))
+  ;; UTF-8 input is assembled byte-by-byte into one code-point key event
+  (flet ((decode (&rest bytes)
+           (let ((b (make-array (length bytes) :element-type '(unsigned-byte 8)
+                                               :initial-contents bytes)))
+             (multiple-value-bind (ev n) (tvision::parse-utf8 b 0 (length b))
+               (list (and ev (event-char-code ev)) n)))))
+    (is= "2-byte UTF-8 (lambda)" (decode #xCE #xBB) (list #x3BB 2))
+    (is= "3-byte UTF-8 (CJK)"    (decode #xE4 #xB8 #xAD) (list #x4E2D 3))
+    (is= "4-byte UTF-8 (emoji)"  (decode #xF0 #x9F #x98 #x80) (list #x1F600 4))
+    (is= "incomplete sequence waits" (decode #xF0 #x9F) (list nil nil))
+    (is= "stray continuation byte consumed as-is" (decode #x80) (list #x80 1))))
+
 (deftest truecolor-attrs
-  ;; an RGB attr packs into a 48-bit cell alongside the char, and reads back
+  ;; an RGB attr packs into the cell alongside the char, and reads back
   (let* ((a (make-rgb 255 128 0  10 20 30))
          (c (tvision::cell-make-code 65 a)))
     (ok "attr is tagged RGB" (attr-rgb-p a))

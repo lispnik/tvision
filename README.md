@@ -321,8 +321,15 @@ boundary — enough for both the REPL and the editor example below.
 
 * **Self-contained terminal driver.**  Raw mode is set via `stty`, the
   alternate screen and mouse tracking via xterm control sequences, and input is
-  read non-blocking from fd 0 and decoded (arrow/function keys, and SGR-encoded
-  mouse reports).
+  read non-blocking from fd 0 and decoded (arrow/function keys, SGR-encoded
+  mouse reports, and multi-byte UTF-8 assembled into one code-point event).
+
+* **Unicode text.**  Each cell carries a full 21-bit code point (not just the
+  BMP), so any Unicode character — Greek, Cyrillic, accents, symbols, even a
+  lone emoji — can be typed and rendered.  *Not yet handled:* double-width
+  (CJK/emoji) cells and multi-code-point grapheme clusters (ZWJ/skin-tone
+  sequences) still occupy one cell; `sb-unicode`'s `east-asian-width` and
+  `graphemes` are the intended basis for that next step.
 
 ## Status / scope
 

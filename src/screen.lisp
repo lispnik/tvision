@@ -11,8 +11,8 @@
   (width 80 :type fixnum)
   (height 25 :type fixnum)
   ;; back buffer = what we want on screen; front buffer = what is on screen
-  (back  (make-array 0 :element-type '(unsigned-byte 48)) :type (simple-array (unsigned-byte 48) (*)))
-  (front (make-array 0 :element-type '(unsigned-byte 48)) :type (simple-array (unsigned-byte 48) (*)))
+  (back  (make-array 0 :element-type '(unsigned-byte 53)) :type (simple-array (unsigned-byte 53) (*)))
+  (front (make-array 0 :element-type '(unsigned-byte 53)) :type (simple-array (unsigned-byte 53) (*)))
   (out nil)
   (saved-stty nil)
   (cursor-x 0 :type fixnum)
@@ -132,10 +132,10 @@ LINES/COLUMNS environment variables and finally to a sane 24x80 default."
   (let ((n (* cols rows))
         (blank (cell-make-code 32 #x07)))
     (setf (screen-back s)
-          (make-array n :element-type '(unsigned-byte 48) :initial-element blank))
+          (make-array n :element-type '(unsigned-byte 53) :initial-element blank))
     ;; front initialised to an impossible value so the first flush paints all
     (setf (screen-front s)
-          (make-array n :element-type '(unsigned-byte 48) :initial-element +impossible-cell+)))
+          (make-array n :element-type '(unsigned-byte 53) :initial-element +impossible-cell+)))
   s)
 
 (defun screen-invalidate (&optional (s *screen*))
@@ -316,18 +316,48 @@ mouse button is held with nothing else pending, synthesize ev-mouse-auto."
     ((< b 32) (key-event b b))             ; other control chars
     (t (key-event b b))))                  ; printable
 
+(defun %utf8-seq-len (lead)
+  "Expected total byte length of a UTF-8 sequence from its LEAD byte
+(1 for ASCII or a stray continuation byte)."
+  (cond ((< lead #x80) 1) ((< lead #xc0) 1)      ; ASCII / stray continuation
+        ((< lead #xe0) 2) ((< lead #xf0) 3) ((< lead #xf8) 4) (t 1)))
+
+(defun parse-utf8 (buf i len)
+  "Decode the UTF-8 sequence at BUF[I] (lead byte >= #x80) into one key event.
+Return (values event consumed), or (values nil nil) if the sequence is not yet
+complete in the buffer (wait for more bytes)."
+  (let* ((lead (aref buf i)) (n (%utf8-seq-len lead)))
+    (cond
+      ((= n 1) (values (key-event lead lead) 1))   ; stray continuation byte
+      ((> (+ i n) len) (values nil nil))           ; incomplete -- wait
+      (t (let ((cp (logand lead (ecase n (2 #x1f) (3 #x0f) (4 #x07)))))
+           (loop for k from 1 below n
+                 for b = (aref buf (+ i k))
+                 do (if (= (logand b #xc0) #x80)
+                        (setf cp (logior (ash cp 6) (logand b #x3f)))
+                        (return-from parse-utf8 (values (key-event lead lead) 1)))) ; bad seq
+           (if (and (<= cp #x10ffff) (>= cp #x80))
+               (values (key-event cp cp) n)
+               (values (key-event lead lead) 1)))))))
+
 (defun parse-input-buffer (buf len)
   "Decode BUF[0,LEN) into a list of events.  Return (values events consumed),
-leaving any trailing partial escape sequence for the next read."
+leaving any trailing partial escape / UTF-8 sequence for the next read."
   (let ((events '()) (i 0))
     (loop while (< i len) do
       (let ((b (aref buf i)))
-        (if (= b 27)
-            (multiple-value-bind (ev consumed) (parse-escape buf i len)
-              (if (null consumed)
-                  (return)                 ; incomplete; wait for more bytes
-                  (progn (when ev (push ev events)) (incf i consumed))))
-            (progn (push (parse-plain-byte b) events) (incf i)))))
+        (cond
+          ((= b 27)
+           (multiple-value-bind (ev consumed) (parse-escape buf i len)
+             (if (null consumed)
+                 (return)                  ; incomplete; wait for more bytes
+                 (progn (when ev (push ev events)) (incf i consumed)))))
+          ((>= b #x80)                      ; UTF-8 lead/continuation byte
+           (multiple-value-bind (ev consumed) (parse-utf8 buf i len)
+             (if (null consumed)
+                 (return)                  ; incomplete multi-byte char
+                 (progn (when ev (push ev events)) (incf i consumed)))))
+          (t (push (parse-plain-byte b) events) (incf i)))))
     (values (nreverse events) i)))
 
 (defun parse-escape (buf i len)
