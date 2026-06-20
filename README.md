@@ -6,7 +6,9 @@ movable windows, dialogs, controls, a mouse-aware event system and a DOS-style
 colour/palette model — all rendered with ANSI escape sequences in any modern
 terminal.  Views draw in the classic 4-bit palette, but the renderer resolves
 it through a **24-bit RGB theme** and matches the terminal automatically
-(true-colour → xterm-256 → 16-colour), so colours are exact and themeable.
+(true-colour → xterm-256 → 16-colour), so colours are exact and themeable — and
+a view can also paint **arbitrary per-cell true colour** (`make-rgb`) when it
+wants a gradient or image.
 
 ```
 ▒▒▒▒╔═[×]════════════ Window 1 ════════════[↑]═╗▒▒▒▒▒
@@ -18,6 +20,8 @@ it through a **24-bit RGB theme** and matches the terminal automatically
 ```
 
 ![True-colour rendering: exact VGA palette and live theme switching](media/truecolor.gif)
+
+![Arbitrary per-cell 24-bit colour: a hue × brightness gradient](media/truecolor-gradient.gif)
 
 ## Requirements
 
