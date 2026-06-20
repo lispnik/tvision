@@ -184,6 +184,36 @@ broadcasts and drawing); return the control."
       (is= "b at column 6" (cc 6) (char-code #\b)))
     (is= "cursor visual column after 中a is 3" (point-x (tvision::view-cursor tv)) 3)))
 
+(deftest grapheme-clusters
+  (let ((combining (concatenate 'string "e" (string (code-char #x301)) "ab"))  ; é + ab
+        (fam (coerce (list (code-char #x1F468) (code-char #x200D) (code-char #x1F469)
+                           (code-char #x200D) (code-char #x1F467)) 'string)))    ; 👨‍👩‍👧
+    ;; boundary detection: the base+combining pair is one cluster
+    (is= "cluster offsets" (tvision::grapheme-offsets combining) '(0 2 3 4))
+    (is= "next boundary skips the combining mark" (tvision::next-grapheme-col combining 0) 2)
+    (is= "prev boundary skips the combining mark" (tvision::prev-grapheme-col combining 2) 0)
+    (is= "ASCII line stays per-character" (tvision::next-grapheme-col "abc" 0) 1)
+    ;; a ZWJ emoji sequence is a single, double-width cluster
+    (is= "family emoji is one cluster" (length (sb-unicode:graphemes fam)) 1)
+    (is= "family emoji is width 2" (tvision::grapheme-width fam) 2)
+    ;; render it: one interned cluster cell + a continuation, then the next char
+    (let ((tv (focused (host (make-instance 'tmemo :bounds (make-trect 1 1 30 6))))))
+      (set-text tv (concatenate 'string fam "X"))
+      (draw-view tv)
+      (flet ((cc (x) (tvision::cell-char-code
+                      (aref (screen-back-buffer *screen*) (tvision::screen-index *screen* x 1)))))
+        (ok  "cluster cell at column 1" (tvision::cluster-code-p (cc 1)))
+        (is= "cluster cell holds the whole sequence" (tvision::cluster-string (cc 1)) fam)
+        (ok  "continuation at column 2" (= (cc 2) tvision::+wide-cont+))
+        (is= "X lands at column 3" (cc 3) (char-code #\X))))
+    ;; backspace deletes the whole preceding cluster, not one code point
+    (let ((tv (focused (host (make-instance 'tmemo :bounds (make-trect 1 1 30 6))))))
+      (set-text tv (concatenate 'string "x" "e" (string (code-char #x301))))    ; xé
+      (setf (text-cur-col tv) 3)
+      (tvision::delete-char-before-cursor tv)
+      (is= "backspace removes the é cluster" (nth-line tv 0) "x")
+      (is= "cursor at the cluster boundary" (text-cur-col tv) 1))))
+
 (deftest truecolor-attrs
   ;; an RGB attr packs into the cell alongside the char, and reads back
   (let* ((a (make-rgb 255 128 0  10 20 30))

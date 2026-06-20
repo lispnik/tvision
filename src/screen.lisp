@@ -188,10 +188,16 @@ silently ignored, which lets views draw without bounds-checking."
                 (unless (= attr last-attr)
                   (write-string (attr->ansi attr) out)
                   (setf last-attr attr)))
-              (let ((ch (if (< code 32) #\Space (code-char code))))
-                (write-char ch out)
-                ;; a double-width glyph moves the terminal cursor two columns
-                (incf cx (char-width ch))))))))
+              (let ((g (cluster-string code)))
+                (cond
+                  (g                              ; a multi-code-point grapheme cluster
+                   (write-string g out)
+                   (incf cx (grapheme-width g)))
+                  (t
+                   (let ((ch (if (< code 32) #\Space (code-char code))))
+                     (write-char ch out)
+                     ;; a double-width glyph moves the terminal cursor two columns
+                     (incf cx (char-width ch)))))))))))
     ;; place the hardware cursor where a focused view asked for it
     (when (screen-cursor-visible s)
       (write-string (ctl "~d q" (ecase (screen-cursor-shape s)

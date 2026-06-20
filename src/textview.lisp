@@ -503,48 +503,51 @@ DATAP marks a quoted/binding/literal list (its elements align, no body rule)."
          (instr (and hl (%string-start-state tv (text-top-line tv))))
          (parens (and hl (logtest (view-state tv) +sf-focused+) (%matching-parens tv)))
          (paren-hi (%synfg c 15)))   ; matching paren: bright
-    (flet ((vcol (line col start)
-             ;; visual column (db x) of code-point index COL, given left edge START
-             (if (>= col start) (string-width line start (min col (length line))) 0)))
-      (multiple-value-bind (sels sele) (selection-range tv)
-        (dotimes (row h)
-          (db-fill db #\Space c)
-          (let ((li (+ (text-top-line tv) row)))
-            (when (< li (line-count tv))
-              (let* ((line (nth-line tv li)) (len (length line))
-                     (start (min dx len))
-                     (attrs (when hl
-                              (multiple-value-bind (a s) (%lisp-colorize line c instr)
-                                (setf instr s) a))))
-                ;; lay out glyphs by display width; a wide glyph claims two cells
-                (loop with vx = 0
-                      for i from start below len
-                      for ch = (char line i)
-                      for cw = (char-width ch)
-                      while (< vx w) do
-                        (let ((attr (if attrs (aref attrs i) c)))
-                          (db-fill db ch attr vx 1)
-                          (when (and (= cw 2) (< (1+ vx) w))
-                            (db-put-code db (1+ vx) +wide-cont+ attr)))
-                        (incf vx cw))
-                ;; matching-paren accent
-                (when parens
-                  (dolist (p parens)
-                    (when (and (= (car p) li) (>= (cdr p) start) (< (cdr p) len))
-                      (let ((sx (vcol line (cdr p) start)))
-                        (when (< sx w)
-                          (db-put-attribute db sx paren-hi (char-width (char line (cdr p)))))))))
-                ;; highlight the selected span on this line
-                (when (and sels (<= (car sels) li (car sele)))
-                  (let* ((hs (if (= li (car sels)) (cdr sels) 0))
-                         (he (if (= li (car sele)) (cdr sele) len))
-                         (vs (max 0 (vcol line hs start)))
-                         (ve (min w (vcol line he start))))
-                    (when (< vs ve) (db-put-attribute db vs hi (- ve vs)))))))
-            (write-line* tv 0 row w 1 db))))
+    (multiple-value-bind (sels sele) (selection-range tv)
+      (dotimes (row h)
+        (db-fill db #\Space c)
+        (let ((li (+ (text-top-line tv) row)))
+          (when (< li (line-count tv))
+            (let* ((line (nth-line tv li)) (len (length line))
+                   (start (min dx len))
+                   (simple (simple-line-p line))
+                   (offs (unless simple (grapheme-offsets line)))
+                   (attrs (when hl
+                            (multiple-value-bind (a s) (%lisp-colorize line c instr)
+                              (setf instr s) a))))
+              ;; lay out by grapheme cluster: a multi-code-point cluster is one
+              ;; interned glyph; a wide glyph also claims the next cell.
+              (loop with vx = 0 and i = start
+                    while (and (< i len) (< vx w)) do
+                      (let* ((gend (if simple (1+ i)
+                                       (or (find-if (lambda (o) (> o i)) offs) len)))
+                             (base (char line i))
+                             (cw (char-width base))
+                             (attr (if attrs (aref attrs i) c)))
+                        (if (= (- gend i) 1)
+                            (db-fill db base attr vx 1)
+                            (db-put-code db vx (intern-grapheme (subseq line i gend)) attr))
+                        (when (and (= cw 2) (< (1+ vx) w))
+                          (db-put-code db (1+ vx) +wide-cont+ attr))
+                        (incf vx cw) (setf i gend)))
+              ;; matching-paren accent
+              (when parens
+                (dolist (p parens)
+                  (when (and (= (car p) li) (>= (cdr p) start) (< (cdr p) len))
+                    (let ((sx (visual-col line start (cdr p))))
+                      (when (< sx w)
+                        (db-put-attribute db sx paren-hi (char-width (char line (cdr p)))))))))
+              ;; highlight the selected span on this line
+              (when (and sels (<= (car sels) li (car sele)))
+                (let* ((hs (if (= li (car sels)) (cdr sels) 0))
+                       (he (if (= li (car sele)) (cdr sele) len))
+                       (vs (max 0 (visual-col line start hs)))
+                       (ve (min w (visual-col line start he))))
+                  (when (< vs ve) (db-put-attribute db vs hi (- ve vs)))))))
+          (write-line* tv 0 row w 1 db)))
       (when (logtest (view-state tv) +sf-focused+)
         (let ((line (nth-line tv (text-cur-line tv))))
-          (set-cursor tv (vcol line (text-cur-col tv) (min dx (length line)))
+          (set-cursor tv (visual-col line (min dx (length line)) (text-cur-col tv))
                       (- (text-cur-line tv) (text-top-line tv))))))))
 
 (defun %draw-wrapped (tv)
@@ -594,9 +597,10 @@ DATAP marks a quoted/binding/literal list (its elements align, no body rule)."
   (let ((col (text-cur-col tv)) (li (text-cur-line tv)))
     (cond
       ((> col 0)
-       (let ((l (current-line-string tv)))
-         (set-line tv li (concatenate 'string (subseq l 0 (1- col)) (subseq l col)))
-         (decf (text-cur-col tv))))
+       ;; delete the whole preceding grapheme cluster, not just one code point
+       (let* ((l (current-line-string tv)) (pcol (prev-grapheme-col l col)))
+         (set-line tv li (concatenate 'string (subseq l 0 pcol) (subseq l col)))
+         (setf (text-cur-col tv) pcol)))
       ((> li 0)
        ;; join with previous line
        (let* ((prev (nth-line tv (1- li))) (cur (current-line-string tv)))
@@ -609,7 +613,9 @@ DATAP marks a quoted/binding/literal list (its elements align, no body rule)."
   (let* ((l (current-line-string tv)) (col (text-cur-col tv)) (li (text-cur-line tv)))
     (cond
       ((< col (length l))
-       (set-line tv li (concatenate 'string (subseq l 0 col) (subseq l (1+ col)))))
+       ;; delete the whole grapheme cluster under the cursor
+       (let ((nend (next-grapheme-col l col)))
+         (set-line tv li (concatenate 'string (subseq l 0 col) (subseq l nend)))))
       ((< li (1- (line-count tv)))
        (set-line tv li (concatenate 'string l (nth-line tv (1+ li))))
        (remove-line tv (1+ li))))))
@@ -734,13 +740,13 @@ subclass overrides this to evaluate the current input instead.")
                (line (nth-line tv li))
                (start (min (text-left-col tv) (length line))))
           (setf (text-cur-line tv) li
-                ;; walk visual columns to find the code-point index under MX
+                ;; walk grapheme clusters to find the boundary under MX
                 (text-cur-col tv)
-                (loop with vx = 0
-                      for i from start below (length line)
+                (loop with vx = 0 and i = start
+                      while (< i (length line))
                       for cw = (char-width (char line i))
                       when (> (+ vx cw) mx) do (return i)
-                      do (incf vx cw)
+                      do (incf vx cw) (setf i (next-grapheme-col line i))
                       finally (return (length line))))))
     (clamp-cursor tv)))
 
@@ -771,12 +777,15 @@ keeping the goal visual column across the move."
   (cond
     ((= k +kb-up+)    (if (text-wrap tv) (%wrap-vmove tv -1) (decf (text-cur-line tv))))
     ((= k +kb-down+)  (if (text-wrap tv) (%wrap-vmove tv +1) (incf (text-cur-line tv))))
-    ((= k +kb-left+)  (if (> (text-cur-col tv) 0) (decf (text-cur-col tv))
+    ((= k +kb-left+)  (if (> (text-cur-col tv) 0)
+                          (setf (text-cur-col tv)
+                                (prev-grapheme-col (current-line-string tv) (text-cur-col tv)))
                           (when (> (text-cur-line tv) 0)
                             (decf (text-cur-line tv))
                             (setf (text-cur-col tv) (length (current-line-string tv))))))
     ((= k +kb-right+) (if (< (text-cur-col tv) (length (current-line-string tv)))
-                          (incf (text-cur-col tv))
+                          (setf (text-cur-col tv)
+                                (next-grapheme-col (current-line-string tv) (text-cur-col tv)))
                           (when (< (text-cur-line tv) (1- (line-count tv)))
                             (incf (text-cur-line tv)) (setf (text-cur-col tv) 0))))
     ((= k +kb-home+)  (setf (text-cur-col tv) 0))

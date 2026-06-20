@@ -37,8 +37,80 @@ characters (CJK, most emoji), 1 otherwise.  ASCII and the low BMP fast-path to 1
         (case (sb-unicode:east-asian-width ch) ((:w :f) 2) (t 1)))))
 
 (defun string-width (s &optional (start 0) (end (length s)))
-  "Total display width of S[START,END) in terminal columns."
+  "Total display width of S[START,END) in terminal columns (per code point;
+for grapheme-aware width use GRAPHEME-WIDTH over clusters)."
   (loop for i from start below end sum (char-width (char s i))))
+
+;;; --- grapheme clusters ------------------------------------------------------
+;;; A cell holds one code point in its 21-bit char field; a multi-code-point
+;;; grapheme cluster (combining marks, ZWJ / skin-tone emoji) is stored by
+;;; interning the cluster string and putting its index in the unused code-point
+;;; range #x110000..#x1FFFFD (below the +wide-cont+/+impossible-cell+ sentinels).
+;;; Single code points stay literal -- the common, allocation-free path.
+
+(defconstant +cluster-base+ #x110000)
+
+(defvar *graphemes* (make-array 64 :adjustable t :fill-pointer 0)
+  "Interned grapheme-cluster strings; a cluster cell's code is +cluster-base+ + index.")
+(defvar *grapheme-index* (make-hash-table :test 'equal)
+  "Maps a cluster string to its interned cell code (for dedup, so the diff
+renderer keeps comparing cells with `=').")
+
+(defun intern-grapheme (s)
+  "Intern cluster string S; return its char-field code (>= +cluster-base+)."
+  (or (gethash s *grapheme-index*)
+      (let ((code (+ +cluster-base+ (fill-pointer *graphemes*))))
+        (vector-push-extend (copy-seq s) *graphemes*)
+        (setf (gethash s *grapheme-index*) code)
+        code)))
+
+(declaim (inline cluster-code-p))
+(defun cluster-code-p (code) (<= +cluster-base+ code #x1ffffd))
+(defun cluster-string (code)
+  "The cluster string for a cluster CODE, or NIL."
+  (when (cluster-code-p code) (aref *graphemes* (- code +cluster-base+))))
+
+(defun grapheme-width (cluster)
+  "Display width of a grapheme CLUSTER (its base character's width)."
+  (if (plusp (length cluster)) (char-width (char cluster 0)) 1))
+
+(defun simple-line-p (line)
+  "True when LINE can contain no grapheme cluster spanning >1 code point, i.e.
+no combining marks, ZWJ, regional indicators, emoji modifiers or variation
+selectors (all of which live at or above U+0300).  The fast path for plain text."
+  (every (lambda (ch) (< (char-code ch) #x300)) line))
+
+(defun grapheme-offsets (line)
+  "Sorted code-point indices where grapheme clusters start in LINE, plus the
+final length: (0 ... LEN)."
+  (let ((offs (list 0)) (pos 0))
+    (dolist (g (sb-unicode:graphemes line))
+      (incf pos (length g)) (push pos offs))
+    (nreverse offs)))
+
+(defun next-grapheme-col (line col)
+  "Code-point index of the grapheme boundary after COL."
+  (if (simple-line-p line)
+      (min (1+ col) (length line))
+      (or (find-if (lambda (o) (> o col)) (grapheme-offsets line)) (length line))))
+
+(defun prev-grapheme-col (line col)
+  "Code-point index of the grapheme boundary before COL."
+  (if (simple-line-p line)
+      (max (1- col) 0)
+      (let ((prev 0))
+        (dolist (o (grapheme-offsets line) prev)
+          (if (< o col) (setf prev o) (return prev))))))
+
+(defun visual-col (line start col)
+  "Display column (relative to START) of code-point index COL, counting each
+grapheme cluster as one display unit."
+  (cond ((<= col start) 0)
+        ((simple-line-p line) (string-width line start (min col (length line))))
+        (t (let ((offs (grapheme-offsets line)) (w 0))
+             (loop for (a b) on offs while (and b (< a col))
+                   do (incf w (grapheme-width (subseq line a (min b (length line))))))
+             w))))
 
 (defstruct (draw-buffer (:constructor %make-draw-buffer))
   (data (make-array 0 :element-type '(unsigned-byte 53)) :type (simple-array (unsigned-byte 53) (*)))

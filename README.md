@@ -327,11 +327,12 @@ boundary — enough for both the REPL and the editor example below.
 * **Unicode text.**  Each cell carries a full 21-bit code point (not just the
   BMP), so any Unicode character — Greek, Cyrillic, accents, symbols, even a
   lone emoji — can be typed and rendered.  **Double-width** characters (CJK and
-  most emoji) are laid out correctly: a wide glyph claims two cells (`sb-unicode`'s
-  `east-asian-width`), so following text doesn't overlap and the cursor tracks
-  the right visual column.  *Not yet handled:* multi-code-point grapheme clusters
-  (combining marks, ZWJ / skin-tone emoji sequences) — `sb-unicode:graphemes`
-  is the basis for that.
+  most emoji) claim two cells (`sb-unicode`'s `east-asian-width`), so following
+  text doesn't overlap and the cursor tracks the right visual column.
+  **Grapheme clusters** (`sb-unicode:graphemes`) — base+combining marks and
+  ZWJ / skin-tone emoji sequences — are interned into a single cell, so they
+  render as one glyph and arrow-keys / backspace / mouse / selection treat them
+  as one unit.  (Word-wrap mode is the one place still laid out per code point.)
 
   ![Editing Greek, Cyrillic, accents and math symbols](media/unicode.gif)
   *Not yet handled:* double-width
