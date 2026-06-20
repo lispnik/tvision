@@ -83,6 +83,7 @@ LINES/COLUMNS environment variables and finally to a sane 24x80 default."
 
 (defun init-screen ()
   "Put the terminal into raw, full-screen mode and return the screen object."
+  (setf *color-mode* (detect-color-mode))   ; pick 24-bit / 256 / 16 for this terminal
   (let ((s (make-screen)))
     (setf (screen-out s)
           (sb-sys:make-fd-stream 1 :output t :element-type 'character
@@ -136,6 +137,11 @@ LINES/COLUMNS environment variables and finally to a sane 24x80 default."
     (setf (screen-front s)
           (make-array n :element-type '(unsigned-byte 24) :initial-element #xffffff)))
   s)
+
+(defun screen-invalidate (&optional (s *screen*))
+  "Force the next FLUSH-SCREEN to repaint every cell (used after a colour-theme
+change, where the cells are unchanged but their rendering is not)."
+  (when s (fill (screen-front s) #xffffff)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Drawing into the back buffer

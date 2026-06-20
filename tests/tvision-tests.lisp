@@ -122,6 +122,32 @@ broadcasts and drawing); return the control."
       (is= "union by" (rect-by u) 20))))
 
 ;;; ===========================================================================
+;;; Colour rendering: theme + capability ladder
+;;; ===========================================================================
+
+(deftest color-modes
+  (let ((a (make-attr 14 1)))          ; bright yellow on blue
+    ;; 16-colour mode is the classic 4-bit SGR (unchanged, back-compatible)
+    (let ((tvision::*color-mode* :16))
+      (is= "16-colour SGR" (attr->ansi a) (format nil "~c[0;93;44m" #\Escape)))
+    ;; true colour emits 24-bit fg/bg from the active theme (VGA here)
+    (let ((tvision::*color-mode* :truecolor)
+          (tvision::*rgb-theme* tvision:+theme-vga+))
+      (is= "truecolour SGR"
+           (attr->ansi a)
+           (format nil "~c[0;38;2;255;255;85;48;2;0;0;170m" #\Escape)))
+    ;; 256-colour maps the theme RGB onto the xterm cube
+    (let ((tvision::*color-mode* :256)
+          (tvision::*rgb-theme* tvision:+theme-vga+))
+      (is= "256-colour SGR" (attr->ansi a) (format nil "~c[0;38;5;227;48;5;19m" #\Escape)))
+    ;; switching the theme changes the emitted RGB
+    (let ((tvision::*color-mode* :truecolor)
+          (tvision::*rgb-theme* tvision:+theme-modern+))
+      (ok "theme swap changes RGB" (not (search "255;255;85" (attr->ansi a))))))
+  (ok "detect-color-mode returns a known tier"
+      (member (tvision::detect-color-mode) '(:truecolor :256 :16))))
+
+;;; ===========================================================================
 ;;; Draw buffer + a render round-trip
 ;;; ===========================================================================
 

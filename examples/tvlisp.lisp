@@ -45,6 +45,7 @@
 (defparameter +cm-goto-line+   351)
 (defparameter +cm-isearch+     352)
 (defparameter +cm-wrap+        353)
+(defparameter +cm-rgb-theme+   354)
 (defparameter +cm-editor+      321)
 (defparameter +cm-load-buffer+ 322)
 (defparameter +cm-session-save+ 323)
@@ -159,7 +160,8 @@
       (menu-item "Load ~b~uffer"      +cm-load-buffer+)))
    (sub-menu "~O~ptions"
      (new-menu
-      (menu-item "~T~heme..."          +cm-theme+)
+      (menu-item "Desktop c~o~lor..." +cm-theme+)
+      (menu-item "Color the~m~e"       +cm-rgb-theme+)
       (menu-item "~P~retty-print"      +cm-pprint+)
       (menu-item "Eval t~i~ming"       +cm-timing+)
       (menu-item "~A~uto-close parens" +cm-autoclose+)))
@@ -1467,6 +1469,18 @@ debugger support, exactly as if typed)."
       (draw-view app)
       (when *screen* (flush-screen *screen*)))))
 
+(defvar *rgb-themes* (list (cons "VGA" tvision:+theme-vga+)
+                           (cons "Modern" tvision:+theme-modern+)))
+(defvar *rgb-theme-idx* 0)
+
+(defun do-rgb-theme (app)
+  "Cycle the 16-colour RGB theme (VGA <-> Modern) and repaint."
+  (setf *rgb-theme-idx* (mod (1+ *rgb-theme-idx*) (length *rgb-themes*)))
+  (let ((entry (nth *rgb-theme-idx* *rgb-themes*)))
+    (set-color-theme (cdr entry))
+    (draw-view app)
+    (when *screen* (screen-invalidate *screen*) (flush-screen *screen*))))
+
 (defun toggle-msg (name on)
   (message-box (format nil "~a ~:[off~;on~]." name on) (logior +mf-information+ +mf-ok-button+)))
 
@@ -1667,6 +1681,7 @@ and named functions resolve to a source location."
           ((= c +cm-session-save+) (do-session-save app) (clear-event event))
           ((= c +cm-session-load+) (do-session-load app) (clear-event event))
           ((= c +cm-theme+)       (do-theme app) (clear-event event))
+          ((= c +cm-rgb-theme+)   (do-rgb-theme app) (clear-event event))
           ((= c +cm-pprint+)      (setf *print-pretty* (not *print-pretty*))
                                   (toggle-msg "Pretty-print" *print-pretty*) (clear-event event))
           ((= c +cm-timing+)      (setf *repl-time* (not *repl-time*))

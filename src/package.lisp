@@ -13,6 +13,8 @@
    ;; colors
    #:attr #:make-attr #:attr-fg #:attr-bg #:attr->ansi
    #:tpalette #:make-palette #:palette-ref
+   #:*color-mode* #:detect-color-mode #:*rgb-theme* #:set-color-theme
+   #:make-rgb-theme #:+theme-vga+ #:+theme-modern+
    ;; draw buffer
    #:draw-buffer #:make-draw-buffer #:db-width
    #:db-move-char #:db-move-str #:db-move-cstr #:db-put-attribute
@@ -52,6 +54,7 @@
    ;; screen driver
    #:init-screen #:done-screen #:with-screen #:screen-width #:screen-height
    #:flush-screen #:screen-back-buffer #:screen-cell-set #:screen-resize
+   #:screen-invalidate
    #:show-cursor #:hide-cursor #:set-cursor-pos #:set-cursor-shape #:*screen*
    ;; view
    #:tview #:view-origin #:view-size #:view-cursor #:view-owner #:view-next
