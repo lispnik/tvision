@@ -61,12 +61,18 @@ word-wrap mode the virtual width is just the view width (no horizontal scroll)."
           (setf maxw (max maxw (1+ (length (aref (text-lines tv) i)))))))
     (set-scroller-limit tv maxw (fill-pointer (text-lines tv)))))
 
-;;; word-wrap geometry: a logical line of LEN chars occupies this many visual
-;;; rows of width W (room for the cursor one past the end on a full row).
-(defun %line-rows (len w) (1+ (floor (max 0 len) (max 1 w))))
+;;; word-wrap geometry: how many visual rows a logical LINE occupies at width W,
+;;; honouring display width and grapheme boundaries (WRAP-SEGMENTS).
+(defun %line-rows (line w) (length (wrap-segments line w)))
 (defun %vrows-between (tv top line w)
   "Number of visual rows occupied by logical lines [TOP, LINE)."
-  (loop for i from top below line sum (%line-rows (length (nth-line tv i)) w)))
+  (loop for i from top below line sum (%line-rows (nth-line tv i) w)))
+(defun %seg-index (segs col)
+  "Index of the wrap segment (from WRAP-SEGMENTS) containing code-point COL: the
+last segment whose start is <= COL."
+  (let ((best 0))
+    (loop for s in segs for k from 0 when (<= s col) do (setf best k))
+    best))
 
 (defun set-text-wrap (tv on)
   "Turn word-wrap on/off and reflow."
@@ -134,9 +140,10 @@ that the cursor is on screen."
         (w (max 1 (point-x (view-size tv)))))
     (if (text-wrap tv)
         ;; vertical scroll is by logical line; keep the cursor's visual row in view
-        (let ((top (min (text-top-line tv) (text-cur-line tv))))
-          (loop for crow = (+ (%vrows-between tv top (text-cur-line tv) w)
-                              (floor (text-cur-col tv) w))
+        (let* ((top (min (text-top-line tv) (text-cur-line tv)))
+               (sidx (%seg-index (wrap-segments (current-line-string tv) w)
+                                 (text-cur-col tv))))
+          (loop for crow = (+ (%vrows-between tv top (text-cur-line tv) w) sidx)
                 while (and (>= crow h) (< top (text-cur-line tv)))
                 do (incf top))
           (scroll-to tv 0 (max 0 top)))
@@ -492,6 +499,27 @@ DATAP marks a quoted/binding/literal list (its elements align, no body rule)."
 (defmethod draw ((tv ttext-view))
   (if (text-wrap tv) (%draw-wrapped tv) (%draw-flat tv)))
 
+(defun %draw-glyphs (db line start end w c &optional attrs)
+  "Lay LINE[START,END) into draw-buffer DB across display columns [0,W): one cell
+per narrow glyph, two per wide one, interning any multi-code-point grapheme
+cluster.  ATTRS, when non-NIL, is a per-code-point attribute array (else C).
+Shared by the flat and word-wrapped layouts."
+  (let* ((simple (simple-line-p line))
+         (offs (unless simple (grapheme-offsets line))))
+    (loop with vx = 0 and i = start
+          while (and (< i end) (< vx w)) do
+            (let* ((gend (if simple (1+ i)
+                             (min end (or (find-if (lambda (o) (> o i)) offs) end))))
+                   (base (char line i))
+                   (cw (char-width base))
+                   (attr (if attrs (aref attrs i) c)))
+              (if (= (- gend i) 1)
+                  (db-fill db base attr vx 1)
+                  (db-put-code db vx (intern-grapheme (subseq line i gend)) attr))
+              (when (and (= cw 2) (< (1+ vx) w))
+                (db-put-code db (1+ vx) +wide-cont+ attr))
+              (incf vx cw) (setf i gend)))))
+
 (defun %draw-flat (tv)
   (let* ((w (point-x (view-size tv)))
          (h (point-y (view-size tv)))
@@ -510,26 +538,12 @@ DATAP marks a quoted/binding/literal list (its elements align, no body rule)."
           (when (< li (line-count tv))
             (let* ((line (nth-line tv li)) (len (length line))
                    (start (min dx len))
-                   (simple (simple-line-p line))
-                   (offs (unless simple (grapheme-offsets line)))
                    (attrs (when hl
                             (multiple-value-bind (a s) (%lisp-colorize line c instr)
                               (setf instr s) a))))
               ;; lay out by grapheme cluster: a multi-code-point cluster is one
               ;; interned glyph; a wide glyph also claims the next cell.
-              (loop with vx = 0 and i = start
-                    while (and (< i len) (< vx w)) do
-                      (let* ((gend (if simple (1+ i)
-                                       (or (find-if (lambda (o) (> o i)) offs) len)))
-                             (base (char line i))
-                             (cw (char-width base))
-                             (attr (if attrs (aref attrs i) c)))
-                        (if (= (- gend i) 1)
-                            (db-fill db base attr vx 1)
-                            (db-put-code db vx (intern-grapheme (subseq line i gend)) attr))
-                        (when (and (= cw 2) (< (1+ vx) w))
-                          (db-put-code db (1+ vx) +wide-cont+ attr))
-                        (incf vx cw) (setf i gend)))
+              (%draw-glyphs db line start len w c attrs)
               ;; matching-paren accent
               (when parens
                 (dolist (p parens)
@@ -561,25 +575,33 @@ DATAP marks a quoted/binding/literal list (its elements align, no body rule)."
         (cond
           ((< li (line-count tv))
            (let* ((line (nth-line tv li)) (len (length line))
-                  (nseg (%line-rows len w)))
+                  (segs (wrap-segments line w)) (nseg (length segs)))
              (dotimes (seg nseg)
                (when (>= row h) (return))
-               (let* ((start (* seg w)) (end (min len (+ start w))))
+               (let* ((start (nth seg segs))
+                      (end (if (< (1+ seg) nseg) (nth (1+ seg) segs) len)))
                  (db-fill db #\Space c)
-                 (when (< start end) (db-move-str db 0 (subseq line start end) c))
+                 (%draw-glyphs db line start end w c)
+                 ;; highlight the selected span lying within this segment
                  (when (and sels (<= (car sels) li (car sele)))
                    (let* ((hs (if (= li (car sels)) (cdr sels) 0))
                           (he (if (= li (car sele)) (cdr sele) len))
-                          (vs (max 0 (- hs start))) (ve (min w (- he start))))
+                          (vs (visual-col line start (max start (min hs end))))
+                          (ve (min w (visual-col line start (max start (min he end))))))
                      (when (< vs ve) (db-put-attribute db vs hi (- ve vs)))))
                  (write-line* tv 0 row w 1 db))
                (incf row))
              (incf li)))
           (t (db-fill db #\Space c) (write-line* tv 0 row w 1 db) (incf row)))))
     (when (logtest (view-state tv) +sf-focused+)
-      (set-cursor tv (mod (text-cur-col tv) w)
-                  (+ (%vrows-between tv (text-top-line tv) (text-cur-line tv) w)
-                     (floor (text-cur-col tv) w))))))
+      (let* ((line (nth-line tv (text-cur-line tv)))
+             (cc (text-cur-col tv))
+             (segs (wrap-segments line w))
+             (sidx (%seg-index segs cc))
+             (sstart (nth sidx segs)))
+        (set-cursor tv (visual-col line sstart cc)
+                    (+ (%vrows-between tv (text-top-line tv) (text-cur-line tv) w)
+                       sidx))))))
 
 ;;; --- editing primitives ----------------------------------------------------
 
@@ -726,11 +748,13 @@ subclass overrides this to evaluate the current input instead.")
     (if (text-wrap tv)
         (let ((w (max 1 (point-x (view-size tv)))) (li (text-top-line tv)) (acc 0) (done nil))
           (loop while (and (not done) (< li (line-count tv))) do
-            (let ((nseg (%line-rows (length (nth-line tv li)) w)))
+            (let* ((line (nth-line tv li)) (segs (wrap-segments line w)) (nseg (length segs)))
               (if (< my (+ acc nseg))
-                  (progn
+                  (let* ((s (- my acc))
+                         (sstart (nth s segs))
+                         (send (if (< (1+ s) nseg) (nth (1+ s) segs) (length line))))
                     (setf (text-cur-line tv) li
-                          (text-cur-col tv) (+ (* (- my acc) w) mx)
+                          (text-cur-col tv) (col-at-vcol line sstart send mx)
                           done t))
                   (progn (incf acc nseg) (incf li)))))
           (unless done
@@ -752,25 +776,36 @@ subclass overrides this to evaluate the current input instead.")
 
 (defun %wrap-vmove (tv dir)
   "Move the cursor one VISUAL row (DIR -1 up / +1 down) in word-wrap mode,
-keeping the goal visual column across the move."
+keeping the goal visual column across the move (width- and grapheme-aware)."
   (let* ((w (max 1 (point-x (view-size tv))))
-         (len (length (current-line-string tv)))
-         (vseg (floor (text-cur-col tv) w))
-         (goal (or (text-goal-col tv) (mod (text-cur-col tv) w))))
+         (line (current-line-string tv))
+         (segs (wrap-segments line w))
+         (nseg (length segs))
+         (cc (text-cur-col tv))
+         (sidx (%seg-index segs cc))
+         (sstart (nth sidx segs))
+         (goal (or (text-goal-col tv) (visual-col line sstart cc))))
     (setf (text-goal-col tv) goal)
-    (if (plusp dir)
-        (if (< vseg (1- (%line-rows len w)))                 ; another segment below
-            (setf (text-cur-col tv) (min len (+ (* (1+ vseg) w) goal)))
-            (when (< (text-cur-line tv) (1- (line-count tv))) ; -> next logical line
-              (incf (text-cur-line tv))
-              (setf (text-cur-col tv) (min (length (current-line-string tv)) goal))))
-        (if (> vseg 0)                                        ; another segment above
-            (setf (text-cur-col tv) (min len (+ (* (1- vseg) w) goal)))
-            (when (> (text-cur-line tv) 0)                    ; -> prev line's last segment
-              (decf (text-cur-line tv))
-              (let* ((plen (length (current-line-string tv)))
-                     (last-seg (1- (%line-rows plen w))))
-                (setf (text-cur-col tv) (min plen (+ (* last-seg w) goal)))))))))
+    (flet ((seg-end (ss s) (if (< (1+ s) (length ss)) (nth (1+ s) ss) nil)))
+      (if (plusp dir)
+          (if (< sidx (1- nseg))                                ; another segment below
+              (setf (text-cur-col tv)
+                    (col-at-vcol line (nth (1+ sidx) segs)
+                                 (or (seg-end segs (1+ sidx)) (length line)) goal))
+              (when (< (text-cur-line tv) (1- (line-count tv))) ; -> next logical line
+                (incf (text-cur-line tv))
+                (let* ((nl (current-line-string tv)) (ns (wrap-segments nl w)))
+                  (setf (text-cur-col tv)
+                        (col-at-vcol nl 0 (or (seg-end ns 0) (length nl)) goal)))))
+          (if (> sidx 0)                                        ; another segment above
+              (setf (text-cur-col tv)
+                    (col-at-vcol line (nth (1- sidx) segs) (nth sidx segs) goal))
+              (when (> (text-cur-line tv) 0)                    ; -> prev line's last segment
+                (decf (text-cur-line tv))
+                (let* ((pl (current-line-string tv)) (ps (wrap-segments pl w))
+                       (last (1- (length ps))))
+                  (setf (text-cur-col tv)
+                        (col-at-vcol pl (nth last ps) (length pl) goal)))))))))
 
 (defun %move-cursor (tv k)
   "Apply a navigation key K to the cursor (no selection / redraw side effects)."

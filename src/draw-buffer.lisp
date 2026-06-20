@@ -109,8 +109,38 @@ grapheme cluster as one display unit."
         ((simple-line-p line) (string-width line start (min col (length line))))
         (t (let ((offs (grapheme-offsets line)) (w 0))
              (loop for (a b) on offs while (and b (< a col))
+                   when (>= a start)
                    do (incf w (grapheme-width (subseq line a (min b (length line))))))
              w))))
+
+(defun col-at-vcol (line start end g)
+  "Code-point index in LINE[START,END) whose display column (relative to START)
+is the largest not exceeding G -- the inverse of VISUAL-COL, for cursor up/down
+and mouse hits in wrapped text."
+  (loop with vx = 0 and i = start
+        while (< i end)
+        for cw = (char-width (char line i))
+        while (<= (+ vx cw) g)
+        do (incf vx cw) (setf i (next-grapheme-col line i))
+        finally (return i)))
+
+(defun wrap-segments (line w)
+  "Code-point start index of each visual row when LINE is wrapped to W display
+columns -- breaking only at grapheme boundaries, never splitting a wide glyph.
+A trailing empty row is added when the last row fills the width exactly (so the
+cursor has somewhere to sit past a full line).  Always returns at least (0)."
+  (let* ((len (length line)) (w (max 1 w)))
+    (if (simple-line-p line)
+        (let ((segs (if (zerop len) (list 0) (loop for s from 0 below len by w collect s))))
+          (if (and (plusp len) (zerop (mod len w))) (append segs (list len)) segs))
+        (let ((segs (list 0)) (i 0) (col 0) (offs (grapheme-offsets line)))
+          (loop while (< i len) do
+            (let ((cw (char-width (char line i)))
+                  (gend (or (find-if (lambda (o) (> o i)) offs) len)))
+              (when (and (> (+ col cw) w) (plusp col)) (push i segs) (setf col 0))
+              (incf col cw) (setf i (min gend len))))
+          (setf segs (nreverse segs))
+          (if (>= (visual-col line (car (last segs)) len) w) (append segs (list len)) segs)))))
 
 (defstruct (draw-buffer (:constructor %make-draw-buffer))
   (data (make-array 0 :element-type '(unsigned-byte 53)) :type (simple-array (unsigned-byte 53) (*)))

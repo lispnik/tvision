@@ -332,13 +332,11 @@ boundary — enough for both the REPL and the editor example below.
   **Grapheme clusters** (`sb-unicode:graphemes`) — base+combining marks and
   ZWJ / skin-tone emoji sequences — are interned into a single cell, so they
   render as one glyph and arrow-keys / backspace / mouse / selection treat them
-  as one unit.  (Word-wrap mode is the one place still laid out per code point.)
+  as one unit.  Word-wrap mode shares the same layout: lines break on grapheme
+  boundaries (never splitting a wide glyph), and cursor up/down and mouse hits
+  map through display columns, not code-point counts.
 
   ![Editing Greek, Cyrillic, accents and math symbols](media/unicode.gif)
-  *Not yet handled:* double-width
-  (CJK/emoji) cells and multi-code-point grapheme clusters (ZWJ/skin-tone
-  sequences) still occupy one cell; `sb-unicode`'s `east-asian-width` and
-  `graphemes` are the intended basis for that next step.
 
 ## Status / scope
 

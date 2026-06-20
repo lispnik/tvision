@@ -214,6 +214,37 @@ broadcasts and drawing); return the control."
       (is= "backspace removes the é cluster" (nth-line tv 0) "x")
       (is= "cursor at the cluster boundary" (text-cur-col tv) 1))))
 
+(deftest unicode-wrap
+  ;; word-wrap geometry honours display width and grapheme boundaries
+  (is= "ASCII wraps at the width boundary" (tvision::wrap-segments "abcdefg" 4) '(0 4))
+  (is= "an exactly-full line gets a trailing cursor row" (tvision::wrap-segments "abcd" 4) '(0 4))
+  (is= "an empty line is one row" (tvision::wrap-segments "" 4) '(0))
+  (let ((cjk "中中中"))                          ; three width-2 glyphs, total width 6
+    (is= "a wide glyph never straddles the boundary" (tvision::wrap-segments cjk 4) '(0 2))
+    (is= "the first row fills exactly four columns" (tvision::visual-col cjk 0 2) 4)
+    (is= "vcol 0 maps back to col 0" (tvision::col-at-vcol cjk 0 3 0) 0)
+    (is= "vcol 2 maps to the second glyph" (tvision::col-at-vcol cjk 0 3 2) 1)
+    (is= "a column mid-glyph snaps back to its start" (tvision::col-at-vcol cjk 0 3 3) 1))
+  ;; render wide glyphs in wrap mode: no straddle, continuation markers intact
+  (let ((tv (focused (host (make-instance 'tmemo :bounds (make-trect 0 0 4 6))))))
+    (setf (tvision::text-wrap tv) t)
+    (set-text tv "中中中")
+    (draw-view tv)
+    (flet ((cc (x y) (tvision::cell-char-code
+                      (aref (screen-back-buffer *screen*) (tvision::screen-index *screen* x y)))))
+      (ok  "row 0: glyph + continuation, twice"
+           (and (= (cc 0 0) (char-code #\中)) (= (cc 1 0) tvision::+wide-cont+)
+                (= (cc 2 0) (char-code #\中)) (= (cc 3 0) tvision::+wide-cont+)))
+      (ok  "row 1: the wrapped third glyph"
+           (and (= (cc 0 1) (char-code #\中)) (= (cc 1 1) tvision::+wide-cont+))))
+    ;; cursor Down/Up moves by visual row, keeping the goal display column
+    (setf (text-cur-line tv) 0 (text-cur-col tv) 0 (tvision::text-goal-col tv) nil)
+    (tvision::%wrap-vmove tv +1)
+    (is= "Down stays on the logical line" (text-cur-line tv) 0)
+    (is= "Down lands on the wrapped glyph" (text-cur-col tv) 2)
+    (tvision::%wrap-vmove tv -1)
+    (is= "Up returns to the first glyph" (text-cur-col tv) 0)))
+
 (deftest truecolor-attrs
   ;; an RGB attr packs into the cell alongside the char, and reads back
   (let* ((a (make-rgb 255 128 0  10 20 30))
