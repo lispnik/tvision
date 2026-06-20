@@ -29,39 +29,15 @@ the current directory is on the ASDF source registry (configured by ocicl in
 third-party dependencies there is nothing to `ocicl install`; `systems.csv` is
 kept as a placeholder for any dependencies you add later.
 
-## Running the examples
+## Running the example
 
-Two example applications ship with the port: a Lisp REPL / mini-IDE (`tvlisp`)
-and a multi-window text editor (`textedit`).
-
-```sh
-make tvlisp && ./tvlisp        # the Lisp REPL / mini-IDE
-make textedit && ./textedit    # the text editor (pass files to open them)
-```
-
-### Text editor example
-
-A full multi-window text editor lives in its own system:
+The port ships with **`tvlisp`**, a Lisp REPL / mini-IDE that exercises the
+whole framework — overlapping windows, menus, dialogs, the editor, the object
+inspector, an HTML browser, and more.
 
 ```sh
-sbcl --eval '(asdf:load-system :tvision/examples/textedit)' \
-     --eval '(tvision-textedit:main)'                       \
-     --eval '(quit)'
-# or open files directly from Lisp:
-#   (tvision-textedit:edit-file "a.txt" "b.txt")
+make tvlisp && ./tvlisp
 ```
-
-It has the classic feature set: **New / Open… / Save / Save As… / Close** with
-"save changes?" prompts, **Undo/Redo**, **Cut/Copy/Paste/Select-All**,
-**Find / Find-Next / Replace / Goto-Line** (with case-sensitive / whole-word /
-backward options and interactive or replace-all replacement), an
-**Insert/Overwrite** toggle, a
-**line:col / modified / INS-OVR indicator** in each window's frame, multiple
-editor windows, **Tile/Cascade**, and a **file open/save dialog** (directory
-browser: single-click a `dir/` to enter it, `..` to go up, double-click or Enter
-a file to open).  Keys: F2 save, F3 open, F7 find, F5 find-next, F8 replace, F6 goto,
-F9 next window, Ctrl-Z/Y undo/redo, Ctrl-X/C/V clipboard, Ctrl-A select-all,
-Ctrl+Left/Right word movement, Shift+arrows select, F10 menu, Alt-X exit.
 
 ### tvlisp — a Lisp REPL / mini-IDE
 
@@ -222,28 +198,23 @@ make tvlisp && ./tvlisp
 # or from Lisp: (asdf:load-system :tvision/examples/tvlisp) (tvision-tvlisp:main)
 ```
 
-### Standalone executables
+### Standalone executable
 
 ```sh
-make                 # build both: ./textedit, ./tvlisp
-make textedit        # build just the editor
-make tvlisp          # build just the REPL app
-make clean           # remove the binaries and this project's fasl cache
+make                 # build ./tvlisp
+make clean           # remove the binary and this project's fasl cache
 
 # or directly, without make:
-sbcl --eval '(asdf:make :tvision/examples/textedit)' --quit   # -> ./textedit  [file...]
 sbcl --eval '(asdf:make :tvision/examples/tvlisp)' --quit     # -> ./tvlisp
 ```
 
 `asdf:make` uses the `program-op`/`build-pathname`/`entry-point` settings in
-`tvision.asd` to dump self-contained binaries.  `./textedit file1 file2` opens
-those files on startup.
+`tvision.asd` to dump a self-contained binary.
 
-The mouse works throughout both apps: click/drag a scroll bar, double-click a
-list item, drag a title bar, drag the bottom-right corner to resize, click
-`[×]`/`[↑]`, and the wheel scrolls.  **F10** opens the menu bar (or **Alt+letter**),
-**Alt-1..9** select a window, **Alt-X** quits, and **resizing the terminal**
-reflows the UI.
+The mouse works throughout: click/drag a scroll bar, double-click a list item,
+drag a title bar, drag the bottom-right corner to resize, click `[×]`/`[↑]`, and
+the wheel scrolls.  **F10** opens the menu bar (or **Alt+letter**), **Alt-1..9**
+select a window, **Alt-X** quits, and **resizing the terminal** reflows the UI.
 
 ## Using the library
 

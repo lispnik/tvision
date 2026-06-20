@@ -1,16 +1,14 @@
-# Makefile --- build the Turbo Vision example programs.
+# Makefile --- build the Turbo Vision example program.
 #
-# Each program is dumped by ASDF's `program-op' (configured via
+# The example is dumped by ASDF's `program-op' (configured via
 # :build-operation / :build-pathname / :entry-point in tvision.asd):
 #
-#   textedit  <- system tvision/examples/textedit   (entry tvision-textedit:toplevel)
-#   tvlisp    <- system tvision/examples/tvlisp      (entry tvision-tvlisp:toplevel)
+#   tvlisp  <- system tvision/examples/tvlisp   (entry tvision-tvlisp:toplevel)
 #
 # Usage:
-#   make            # build both programs
-#   make textedit   # build just the editor
+#   make            # build ./tvlisp
 #   make test       # headless control suite + tvlisp pty smoke tests
-#   make clean      # remove the binaries and this project's fasl cache
+#   make clean      # remove the binary and this project's fasl cache
 
 SBCL ?= sbcl
 PYTHON ?= python3
@@ -24,13 +22,13 @@ $(SBCL) --non-interactive \
 	--eval '(uiop:quit 0)'
 endef
 
-# A program rebuilds whenever the framework or its own example source changes.
+# The program rebuilds whenever the framework or its example source changes.
 FRAMEWORK := tvision.asd $(wildcard src/*.lisp)
 
 .DEFAULT_GOAL := all
-.PHONY: all clean run-textedit run-tvlisp test test-lisp test-pty help
+.PHONY: all clean run-tvlisp test test-lisp test-pty help
 
-all: textedit tvlisp
+all: tvlisp
 
 # Full test: the headless control suite plus the tvlisp pty smoke tests.
 test: test-lisp test-pty
@@ -46,21 +44,15 @@ test-lisp: $(FRAMEWORK) tests/tvision-tests.lisp
 test-pty: tvlisp tests/pty_smoke.py
 	$(PYTHON) tests/pty_smoke.py ./tvlisp
 
-textedit: $(FRAMEWORK) examples/textedit.lisp
-	$(call asdf-make,tvision/examples/textedit)
-
 tvlisp: $(FRAMEWORK) examples/tvlisp.lisp
 	$(call asdf-make,tvision/examples/tvlisp)
-
-run-textedit: textedit
-	./textedit
 
 run-tvlisp: tvlisp
 	./tvlisp
 
 clean:
-	rm -f textedit tvlisp
+	rm -f tvlisp
 	rm -rf $(HOME)/.cache/common-lisp/*tvision* 2>/dev/null || true
 
 help:
-	@echo "Targets: all (default), textedit, tvlisp, run-*, test, test-lisp, test-pty, clean"
+	@echo "Targets: all (default), tvlisp, run-tvlisp, test, test-lisp, test-pty, clean"

@@ -108,7 +108,7 @@
 
 (defun load-desktop (path &optional (app *application*))
   "Recreate windows saved by SAVE-DESKTOP, inserting them on the desktop."
-  (with-open-file (s path :if-does-not-exist nil)
+crate  (with-open-file (s path :if-does-not-exist nil)
     (when s
       (let ((form (read s nil nil)))
         (when (and (consp form) (eq (first form) :desktop))

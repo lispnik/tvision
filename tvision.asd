@@ -58,18 +58,6 @@
   :perform (asdf:test-op (o c)
              (uiop:symbol-call :tvision-tests :run-tests)))
 
-(asdf:defsystem "tvision/examples/textedit"
-  :description "A multi-window text editor example for the Turbo Vision port."
-  :depends-on ("tvision")
-  :serial t
-  ;; `asdf:make :tvision/examples/textedit` dumps a standalone `textedit'
-  ;; executable; pass file paths on the command line to open them.
-  :build-operation "program-op"
-  :build-pathname "textedit"
-  :entry-point "tvision-textedit:toplevel"
-  :components ((:module "examples"
-                :components ((:file "textedit")))))
-
 (asdf:defsystem "tvision/examples/tvlisp"
   :description "A standalone Lisp REPL application on the Turbo Vision port."
   :depends-on ("tvision")
