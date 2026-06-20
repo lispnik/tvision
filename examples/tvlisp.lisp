@@ -157,8 +157,10 @@
      (new-menu
       (menu-item "~L~ist..." +cm-winlist+ :key-text "Alt-0")
       (menu-item "~N~ext"    +cm-next+    :key-code +kb-f6+ :key-text "F6")
+      (menu-item "~Z~oom"    +cm-zoom+    :key-code +kb-f5+ :key-text "F5")
+      (menu-item "~S~ize/Move" +cm-resize+ :key-text "Ctrl-F5")
       (menu-item "~T~ile"    +cm-tile+    :key-code +kb-f4+ :key-text "F4")
-      (menu-item "~C~ascade" +cm-cascade+ :key-code +kb-f5+ :key-text "F5")
+      (menu-item "C~a~scade" +cm-cascade+)
       (menu-item "Cl~o~se"   +cm-close+)
       (menu-separator)
       (menu-item "T~h~reads..." +cm-threads+ :key-code +kb-f9+ :key-text "F9")))
@@ -1216,12 +1218,17 @@ run a form, and show the call-count/time report."
     (when w
       (let ((path (file-save-dialog :title "Save As")))
         (when path
-          (let ((ed (editor-window-editor w)))
-            (text-save-file ed path)
-            (setf (editor-filename ed) path
-                  (window-title w) (file-namestring path))
-            (draw-view w)
-            t))))))
+          (handler-case
+              (let ((ed (editor-window-editor w)))
+                (text-save-file ed path)
+                (setf (editor-filename ed) path
+                      (window-title w) (file-namestring path))
+                (draw-view w)
+                t)
+            (error (e)
+              (message-box (format nil "Could not save:~%~a" e)
+                           (logior +mf-error+ +mf-ok-button+))
+              nil)))))))
 
 (defun do-save-editor (app)
   "Save the focused editor window (Save As if it has no filename yet)."
@@ -1229,7 +1236,9 @@ run a form, and show the call-count/time report."
     (when w
       (let* ((ed (editor-window-editor w)) (path (editor-filename ed)))
         (if path
-            (progn (text-save-file ed path) (draw-view w))
+            (handler-case (progn (text-save-file ed path) (draw-view w))
+              (error (e) (message-box (format nil "Could not save:~%~a" e)
+                                      (logior +mf-error+ +mf-ok-button+))))
             (do-saveas-editor app))))))
 
 (defun do-load-buffer (app)
@@ -1429,6 +1438,14 @@ and named functions resolve to a source location."
              (logtest (event-modifiers event) +md-alt+)
              (= (event-char-code event) (char-code #\0)))
     (do-window-list app) (clear-event event))
+  ;; Ctrl-F5 -> Size/Move the active window.  The menu shortcut machinery
+  ;; ignores modifiers (F5 = Zoom would also fire for Ctrl-F5), so intercept it
+  ;; here -- before the menu bar -- and issue cmResize instead.
+  (when (and (= (event-type event) +ev-key-down+)
+             (= (event-key-code event) +kb-f5+)
+             (logtest (event-modifiers event) +md-ctrl+))
+    (put-event app (make-event :type +ev-command+ :command +cm-resize+))
+    (clear-event event))
   ;; Alt-Q -> re-indent the whole top-level form in the focused editor
   (when (and (= (event-type event) +ev-key-down+)
              (logtest (event-modifiers event) +md-alt+)
@@ -1556,7 +1573,14 @@ F2 new REPL, F3 clear, F4 tile, F5 cascade, F6 next, F8 inspect, F9 threads.")))
   (setf (view-help-ctx (program-desktop app)) +hc-repl+)
   (open-repl-window app :maximized t))
 
+(defun %report-event-error (c)
+  "Show an unexpected UI-thread error in a dialog instead of crashing the IDE."
+  (ignore-errors
+   (message-box (format nil "Unexpected error:~%~a" c)
+                (logior +mf-error+ +mf-ok-button+))))
+
 (defun main ()
+  (setf tvision:*event-error-hook* #'%report-event-error)
   (run 'tvlisp-app))
 
 (defun toplevel ()

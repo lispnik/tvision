@@ -250,6 +250,24 @@ refresh any cached enabled-state (TV's commandSetChanged contract)."
 
 ;;; --- main loop -------------------------------------------------------------
 
+(defvar *event-error-hook* nil
+  "Called with the condition when HANDLE-EVENT signals an error during the modal
+loop.  Lets the application report the error (e.g. a message box) instead of
+letting it tear down the whole program.  When NIL, the error is written to
+*ERROR-OUTPUT* and the loop continues.")
+
+(defun %handle-loop-event (view e)
+  "Dispatch one event, containing any error so a single bad command can never
+crash the program."
+  (handler-case
+      (if (/= (event-type e) +ev-nothing+)
+          (handle-event view e)
+          (idle *application*))
+    (serious-condition (c)
+      (if *event-error-hook*
+          (ignore-errors (funcall *event-error-hook* c))
+          (ignore-errors (format *error-output* "~&[event error] ~a~%" c))))))
+
 (defun modal-loop (view)
   "Run VIEW's event loop until its end-state is set AND that command validates.
 If VALID-P rejects the end command (e.g. a field's validator fails), the loop
@@ -261,10 +279,7 @@ resumes -- mirroring Turbo Vision's execView/valid contract."
       (process-command-set-changes *application*)
       (draw-view *application*)
       (when *screen* (flush-screen *screen*))
-      (let ((e (get-event *application*)))
-        (if (/= (event-type e) +ev-nothing+)
-            (handle-event view e)
-            (idle *application*))))
+      (%handle-loop-event view (get-event *application*)))
     (when (valid-p view (group-end-state view))
       (return (group-end-state view)))))
 

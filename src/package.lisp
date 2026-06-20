@@ -199,6 +199,7 @@
    #:tprogram #:tapplication #:program-desktop #:program-status-line
    #:*application* #:run #:init-desktop #:init-status-line #:init-screen-program
    #:get-event #:idle #:program-loop #:suspend #:resume #:set-screen-mode
+   #:*event-error-hook*
    ;; palette modes / window management
    #:set-palette-mode #:program-palette-mode #:select-window-by-number
    #:move-size-window #:resize-window #:drag-window

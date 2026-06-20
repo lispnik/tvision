@@ -96,6 +96,12 @@ broadcasts and drawing); return the control."
 (defmethod put-event ((g recorder) event)
   (push event (rec-events g)))
 
+;; A view whose handle-event always errors (to test loop resilience).
+(defclass exploding-view (tview) ())
+(defmethod handle-event ((v exploding-view) event)
+  (declare (ignore event))
+  (error "boom"))
+
 ;;; ===========================================================================
 ;;; Geometry
 ;;; ===========================================================================
@@ -292,6 +298,26 @@ broadcasts and drawing); return the control."
     (scroll-to sc -10 -10)
     (is= "clamp low" (list (point-x (scroller-delta sc)) (point-y (scroller-delta sc)))
          '(0 0))))
+
+;;; ===========================================================================
+;;; Event-loop resilience: a handler error must not escape the loop
+;;; ===========================================================================
+
+(deftest loop-error-containment
+  (let ((v (make-instance 'exploding-view :bounds (make-trect 0 0 5 5)))
+        (ev (ev-key (char-code #\a) (char-code #\a))))
+    ;; with no hook, the error is swallowed (written to *error-output*) -- the
+    ;; call must return normally rather than signal
+    (let ((tvision::*event-error-hook* nil)
+          (*error-output* (make-string-output-stream)))
+      (ok "no-hook: error contained, returns normally"
+          (progn (tvision::%handle-loop-event v ev) t)))
+    ;; with a hook, it is invoked with the condition
+    (let* ((seen nil)
+           (tvision::*event-error-hook* (lambda (c) (setf seen c))))
+      (tvision::%handle-loop-event v ev)
+      (ok "hook receives the condition" (typep seen 'error))
+      (ok "condition is the expected one" (search "boom" (princ-to-string seen))))))
 
 ;;; ===========================================================================
 ;;; Outline (tree)
