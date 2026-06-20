@@ -1508,7 +1508,9 @@ debugger support, exactly as if typed)."
       (when *screen* (flush-screen *screen*)))))
 
 (defvar *rgb-themes* (list (cons "VGA" tvision:+theme-vga+)
-                           (cons "Modern" tvision:+theme-modern+)))
+                           (cons "Modern" tvision:+theme-modern+)
+                           (cons "Green" tvision:+theme-green+)
+                           (cons "Amber" tvision:+theme-amber+)))
 (defvar *rgb-theme-idx* 0)
 
 (defun do-rgb-theme (app)

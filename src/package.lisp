@@ -14,7 +14,7 @@
    #:attr #:make-attr #:attr-fg #:attr-bg #:attr->ansi
    #:tpalette #:make-palette #:palette-ref
    #:*color-mode* #:detect-color-mode #:*rgb-theme* #:set-color-theme
-   #:make-rgb-theme #:+theme-vga+ #:+theme-modern+
+   #:make-rgb-theme #:+theme-vga+ #:+theme-modern+ #:+theme-green+ #:+theme-amber+
    #:make-rgb #:rgb-attr #:pack-rgb #:attr-rgb-p #:attr-rgb-fg #:attr-rgb-bg
    ;; draw buffer
    #:draw-buffer #:make-draw-buffer #:db-width

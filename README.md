@@ -23,6 +23,8 @@ wants a gradient or image.
 
 ![Arbitrary per-cell 24-bit colour: a hue × brightness gradient](media/truecolor-gradient.gif)
 
+![Switching colour themes live: VGA → Modern → green & amber phosphor](media/color-theme.gif)
+
 ## Requirements
 
 * [SBCL](http://www.sbcl.org/)

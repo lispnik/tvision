@@ -98,6 +98,19 @@
      ( 85  87  83) (114 159 207) (138 226  52) ( 52 226 226)
      (239  41  41) (173 127 168) (252 233  79) (255 255 255))))
 
+(defun %tint-theme (tr tg tb)
+  "A monochrome phosphor theme: map each VGA colour to its luminance scaled by
+the tint (TR TG TB).  Black stays black; brighter colours glow brighter."
+  (make-rgb-theme
+   (loop for i below 16 for j = (* 3 i)
+         for lum = (/ (+ (* 0.30 (aref +theme-vga+ j))
+                         (* 0.59 (aref +theme-vga+ (+ j 1)))
+                         (* 0.11 (aref +theme-vga+ (+ j 2)))) 255.0)
+         collect (list (round (* tr lum)) (round (* tg lum)) (round (* tb lum))))))
+
+(defparameter +theme-green+ (%tint-theme  80 255  80) "Green-phosphor CRT look.")
+(defparameter +theme-amber+ (%tint-theme 255 182  66) "Amber-phosphor CRT look.")
+
 (defparameter *rgb-theme* +theme-vga+
   "The active 16-colour RGB theme used when emitting 24-bit / 256-colour SGR.")
 
@@ -174,7 +187,10 @@ attrs emit their exact RGB (downgraded to the cube / nearest-16 when needed)."
 (defun set-color-theme (theme)
   "Set the active RGB theme (a name :vga / :modern, or an RGB-THEME vector)."
   (setf *rgb-theme*
-        (case theme (:vga +theme-vga+) (:modern +theme-modern+) (t theme))))
+        (case theme
+          (:vga +theme-vga+) (:modern +theme-modern+)
+          (:green +theme-green+) (:amber +theme-amber+)
+          (t theme))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Palettes
