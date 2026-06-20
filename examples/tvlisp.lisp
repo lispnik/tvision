@@ -42,6 +42,9 @@
 (defparameter +cm-replace+     348)
 (defparameter +cm-trace+       349)
 (defparameter +cm-untrace-all+ 350)
+(defparameter +cm-goto-line+   351)
+(defparameter +cm-isearch+     352)
+(defparameter +cm-wrap+        353)
 (defparameter +cm-editor+      321)
 (defparameter +cm-load-buffer+ 322)
 (defparameter +cm-session-save+ 323)
@@ -82,6 +85,10 @@
 (defclass tvlisp-app (tapplication)
   ((repl-count   :initform 0   :accessor repl-count)
    (find-last    :initform ""  :accessor find-last)
+   (replace-last :initform ""  :accessor replace-last)
+   (find-case    :initform nil :accessor find-case)
+   (find-word    :initform nil :accessor find-word)
+   (find-back    :initform nil :accessor find-back)
    (arglist-hint :initform nil :accessor arglist-hint)
    (auto-close   :initform nil :accessor auto-close)))
 
@@ -114,6 +121,9 @@
       (menu-item "~F~ind..."    +cm-find+      :key-text "Ctrl-F")
       (menu-item "Find ~n~ext"  +cm-find-next+ :key-text "Ctrl-L")
       (menu-item "~R~eplace..." +cm-replace+)
+      (menu-item "~I~ncremental search" +cm-isearch+)
+      (menu-item "~G~o to line..." +cm-goto-line+)
+      (menu-item "~W~ord wrap"  +cm-wrap+)
       (menu-item "~H~istory search" +cm-histsearch+ :key-text "Ctrl-R")
       (menu-separator)
       (menu-item "I~n~terrupt eval" +cm-interrupt+ :key-text "Ctrl-C")))
@@ -1118,42 +1128,165 @@ run a form, and show the call-count/time report."
                               (logior +mf-information+ +mf-ok-button+)))))
         (error (e) (err-box e))))))
 
-;;; --- transcript search / history -------------------------------------------
+;;; --- transcript / editor search -------------------------------------------
 
-(defun do-find (app)
-  (let ((tv (%current-text-view app)))
-    (when tv
-      (let ((s (prompt-line "Find" "Search for:" (find-last app))))
-        (when s
-          (setf (find-last app) s)
-          (unless (text-find-and-select tv s :wrap t)
-            (message-box "Not found." (logior +mf-information+ +mf-ok-button+)))
-          (draw-view tv))))))
+(defun %find-dialog (app title initial &key replace)
+  "A Find (or Replace) dialog with options.  Returns
+(values ok find-text replace-text case-p word-p back-or-all-p)."
+  (let* ((w 52) (h (if replace 13 12))
+         (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
+         (find-in (make-instance 'tinputline :data initial :maxlen 100
+                                 :bounds (make-trect 12 2 (- w 3) 3)))
+         (repl-in (when replace
+                    (make-instance 'tinputline :data (replace-last app) :maxlen 100
+                                   :bounds (make-trect 12 4 (- w 3) 5))))
+         (opts (make-instance 'tcheck-boxes
+                              :labels (if replace
+                                          '("~C~ase sensitive" "~W~hole word" "Replace ~a~ll (no prompt)")
+                                          '("~C~ase sensitive" "~W~hole word" "~B~ackward")))))
+    (set-bounds opts (make-trect 3 (if replace 6 4) (- w 3) (if replace 9 7)))
+    (setf (cluster-value opts) (logior (if (find-case app) 1 0) (if (find-word app) 2 0)))
+    (flet ((lbl (text y link)
+             (let ((l (make-instance 'tlabel :text text :link link)))
+               (set-bounds l (make-trect 3 y (+ 3 (length text)) (1+ y)))
+               (insert d l))))
+      (lbl "Find:" 2 find-in) (insert d find-in)
+      (when replace (lbl "Replace:" 4 repl-in) (insert d repl-in)))
+    (insert d opts)
+    (insert d (make-button (make-trect (- w 26) (- h 3) (- w 16) (- h 1)) "~O~K" +cm-ok+ t))
+    (insert d (make-button (make-trect (- w 13) (- h 3) (- w 3) (- h 1)) "Cancel" +cm-cancel+))
+    (let ((desk (program-desktop app)))
+      (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
+               (max 0 (floor (- (point-y (view-size desk)) h) 2))))
+    (focus find-in)
+    (if (= (exec-view (program-desktop app) d) +cm-ok+)
+        (let ((v (cluster-value opts)))
+          (values t (get-data find-in) (and repl-in (get-data repl-in))
+                  (logbitp 0 v) (logbitp 1 v) (logbitp 2 v)))
+        (values nil nil nil nil nil nil))))
 
-(defun do-find-next (app)
+(defun %do-search (app)
   (let ((tv (%current-text-view app)) (s (find-last app)))
     (when (and tv (plusp (length s)))
-      (unless (text-find-and-select tv s :wrap t)
+      (unless (text-find-and-select tv s :case-sensitive (find-case app)
+                                    :whole-word (find-word app)
+                                    :backward (find-back app) :wrap t)
         (message-box "Not found." (logior +mf-information+ +mf-ok-button+)))
       (draw-view tv))))
 
+(defun do-find (app)
+  (when (%current-text-view app)
+    (multiple-value-bind (ok text rep case word back) (%find-dialog app "Find" (find-last app))
+      (declare (ignore rep))
+      (when (and ok (plusp (length text)))
+        (setf (find-last app) text (find-case app) case
+              (find-word app) word (find-back app) back)
+        (%do-search app)))))
+
+(defun do-find-next (app)
+  (if (plusp (length (find-last app))) (%do-search app) (do-find app)))
+
+(defun %query-replace (app ed find repl)
+  "Step through matches, confirming each (Yes / No / Cancel)."
+  (let ((count 0) (case (find-case app)) (word (find-word app)))
+    (block done
+      (loop
+        (let ((m (text-find ed find :case-sensitive case :whole-word word)))
+          (unless m (return))
+          (text-select-match ed m find)
+          (draw-view app) (when tvision:*screen* (flush-screen tvision:*screen*))
+          (case (message-box "Replace this occurrence?"
+                             (logior +mf-confirmation+ +mf-yes-button+
+                                     +mf-no-button+ +mf-cancel-button+))
+            (#.+cm-yes+ (text-replace-selection ed repl) (incf count))
+            (#.+cm-no+  (setf (text-anchor ed) nil
+                              (text-cur-line ed) (car m)
+                              (text-cur-col ed) (+ (cdr m) (length find))))
+            (t (return-from done))))))
+    (message-box (format nil "~d replacement~:p made." count)
+                 (logior +mf-information+ +mf-ok-button+))))
+
 (defun do-replace (app)
-  "Replace every occurrence of a string in the focused editor window."
+  "Find/Replace across the focused editor: all-at-once or confirm each match."
   (let ((ew (current-editor-window app)))
     (if (not ew)
         (message-box "Replace works in an editor window." (logior +mf-information+ +mf-ok-button+))
-        (let* ((ed (editor-window-editor ew))
-               (from (prompt-line "Replace" "Replace:" (find-last app))))
-          (when from
-            (setf (find-last app) from)
-            ;; input-box directly so an empty replacement (delete) is allowed
-            (multiple-value-bind (cmd to)
-                (input-box "Replace" (format nil "Replace ~a with:" from) "" 200)
-              (when (= cmd +cm-ok+)
-                (let ((count (text-replace-all ed from to)))
-                  (draw-view ed)
-                  (message-box (format nil "Replaced ~d occurrence~:p." count)
-                               (logior +mf-information+ +mf-ok-button+))))))))))
+        (multiple-value-bind (ok find repl case word all)
+            (%find-dialog app "Replace" (find-last app) :replace t)
+          (when (and ok (plusp (length find)))
+            (setf (find-last app) find (replace-last app) repl
+                  (find-case app) case (find-word app) word)
+            (let ((ed (editor-window-editor ew)))
+              (if all
+                  (let ((n (text-replace-all ed find repl :case-sensitive case :whole-word word)))
+                    (draw-view ed)
+                    (message-box (format nil "~d replacement~:p made." n)
+                                 (logior +mf-information+ +mf-ok-button+)))
+                  (%query-replace app ed find repl))
+              (draw-view ed)))))))
+
+(defun do-goto-line (app)
+  "Jump to a line number in the focused editor."
+  (let ((ew (current-editor-window app)))
+    (when ew
+      (multiple-value-bind (cmd s) (input-box "Go to line" "Line number:" "" 12)
+        (when (= cmd +cm-ok+)
+          (let ((n (parse-integer s :junk-allowed t)))
+            (when n (text-goto (editor-window-editor ew) (max 1 n) 0))))))))
+
+(defun do-isearch (app)
+  "Incremental search in the focused editor: type to jump, Down for next,
+Backspace shortens, Esc cancels (restores point), Enter keeps the match."
+  (let ((ew (current-editor-window app)))
+    (when ew
+      (let* ((ed (editor-window-editor ew))
+             (query (make-array 0 :element-type 'character :adjustable t :fill-pointer 0))
+             (from (cons (text-cur-line ed) (text-cur-col ed)))
+             (found t)
+             (saved-title (window-title ew)))
+        (flet ((prompt ()
+                 (setf (window-title ew)
+                       (format nil "~:[(failing) ~;~]I-search: ~a" found (coerce query 'string)))
+                 (draw-view ew))
+               (jump ()
+                 (let ((q (coerce query 'string)))
+                   (if (zerop (length q))
+                       (setf found t)
+                       (let ((m (text-find ed q :from-line (car from) :from-col (cdr from))))
+                         (if m (progn (text-select-match ed m q) (setf found t))
+                             (setf found nil)))))))
+          (prompt)
+          (block search
+            (loop
+              (draw-view app) (when tvision:*screen* (flush-screen tvision:*screen*))
+              (let ((e (get-event app)))
+                (when (= (event-type e) +ev-key-down+)
+                  (let ((k (event-key-code e)) (ch (event-char-code e)))
+                    (cond
+                      ((= k +kb-esc+)
+                       (setf (text-cur-line ed) (car from) (text-cur-col ed) (cdr from)
+                             (text-anchor ed) nil)
+                       (return-from search))
+                      ((= k +kb-enter+) (return-from search))
+                      ((= k +kb-back+)
+                       (when (plusp (fill-pointer query)) (decf (fill-pointer query)))
+                       (jump) (prompt))
+                      ((= k +kb-down+)
+                       (setf from (cons (text-cur-line ed) (text-cur-col ed)))
+                       (jump) (prompt))
+                      ((and (>= ch 32) (< ch 127))
+                       (vector-push-extend (code-char ch) query)
+                       (jump) (prompt))))))))
+          (setf (window-title ew) saved-title)
+          (draw-view ew))))))
+
+(defun do-toggle-wrap (app)
+  "Toggle word-wrap in the focused editor."
+  (let ((ew (current-editor-window app)))
+    (when ew
+      (let ((ed (editor-window-editor ew)))
+        (set-text-wrap ed (not (text-wrap ed)))
+        (draw-view ew)))))
 
 (defun do-history-search (rv)
   (when rv
@@ -1520,6 +1653,9 @@ and named functions resolve to a source location."
           ((= c +cm-find+)        (do-find app) (clear-event event))
           ((= c +cm-find-next+)   (do-find-next app) (clear-event event))
           ((= c +cm-replace+)     (do-replace app) (clear-event event))
+          ((= c +cm-goto-line+)   (do-goto-line app) (clear-event event))
+          ((= c +cm-isearch+)     (do-isearch app) (clear-event event))
+          ((= c +cm-wrap+)        (do-toggle-wrap app) (clear-event event))
           ((= c +cm-trace+)       (do-trace rv) (clear-event event))
           ((= c +cm-untrace-all+) (do-untrace-all rv) (clear-event event))
           ((= c +cm-histsearch+)  (do-history-search rv) (clear-event event))

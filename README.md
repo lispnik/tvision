@@ -157,8 +157,10 @@ parked with its stack live:
 - **Eval from an editor** — Lisp ▸ Eval defun (the top-level form at the cursor)
   and Eval region (the selection) submit into a REPL.
 - **Find / Find-next** (Ctrl-F / Ctrl-L) in the focused REPL transcript *or
-  editor window*, and **Replace** (Edit ▸ Replace) across an editor buffer (an
-  empty replacement deletes the matches).
+  editor window*, with **case-sensitive / whole-word / backward** options, plus
+  **Replace** — all-at-once or **query-replace** (confirm each match).
+  **Incremental search** (type-to-jump, Down for next), **Go to line**, and a
+  **word-wrap** toggle round out the editor.
 
   ![Find and Replace in an editor window](media/find-replace.gif)
 
