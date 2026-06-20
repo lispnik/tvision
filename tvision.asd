@@ -50,8 +50,10 @@
                              (:file "repl")))))
 
 (asdf:defsystem "tvision/tests"
-  :description "Headless test suite for the Turbo Vision controls."
-  :depends-on ("tvision")
+  :description "Headless test suite for the Turbo Vision controls (uses FiveAM).
+Only the tests depend on FiveAM; the tvision library and the example binaries
+have no external dependencies."
+  :depends-on ("tvision" "fiveam")
   :serial t
   :components ((:module "tests"
                 :components ((:file "tvision-tests"))))

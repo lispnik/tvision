@@ -29,9 +29,12 @@ wants a gradient or image.
 
 * [SBCL](http://www.sbcl.org/)
 * A POSIX terminal with `stty` (macOS / Linux)
-* No external Lisp libraries — the framework depends only on SBCL itself.  The
-  threaded REPL / debugger / tooling use SBCL's own facilities (`sb-thread`,
-  `sb-mop`, `sb-di`, and the `sb-introspect` contrib, all bundled with SBCL).
+* No external Lisp libraries to **build or run** — the framework and the example
+  binaries depend only on SBCL itself.  The threaded REPL / debugger / tooling
+  use SBCL's own facilities (`sb-thread`, `sb-mop`, `sb-di`, and the
+  `sb-introspect` contrib, all bundled with SBCL).
+* Running the **test suite** additionally needs [FiveAM](https://github.com/lispci/fiveam)
+  (a test-only dependency; `ql:quickload :fiveam` or `ocicl install fiveam`).
 
 The project is structured to be loadable through [ocicl](https://github.com/ocicl/ocicl):
 the current directory is on the ASDF source registry (configured by ocicl in
@@ -395,13 +398,15 @@ on a per-listener `sb-thread` worker; the worker→UI bridge in
 
 ## Testing
 
-A self-contained, dependency-free test suite (a tiny `deftest`/`ok`/`is=`
-harness) drives each control — constructing it, feeding events through
-`handle-event`, and asserting on state, data or rendered cells:
+The control suite runs on [FiveAM](https://github.com/lispci/fiveam) — the
+**only** external dependency, and a test-only one: the `tvision` library and the
+example binaries still build with nothing but SBCL.  Each test constructs a
+control, feeds events through `handle-event`, and asserts on state, data or
+rendered cells (thin `deftest`/`ok`/`is=` wrappers over FiveAM's `test`/`is`):
 
 ```sh
-make test         # the headless control suite + the tvlisp pty smoke tests
-make test-lisp    # just the headless control suite (205 checks across 33 tests)
+make test         # the FiveAM control suite + the tvlisp pty smoke tests
+make test-lisp    # just the FiveAM control suite (220 checks across 35 tests)
 make test-pty     # just the end-to-end pty smoke tests (builds & drives ./tvlisp)
 # or:  sbcl --eval '(asdf:test-op :tvision/tests)'
 # or from Lisp: (asdf:load-system :tvision/tests) (tvision-tests:run-tests)

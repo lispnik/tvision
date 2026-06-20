@@ -1,41 +1,41 @@
-;;;; tvision-tests.lisp --- A self-contained test suite for the controls.
+;;;; tvision-tests.lisp --- The control test suite, on FiveAM.
 ;;;;
-;;;; No external test framework (the port has zero dependencies): a tiny harness
-;;;; (DEFTEST / OK / IS=) drives each control by constructing it, feeding events
-;;;; through HANDLE-EVENT, and asserting on its state, data, or rendered cells.
+;;;; The library and example binaries have zero external dependencies; FiveAM is
+;;;; used *only here*, for the tests.  Each test constructs a control, feeds
+;;;; events through HANDLE-EVENT, and asserts on its state, data or rendered
+;;;; cells.  DEFTEST / OK / IS= are thin wrappers over FiveAM's TEST / IS-TRUE /
+;;;; IS so the existing assertions read unchanged but run as real FiveAM checks.
 ;;;;
 ;;;; Run with:  (tvision-tests:run-tests)   ; returns the failure count
 ;;;; or:        make test
 
 (defpackage #:tvision-tests
   (:use #:common-lisp #:tvision)
-  (:export #:run-tests #:toplevel))
+  (:export #:run-tests #:toplevel #:tvision-suite))
 
 (in-package #:tvision-tests)
 
 ;;; ---------------------------------------------------------------------------
-;;; Harness
+;;; Harness: FiveAM with a small compatibility vocabulary
 ;;; ---------------------------------------------------------------------------
 
-(defvar *tests* '() "Ordered list of (name . thunk).")
-(defvar *checks* 0)
-(defvar *fails* 0)
-(defvar *current* nil)
+(5am:def-suite tvision-suite
+  :description "Turbo Vision control + framework tests.")
+(5am:in-suite tvision-suite)
 
 (defmacro deftest (name &body body)
-  `(setf *tests* (append (remove ',name *tests* :key #'car)
-                         (list (cons ',name (lambda () ,@body))))))
+  "Define a FiveAM test NAME in the tvision suite."
+  `(5am:test ,name ,@body))
 
-(defun ok (desc bool)
-  (incf *checks*)
-  (unless bool
-    (incf *fails*)
-    (format t "  FAIL [~a]: ~a~%" *current* desc))
-  bool)
+(defmacro ok (desc form)
+  "Assert FORM is true; DESC is the failure description."
+  `(5am:is-true ,form "~a" ,desc))
 
-(defun is= (desc actual expected &key (test #'equal))
-  (ok (format nil "~a -- got ~s, want ~s" desc actual expected)
-      (funcall test actual expected)))
+(defmacro is= (desc actual expected &key (test '#'equal))
+  "Assert (TEST ACTUAL EXPECTED); DESC labels the check."
+  (let ((a (gensym)) (e (gensym)))
+    `(let ((,a ,actual) (,e ,expected))
+       (5am:is (funcall ,test ,a ,e) "~a -- got ~s, want ~s" ,desc ,a ,e))))
 
 (defun make-test-screen ()
   (let ((s (tvision::make-screen)))
@@ -44,20 +44,18 @@
     s))
 
 (defun run-tests ()
-  "Run every test; print failures and a summary; return the failure count."
-  (setf *checks* 0 *fails* 0)
+  "Run the suite under FiveAM; print the report; return the failure count.
+The screen and REPL globals tests rely on are bound for the whole run."
   (let ((*screen* (make-test-screen))
         (*repl-async* nil)            ; keep the REPL inline in tests
-        (*repl-debugger* nil))
-    (dolist (tc *tests*)
-      (let ((*current* (car tc)))
-        (handler-case (funcall (cdr tc))
-          (error (e)
-            (incf *fails*)
-            (format t "  ERROR [~a]: ~a~%" (car tc) e))))))
-  (format t "~&~%==== ~d checks, ~d failure~:p across ~d tests ====~%"
-          *checks* *fails* (length *tests*))
-  *fails*)
+        (*repl-debugger* nil)
+        (5am:*on-error* nil) (5am:*on-failure* nil))   ; record, never enter the debugger
+    (let* ((results (5am:run 'tvision-suite))
+           (failures (nth-value 1 (5am:results-status results)))
+           (nfail (length failures)))
+      (5am:explain! results)
+      (format t "~&==== ~d checks, ~d failure~:p ====~%" (length results) nfail)
+      nfail)))
 
 (defun toplevel ()
   (sb-ext:exit :code (if (zerop (run-tests)) 0 1)))
