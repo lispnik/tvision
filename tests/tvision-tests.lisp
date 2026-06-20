@@ -308,6 +308,21 @@ broadcasts and drawing); return the control."
     (outline-toggle ol)
     (ok "toggle flips expanded" (not (outline-node-expanded root)))))
 
+(deftest inspector-tree
+  ;; object->outline stores each value in its node so the inspector can drill in
+  (let* ((obj (list 10 20 (list 30 40)))
+         (node (tvision::object->outline obj "*")))
+    (is= "root holds the object" (outline-node-data node) obj)
+    (is= "three children" (length (outline-node-children node)) 3)
+    (let ((third (third (outline-node-children node))))
+      (is= "child label" (subseq (outline-node-text third) 0 3) "[2]")
+      (is= "child holds the sub-list" (outline-node-data third) (third obj))
+      (is= "sub-list has two children" (length (outline-node-children third)) 2))
+    ;; strings are leaves (not exploded char by char), but still carry their value
+    (let ((sn (tvision::object->outline "hi" "s")))
+      (is= "string node value" (outline-node-data sn) "hi")
+      (ok "string node has no children" (null (outline-node-children sn))))))
+
 ;;; ===========================================================================
 ;;; HTML view (hypertext browser)
 ;;; ===========================================================================

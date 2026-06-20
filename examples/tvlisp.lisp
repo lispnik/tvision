@@ -1338,6 +1338,21 @@ indents user macros like built-in special forms.  NIL otherwise."
 
 (setf tvision:*lisp-indent-hook* #'%macro-indent-spec)
 
+(defun %inspect-goto (value)
+  "Jump to VALUE's definition (for the inspector's `g' key): symbols, classes
+and named functions resolve to a source location."
+  (let ((sym (typecase value
+               (symbol value)
+               (class (class-name value))
+               (function (nth-value 2 (function-lambda-expression value)))
+               (t nil))))
+    (if (and sym (symbolp sym))
+        (goto-definition-of *application* sym)
+        (message-box "No source location for this value."
+                     (logior +mf-information+ +mf-ok-button+)))))
+
+(setf tvision:*inspect-goto-hook* #'%inspect-goto)
+
 (defun maybe-auto-close (app event)
   "When auto-close is on, typing ( inserts () with the cursor between."
   (when (and (auto-close app)

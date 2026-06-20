@@ -922,22 +922,66 @@ failing branch becomes an `<error>' leaf rather than crashing the inspector."
                      (kid (handler-case (slot-value obj name) (serious-condition (e) e))
                           (format nil "~a" name)))))))
           (serious-condition () nil))))
+    ;; store the value in the node so the inspector can drill into it
     (let ((node (make-outline-node (format nil "~a = ~a" label (%short-repr obj))
-                                   (nreverse children))))
+                                   (nreverse children) obj)))
       (setf (outline-node-expanded node) t)
       node)))
 
+(defvar *inspect-goto-hook* nil
+  "Optional (VALUE) -> navigate to VALUE's definition; bound by the application
+so the inspector's `g' key can jump to source.")
+
+(defclass tinspector-window (twindow)
+  ((outline :initform nil :accessor inspector-outline))
+  (:documentation "An Inspector window whose tree can be drilled into: Enter /
+double-click / `i' re-inspects the focused value in a fresh window, `g' jumps to
+its definition."))
+
+(defun %inspect-node (node)
+  "Open a fresh inspector on NODE's value (drilling past the depth limit)."
+  (when node
+    (let* ((txt (outline-node-text node))
+           (sep (search " = " txt))
+           (label (if sep (subseq txt 0 sep) "value")))
+      (repl-inspect (outline-node-data node) label))))
+
+(defmethod handle-event ((w tinspector-window) event)
+  (cond
+    ;; Enter on a leaf / double-click broadcasts this -> drill in
+    ((and (= (event-type event) +ev-broadcast+)
+          (= (event-command event) +cm-outline-item-selected+)
+          (eq (event-info event) (inspector-outline w)))
+     (%inspect-node (outline-current (inspector-outline w)))
+     (clear-event event))
+    ((= (event-type event) +ev-key-down+)
+     (let ((ch (event-char-code event)))
+       (cond
+         ;; `i' drills into the focused node (works on parents too)
+         ((or (= ch (char-code #\i)) (= ch (char-code #\I)))
+          (%inspect-node (outline-current (inspector-outline w))) (clear-event event))
+         ;; `g' jumps to the focused value's definition (if the app supplied a hook)
+         ((and *inspect-goto-hook* (or (= ch (char-code #\g)) (= ch (char-code #\G))))
+          (let ((n (outline-current (inspector-outline w))))
+            (when n (ignore-errors (funcall *inspect-goto-hook* (outline-node-data n)))))
+          (clear-event event))
+         (t (call-next-method)))))
+    (t (call-next-method))))
+
 (defun repl-inspect (obj &optional (label "value"))
-  "Open an Inspector window showing OBJ as a collapsible tree."
+  "Open an Inspector window showing OBJ as a collapsible tree.  Enter / a click /
+`i' drills into the focused value; `g' jumps to its definition."
   (when *application*
     (let* ((desk (program-desktop *application*))
-           (w (make-instance 'twindow :title "Inspector"
+           (w (make-instance 'tinspector-window
+                             :title "Inspector  (Enter/i: drill in  g: source)"
                              :bounds (make-trect 4 2 (min 62 (point-x (view-size desk)))
                                                  (min 20 (point-y (view-size desk))))))
            (vsb (standard-scrollbar w t))
            (ol (make-instance 'toutline :roots (list (object->outline obj label))
                               :bounds (make-trect 1 1 (1- (point-x (view-size w)))
                                                   (1- (point-y (view-size w)))))))
+      (setf (inspector-outline w) ol)
       (insert w ol) (attach-scrollbars ol :vscroll vsb)
       (insert desk w) (focus ol)
       ol)))
