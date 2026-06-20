@@ -113,6 +113,8 @@ parked with its stack live:
   ![Inspecting a value and drilling into a nested element](media/inspector-drill.gif)
 - **Macroexpand**, **Describe**, **Documentation**, **Disassemble** — into
   scrollable windows.
+- **Trace / Untrace** — toggle `trace` on a function (output streams into the
+  REPL as it is called); Untrace-all lists and clears the traced set.
 - **Apropos** — type a substring, pick from a type-ahead list, describe it.
 - **Class browser** — a type-ahead list of every class; OK / Enter jumps to the
   selected class's definition, Inspect opens it in the object inspector.
@@ -170,6 +172,9 @@ parked with its stack live:
 - **Numbered windows** — each window is assigned the lowest free number 1–9
   (shown in its frame, classic TV style); **Alt-1…9** jumps straight to that
   window.
+- **Zoom** (F5) toggles the active window between its size and the full desktop;
+  **Size/Move** (Ctrl-F5) enters interactive keyboard move (arrows) / resize
+  (Shift+arrows), Enter or Esc to finish.
 - **Window list** (Window ▸ List, Alt-0) — a picker of every open window
   (numbered, the active one marked); Enter / OK raises and focuses the chosen
   window, like the classic Turbo Vision IDE's Alt-0.
