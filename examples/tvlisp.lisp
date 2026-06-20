@@ -40,6 +40,8 @@
 (defparameter +cm-find+        319)
 (defparameter +cm-find-next+   320)
 (defparameter +cm-replace+     348)
+(defparameter +cm-trace+       349)
+(defparameter +cm-untrace-all+ 350)
 (defparameter +cm-editor+      321)
 (defparameter +cm-load-buffer+ 322)
 (defparameter +cm-session-save+ 323)
@@ -134,6 +136,9 @@
       (menu-item "Dis~a~ssemble..."   +cm-disassemble+)
       (menu-item "A~p~ropos..."       +cm-apropos+)
       (menu-item "~H~yperSpec lookup..." +cm-hslookup+)
+      (menu-separator)
+      (menu-item "Tra~c~e..."          +cm-trace+)
+      (menu-item "~U~ntrace all..."    +cm-untrace-all+)
       (menu-separator)
       (menu-item "~C~lass browser..." +cm-classes+)
       (menu-item "Pac~k~ages..."      +cm-packages+)
@@ -901,6 +906,42 @@ Inspect opens it in an Inspector window."
                   (when chosen (goto-definition-of app (read-in rv chosen))))))
         (error (e) (err-box e))))))
 
+(defun %traced-symbols ()
+  "The list of currently traced function names (symbols)."
+  (remove-if-not #'symbolp (eval '(trace))))
+
+(defun do-trace (rv)
+  "Toggle TRACE on a function: trace it if untraced, untrace it if traced.
+Trace output appears in the REPL as the function is called."
+  (when rv
+    (let ((s (prompt-line "Trace" "Function (toggles):")))
+      (when s
+        (handler-case
+            (let ((sym (read-in rv s)))
+              (if (member sym (%traced-symbols))
+                  (progn (eval `(untrace ,sym))
+                         (repl-print rv (format nil "~%; untraced ~s~%" sym)))
+                  (progn (eval `(trace ,sym))
+                         (repl-print rv (format nil "~%; tracing ~s~%" sym))))
+              (tvision::repl-fresh-prompt rv) (draw-view rv))
+          (error (e) (err-box e)))))))
+
+(defun do-untrace-all (rv)
+  "Show the traced functions and offer to untrace them all."
+  (when rv
+    (let ((traced (%traced-symbols)))
+      (if (null traced)
+          (message-box "No functions are traced." (logior +mf-information+ +mf-ok-button+))
+          (when (= (message-box
+                    (format nil "Untrace ~d function~:p?~%~{~a~^, ~}"
+                            (length traced)
+                            (mapcar (lambda (s) (format nil "~a" s)) traced))
+                    (logior +mf-confirmation+ +mf-yes-button+ +mf-no-button+))
+                   +cm-yes+)
+            (eval '(untrace))
+            (repl-print rv (format nil "~%; untraced all~%"))
+            (tvision::repl-fresh-prompt rv) (draw-view rv))))))
+
 (defun method-label (m)
   (string-trim " "
     (format nil "~{~(~a~)~^ ~} (~{~a~^ ~})"
@@ -1462,6 +1503,8 @@ and named functions resolve to a source location."
           ((= c +cm-find+)        (do-find app) (clear-event event))
           ((= c +cm-find-next+)   (do-find-next app) (clear-event event))
           ((= c +cm-replace+)     (do-replace app) (clear-event event))
+          ((= c +cm-trace+)       (do-trace rv) (clear-event event))
+          ((= c +cm-untrace-all+) (do-untrace-all rv) (clear-event event))
           ((= c +cm-histsearch+)  (do-history-search rv) (clear-event event))
           ((= c +cm-new-file+)    (do-new-editor app) (clear-event event))
           ((= c +cm-editor+)      (do-open-editor app) (clear-event event))
