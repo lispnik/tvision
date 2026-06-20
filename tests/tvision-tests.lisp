@@ -245,6 +245,72 @@ broadcasts and drawing); return the control."
     (tvision::%wrap-vmove tv -1)
     (is= "Up returns to the first glyph" (text-cur-col tv) 0)))
 
+(deftest hello-file
+  ;; A self-contained slice of the Emacs HELLO torture file -- wide CJK, an emoji,
+  ;; combining marks, a conjunct Indic cluster and astral-plane (>U+FFFF) Gothic --
+  ;; driven through the real editor view in both flat and word-wrapped modes.
+  ;; (Astral/emoji built with CODE-CHAR so the test never depends on source-file
+  ;; encoding; BMP scripts are literal, matching the other Unicode tests.)
+  (let* ((wave (string (code-char #x1F44B)))                              ; 👋
+         (goth (coerce (list (code-char #x10332) (code-char #x10330)
+                             (code-char #x10339)) 'string))               ; 𐌲𐌰𐌹 (Gothic)
+         (lines (list "English	Hello"
+                      "Greek	Γειά σας"
+                      "Hebrew	שָׁלוֹם"
+                      "Devanagari	नमस्ते"
+                      "Balinese	ᬒᬁᬲ᭄ᬯᬲ᭄ᬢ᭄ᬬᬲ᭄ᬢᬸ"
+                      "East Asia	你好 こんにちは 안녕하세요"
+                      (concatenate 'string "Emoji	" wave)
+                      (concatenate 'string "Gothic	" goth)))
+         (text (format nil "~{~a~^~%~}" lines))
+         (n (length lines)))
+    ;; load every line
+    (let ((m (focused (host (make-instance 'tmemo :bounds (make-trect 0 0 60 12))))))
+      (set-text m text)
+      (is= "loads every line" (line-count m) n)
+      ;; emoji is double-width and its astral code point survives the 21-bit cell
+      (is= "wave emoji is double-width" (char-width (code-char #x1F44B)) 2)
+      (let ((eline (nth-line m 6)))
+        (is= "emoji code point round-trips" (char-code (char eline (1- (length eline)))) #x1F44B))
+      ;; astral-plane Gothic round-trips
+      (let ((gline (nth-line m 7)))
+        (is= "astral Gothic round-trips" (char-code (char gline (search goth gline))) #x10332))
+      ;; a conjunct cluster spans fewer display columns than code points
+      (let* ((dline (nth-line m 3)) (p (search "नमस्ते" dline)))
+        (ok "found the Devanagari cluster" p)
+        (when p (ok "conjunct cluster folds combining marks into fewer columns"
+                    (< (tvision::visual-col dline p (+ p 6)) 6)))))
+    ;; render every screen, flat and wrapped, without error
+    (dolist (wrap '(nil t))
+      (let ((m (focused (host (make-instance 'tmemo :bounds (make-trect 0 0 30 6))))))
+        (setf (tvision::text-wrap m) (and wrap t))
+        (set-text m text)
+        (ok (format nil "renders without error (~:[flat~;wrap~])" wrap)
+            (handler-case
+                (progn (dotimes (top n)
+                         (setf (tvision::text-top-line m) top (text-cur-line m) top (text-cur-col m) 0)
+                         (draw-view m))
+                       t)
+              (error () nil)))
+        ;; Down reaches the last line in both modes
+        (setf (text-cur-line m) 0 (text-cur-col m) 0)
+        (dotimes (i (* 2 n)) (press-key m +kb-down+))
+        (is= (format nil "Down reaches the last line (~:[flat~;wrap~])" wrap)
+             (text-cur-line m) (1- n))))
+    ;; cursor Right is grapheme-atomic: monotonic, reaches end, and the Balinese
+    ;; line (many subjoined consonants) takes fewer steps than it has code points
+    (let* ((m (focused (host (make-instance 'tmemo :bounds (make-trect 0 0 60 12))))))
+      (set-text m text)
+      (setf (text-cur-line m) 4 (text-cur-col m) 0)
+      (let* ((line (nth-line m 4)) (len (length line)) (steps 0) (last -1) (ok-mono t))
+        (loop while (< (text-cur-col m) len) do
+          (press-key m +kb-right+)
+          (unless (> (text-cur-col m) last) (setf ok-mono nil) (return))
+          (setf last (text-cur-col m)) (incf steps))
+        (ok "Right advances monotonically by grapheme" ok-mono)
+        (is= "Right reaches end of the Balinese line" (text-cur-col m) len)
+        (ok "grapheme steps are fewer than code points" (< steps len))))))
+
 (deftest truecolor-attrs
   ;; an RGB attr packs into the cell alongside the char, and reads back
   (let* ((a (make-rgb 255 128 0  10 20 30))
