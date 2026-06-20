@@ -162,6 +162,8 @@ parked with its stack live:
   **Incremental search** (type-to-jump, Down for next), **Go to line**, and a
   **word-wrap** toggle round out the editor.
 
+  ![Incremental search in an editor window](media/isearch.gif)
+
   ![Find and Replace in an editor window](media/find-replace.gif)
 
   **Right-click context menu**,
