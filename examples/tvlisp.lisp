@@ -371,22 +371,27 @@ on START) or NIL on cancel.  Enter or OK selects."
     (format nil "/~{~a~^/~}" (nreverse segs))))
 
 (defun %resolve-location (base href)
-  "Resolve HREF against the current BASE location (URL or file path)."
-  (let* ((hash (position #\# href)) (h (if hash (subseq href 0 hash) href)))
-    (cond
-      ((zerop (length h)) base)                       ; pure fragment
-      ((%url-p h) h)                                  ; absolute URL
-      ((%url-p base)                                  ; relative against a URL
-       (let* ((p (search "://" base))
-              (slash (position #\/ base :start (+ p 3)))
-              (origin (if slash (subseq base 0 slash) base))
-              (path (if slash (subseq base slash) "/")))
-         (if (and (plusp (length h)) (char= (char h 0) #\/))
-             (concatenate 'string origin (%normalize-path h))
-             (let ((dir (subseq path 0 (1+ (or (position #\/ path :from-end t) 0)))))
-               (concatenate 'string origin (%normalize-path (concatenate 'string dir h)))))))
-      (t                                              ; relative against a file
-       (namestring (merge-pathnames h (directory-namestring base)))))))
+  "Resolve HREF against the current BASE location (URL or file path), preserving
+any #fragment so the browser can scroll to an anchor."
+  (let* ((hash (position #\# href))
+         (h (if hash (subseq href 0 hash) href))
+         (frag (and hash (subseq href hash)))         ; includes the leading #
+         (resolved
+           (cond
+             ((zerop (length h)) base)                ; pure fragment -> same page
+             ((%url-p h) h)                           ; absolute URL
+             ((%url-p base)                           ; relative against a URL
+              (let* ((p (search "://" base))
+                     (slash (position #\/ base :start (+ p 3)))
+                     (origin (if slash (subseq base 0 slash) base))
+                     (path (if slash (subseq base slash) "/")))
+                (if (and (plusp (length h)) (char= (char h 0) #\/))
+                    (concatenate 'string origin (%normalize-path h))
+                    (let ((dir (subseq path 0 (1+ (or (position #\/ path :from-end t) 0)))))
+                      (concatenate 'string origin (%normalize-path (concatenate 'string dir h)))))))
+             (t                                       ; relative against a file
+              (namestring (merge-pathnames h (directory-namestring base)))))))
+    (if frag (concatenate 'string resolved frag) resolved)))
 
 (defun %location-title (loc)
   (let ((s (if (position #\# loc) (subseq loc 0 (position #\# loc)) loc)))
@@ -404,36 +409,58 @@ on START) or NIL on cancel.  Enter or OK selects."
   "How LOC should appear in the history: its <title> if we have one, else the URL."
   (or (cdr (assoc loc (hw-titles w) :test #'string=)) loc))
 
-(defun hw-load (loc) (if (%url-p loc) (%http-get loc) (%read-file-string loc)))
+(defvar *page-cache* '() "LRU alist (url . content), most-recent first.")
+(defparameter +page-cache-max+ 16)
+
+(defun %cache-get (url) (cdr (assoc url *page-cache* :test #'string=)))
+(defun %cache-put (url content)
+  (setf *page-cache* (cons (cons url content)
+                           (remove url *page-cache* :key #'car :test #'string=)))
+  (when (> (length *page-cache*) +page-cache-max+)
+    (setf *page-cache* (subseq *page-cache* 0 +page-cache-max+))))
+
+(defun hw-load (loc)
+  "Load LOC's content.  Remote URLs are cached (LRU) so Back/Forward are instant;
+local files are always read fresh."
+  (if (%url-p loc)
+      (or (%cache-get loc)
+          (let ((c (%http-get loc))) (when c (%cache-put loc c)) c))
+      (%read-file-string loc)))
 
 (defun hw-set-title (w)
-  (setf (window-title w)
-        (format nil "~a  [^B/Bksp back  ^F fwd  ^R reload]"
-                (%location-title (hw-base w)))))
+  ;; prefer the page's <title> (recorded in HW-TITLES); fall back to the filename
+  (let ((title (or (cdr (assoc (hw-base w) (hw-titles w) :test #'string=))
+                   (%location-title (hw-base w)))))
+    (setf (window-title w)
+          (format nil "~a  [^B/Bksp back  ^F fwd  ^R reload]" title))))
 
 (defun hw-go (w loc &key (record t))
-  "Load LOC into the window.  When RECORD, treat it as fresh navigation: push
-the current page onto the Back stack and drop the Forward stack.  Return T on
-a successful load."
-  (let ((content (hw-load loc)))
+  "Load LOC (optionally with a #fragment) into the window.  When RECORD, treat it
+as fresh navigation: push the current page onto the Back stack and drop Forward.
+Scrolls to the #fragment's anchor when present.  Return T on a successful load."
+  (let* ((hash (position #\# loc))
+         (base (if hash (subseq loc 0 hash) loc))
+         (frag (and hash (plusp (length (subseq loc (1+ hash)))) (subseq loc (1+ hash))))
+         (content (hw-load base)))
     (cond
       (content
        (when (and record (plusp (length (hw-base w))))
          (push (hw-base w) (hw-back-stack w))
          (setf (hw-fwd-stack w) '()))
-       (setf (hw-base w) loc)
-       ;; remember the page's <title> for the history list
+       (setf (hw-base w) base)
+       ;; remember the page's <title> for the history list / caption
        (let ((title (html-document-title content)))
          (when title
            (setf (hw-titles w)
-                 (cons (cons loc title)
-                       (remove loc (hw-titles w) :key #'car :test #'string=)))))
+                 (cons (cons base title)
+                       (remove base (hw-titles w) :key #'car :test #'string=)))))
        (hw-set-title w)
        (set-html (hw-view w) content)
+       (when frag (html-goto-anchor (hw-view w) frag))
        (focus (hw-view w))
        (draw-view w)
        t)
-      (t (message-box (format nil "Could not load:~%~a" loc)
+      (t (message-box (format nil "Could not load:~%~a" base)
                       (logior +mf-error+ +mf-ok-button+))
          nil))))
 
@@ -453,6 +480,8 @@ a successful load."
 
 (defun hw-reload (w)
   (when (plusp (length (hw-base w)))
+    ;; drop the cached copy so reload really refetches
+    (setf *page-cache* (remove (hw-base w) *page-cache* :key #'car :test #'string=))
     (hw-go w (hw-base w) :record nil)))
 
 (defun hw-history-list (w)
