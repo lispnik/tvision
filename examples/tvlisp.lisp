@@ -486,7 +486,9 @@ Scrolls to the #fragment's anchor when present.  Return T on a successful load."
          (when title
            (setf (hw-titles w)
                  (cons (cons base title)
-                       (remove base (hw-titles w) :key #'car :test #'string=)))))
+                       (remove base (hw-titles w) :key #'car :test #'string=))))
+         ;; also log to the persistent cross-session visited-pages history
+         (record-browse base title))
        (hw-set-title w)
        (set-html (hw-view w) content)
        (when frag (html-goto-anchor (hw-view w) frag))
@@ -583,13 +585,50 @@ around it."
     (declare (ignore s))
     (format nil "~2,'0d:~2,'0d" h m)))
 
+;;; --- persistent (cross-session) visited-pages history ----------------------
+(defvar *browse-history* '()
+  "Global visited-pages log: (location title universal-time), newest first.")
+
+(defun browse-history-file () (merge-pathnames ".tvlisp_browse_history" (user-homedir-pathname)))
+
+(defun load-browse-history ()
+  (setf *browse-history*
+        (or (ignore-errors
+             (with-open-file (s (browse-history-file) :if-does-not-exist nil)
+               (and s (read s nil nil))))
+            '())))
+
+(defun save-browse-history ()
+  (ignore-errors
+   (with-open-file (s (browse-history-file) :direction :output
+                                            :if-exists :supersede :if-does-not-exist :create)
+     (let ((*print-readably* nil))
+       (prin1 (subseq *browse-history* 0 (min 300 (length *browse-history*))) s)))))
+
+(defun record-browse (loc title)
+  "Add LOC (with TITLE) to the persistent visited-pages log and save it."
+  (when (and loc (plusp (length loc)))
+    (setf *browse-history*
+          (cons (list loc (or title loc) (get-universal-time))
+                (remove loc *browse-history* :key #'first :test #'string=)))
+    (save-browse-history)))
+
+(defun do-visited-pages (app)
+  "Browse the persistent visited-pages history (across sessions); open a pick."
+  (if (null *browse-history*)
+      (message-box "No visited pages recorded yet." (logior +mf-information+ +mf-ok-button+))
+      (let* ((entries *browse-history*)
+             (labels (mapcar (lambda (e) (format nil "~a  ~a" (%hhmm (third e)) (second e))) entries))
+             (sel (choose-index "Visited pages (all sessions)" labels)))
+        (when sel (open-html-window app (first (nth sel entries)))))))
+
 (defun do-browser-history (app)
   "Pop up the focused browser window's history; selecting an entry visits it."
   (let ((w (group-current (program-desktop app))))
     (cond
       ((not (typep w 'thtml-window))
-       (message-box "Select a browser window first."
-                    (logior +mf-information+ +mf-ok-button+)))
+       ;; not in a browser -> show the persistent cross-session visited list
+       (do-visited-pages app))
       (t (let* ((items (hw-history-list w))
                 (cur (hw-history-index w))
                 (labels (loop for loc in items for i from 0
@@ -2513,6 +2552,7 @@ F2 new REPL, F3 clear, F4 tile, F5 cascade, F6 next, F8 inspect, F9 threads.")))
 
 (defun main ()
   (setf tvision:*event-error-hook* #'%report-event-error)
+  (load-browse-history)
   (run 'tvlisp-app))
 
 (defun toplevel ()
