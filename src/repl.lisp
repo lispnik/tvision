@@ -669,6 +669,31 @@ async is enabled and a UI loop is running, otherwise inline."
        (unless errored (repl-print-results r results))
        (repl-fresh-prompt r)))))
 
+(defun repl-meta-command-p (input)
+  "True when INPUT is the :help / :h meta-command (specifically, so other
+self-evaluating keywords typed at the prompt are still evaluated normally)."
+  (let ((low (string-downcase (string-trim '(#\Space #\Tab) input))))
+    (or (member low '(":help" ":h") :test #'string=)
+        (and (>= (length low) 6) (string= ":help " (subseq low 0 6)))
+        (and (>= (length low) 3) (string= ":h " (subseq low 0 3))))))
+
+(defun repl-run-meta (r input)
+  "Handle the :help [SYMBOL] meta-command: describe SYMBOL (read in the listener's
+package), or print a short usage line."
+  (let* ((s (string-trim '(#\Space #\Tab) input))
+         (sp (position #\Space s))
+         (arg (and sp (string-trim '(#\Space #\Tab) (subseq s sp)))))
+    (append-text r (string #\Newline))
+    (if (and arg (plusp (length arg)))
+        (let ((*package* (repl-package r)))
+          (handler-case
+              (repl-print r (with-output-to-string (o) (describe (read-from-string arg) o)))
+            (error (e) (repl-print r (format nil "; ~a~%" e)))))
+        (repl-print r (format nil "; :help SYMBOL  -- describe SYMBOL (just type Lisp forms to evaluate)~%")))
+    (push (string-trim '(#\Space #\Tab #\Newline) input) (repl-history r))
+    (repl-ensure-fresh-line r)
+    (repl-fresh-prompt r)))
+
 (defmethod text-return ((r trepl-view))
   (cond
     ((repl-busy r) (call-next-method))   ; evaluating: Enter just inserts a newline
@@ -676,6 +701,8 @@ async is enabled and a UI loop is running, otherwise inline."
          (cond
            ((string-blank-p input)
             (append-text r (string #\Newline)) (repl-fresh-prompt r))
+           ((repl-meta-command-p input)
+            (repl-run-meta r input))
            ((not (input-complete-p input))
             (split-line-at-cursor r))
            (t (repl-submit r input)))))))

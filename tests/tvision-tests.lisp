@@ -1063,6 +1063,13 @@ broadcasts and drawing); return the control."
 ;;; REPL backend (inline path)
 ;;; ===========================================================================
 
+(deftest repl-meta-command
+  (ok ":help is a meta-command" (tvision::repl-meta-command-p ":help"))
+  (ok ":help SYM is a meta-command" (tvision::repl-meta-command-p ":help car"))
+  (ok ":h SYM is a meta-command" (tvision::repl-meta-command-p ":h car"))
+  (ok "other keywords are not meta-commands" (not (tvision::repl-meta-command-p ":foo")))
+  (ok "ordinary forms are not meta-commands" (not (tvision::repl-meta-command-p "(+ 1 2)"))))
+
 (deftest backtrace-export
   (let* ((frames (list (list :label "0  FOO" :locals '(("x" "10" 10) ("y" "20" 20)))
                        (list :label "1  BAR" :locals nil)))
