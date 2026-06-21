@@ -27,6 +27,7 @@
 (defparameter +cm-load+        305)
 (defparameter +cm-reload+      355)
 (defparameter +cm-savetx+      306)
+(defparameter +cm-savescript+  360)
 (defparameter +cm-interrupt+   307)
 (defparameter +cm-threads+     308)
 (defparameter +cm-apropos+     310)
@@ -122,6 +123,7 @@
       (menu-item "~L~oad file..."    +cm-load+     :key-code +kb-f7+ :key-text "F7")
       (menu-item "Reload ~f~ile"     +cm-reload+)
       (menu-item "Save ~t~ranscript..." +cm-savetx+)
+      (menu-item "Save Lis~p~ script..." +cm-savescript+)
       (menu-separator)
       (menu-item "Save sessi~o~n"    +cm-session-save+)   ; ~o~: ~n~ collides with New
       (menu-item "Restore sess~i~on" +cm-session-load+)
@@ -2225,6 +2227,25 @@ PATH~ backup of the previous contents."
                                       (logior +mf-error+ +mf-ok-button+))))
             (do-saveas-editor app))))))
 
+(defun %write-session-script (rv path)
+  "Write RV's input forms (chronological, :help meta-commands dropped) to PATH as
+a loadable Lisp script.  Return the number of forms written."
+  (let ((forms (remove-if #'tvision::repl-meta-command-p (reverse (repl-history rv)))))
+    (with-open-file (s path :direction :output :if-exists :supersede
+                            :if-does-not-exist :create :external-format :utf-8)
+      (format s ";;; tvlisp session script (~d form~:p)~%~%" (length forms))
+      (dolist (form forms) (write-string form s) (terpri s) (terpri s)))
+    (length forms)))
+
+(defun do-save-script (rv)
+  "Export the session's input forms as a loadable Lisp script."
+  (let ((path (and rv (file-save-dialog :title "Save Lisp script"))))
+    (when path
+      (handler-case
+          (message-box (format nil "Wrote ~d form~:p to ~a" (%write-session-script rv path) path)
+                       (logior +mf-information+ +mf-ok-button+))
+        (error (e) (err-box e))))))
+
 (defun do-save-all (app)
   "Save every modified, file-backed editor window (with PATH~ backups)."
   (let ((n 0))
@@ -2644,6 +2665,7 @@ string or comment (so it won't fight existing literals)."
            (let ((path (file-save-dialog :title "Save transcript")))
              (when (and rv path) (text-save-file rv path)))
            (clear-event event))
+          ((= c +cm-savescript+) (do-save-script rv) (clear-event event))
           ((= c +cm-tile+)     (tile (program-desktop app)) (clear-event event))
           ((= c +cm-cascade+)  (cascade (program-desktop app)) (clear-event event))
           ((= c +cm-threads+)  (open-thread-window app) (clear-event event)))))))
