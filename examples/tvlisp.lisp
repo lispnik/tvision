@@ -805,10 +805,28 @@ one more level."
             (insert desk win) (focus tv))
         (error (e) (err-box e))))))
 
+(defclass tdescribe-window (twindow)
+  ((sym :initarg :sym :initform nil :accessor describe-sym)))
+
+(defmethod handle-event ((w tdescribe-window) event)
+  (when (and (= (event-type event) +ev-key-down+) (describe-sym w))
+    (let ((ch (event-char-code event)))
+      (cond
+        ((member ch (list (char-code #\g) (char-code #\G)))   ; g: jump to source
+         (when *application*
+           (handler-case (goto-definition-of *application* (describe-sym w)) (error (e) (err-box e))))
+         (clear-event event))
+        ((member ch (list (char-code #\i) (char-code #\I)))   ; i: inspect the symbol
+         (ignore-errors (repl-inspect (describe-sym w) (princ-to-string (describe-sym w))))
+         (clear-event event)))))
+  (call-next-method))
+
 (defun describe-named (rv name)
   (handler-case
-      (show-text-window (format nil "Describe ~a" name)
-                        (with-output-to-string (s) (describe (read-in rv name) s)))
+      (let ((sym (read-in rv name)))
+        (show-text-window (format nil "Describe ~a  (g: source  i: inspect)" name)
+                          (with-output-to-string (s) (describe sym s))
+                          :class 'tdescribe-window :initargs (list :sym sym)))
     (error (e) (err-box e))))
 
 (defun do-describe (rv)

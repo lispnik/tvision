@@ -209,14 +209,15 @@ e.g. '*, '+, '/).  Reads listener-local storage, not the global CL specials."
 
 ;;; --- read-only text windows (describe / macroexpand / backtrace / ...) ------
 
-(defun show-text-window (title text &key (width 76) (height 22))
-  "Open a modeless, read-only, scrollable window showing TEXT.  Returns the
-window and its text view."
+(defun show-text-window (title text &key (width 76) (height 22) (class 'twindow) initargs)
+  "Open a modeless, read-only, scrollable window showing TEXT.  CLASS/INITARGS
+let callers supply a TWINDOW subclass (e.g. one with extra key bindings).
+Returns the window and its text view."
   (when *application*
     (let* ((desk (program-desktop *application*))
            (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
            (w (min width (max 24 (- dw 2)))) (h (min height (max 6 (- dh 2))))
-           (win (make-instance 'twindow :title title :bounds (make-trect 0 0 w h)))
+           (win (apply #'make-instance class :title title :bounds (make-trect 0 0 w h) initargs))
            (vsb (standard-scrollbar win t))
            (tv (make-instance 'ttext-view :read-only t
                               :bounds (make-trect 1 1 (1- w) (1- h)))))
