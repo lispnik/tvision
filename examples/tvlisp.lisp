@@ -217,11 +217,20 @@
   (let* ((app *application*)
          (rv (and app (current-repl app)))
          (hint (and app (arglist-hint app)))
-         (info (or hint
-                   (format nil "~a | ~d thr~:[~; | busy~]"
-                           (if rv (package-name (repl-package rv)) "-")
-                           (length (sb-thread:list-all-threads))
-                           (and rv (repl-busy rv)))))
+         ;; parse state: is the focused REPL mid-way through an incomplete form?
+         (waiting (and rv (not (repl-busy rv))
+                       (let ((in (ignore-errors (tvision::repl-current-input rv))))
+                         (and in (plusp (length (string-trim '(#\Space #\Tab #\Newline) in)))
+                              (not (tvision::input-complete-p in))))))
+         (info (cond
+                 ;; while typing a known call, keep its arglist -- but still flag
+                 ;; an incomplete form
+                 (hint (if waiting (format nil "~a  (more)" hint) hint))
+                 (t (format nil "~a~@[ ~a~] | ~d thr~:[~; | busy~]"
+                            (if rv (package-name (repl-package rv)) "-")
+                            (and waiting "(more)")
+                            (length (sb-thread:list-all-threads))
+                            (and rv (repl-busy rv))))))
          (w (point-x (view-size sl)))
          (s (format nil " ~a " info))
          (s (if (> (length s) w) (subseq s 0 w) s))
