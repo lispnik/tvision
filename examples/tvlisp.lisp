@@ -745,10 +745,40 @@ in its file's package, and the listener follows -- like compiling a file)."
         (format nil "(in-package ~s)~%~a" pkg form-text)
         form-text)))
 
+;;; Interactive macroexpand window: shows macroexpand-1 of a form, and `e' (or
+;;; Enter) expands the displayed result one more step until it's no longer a
+;;; macro form.
+(defclass tmacro-window (twindow)
+  ((form :initarg :form :accessor macro-form)    ; current (expanded) form object
+   (pkg  :initarg :pkg  :accessor macro-pkg)
+   (view :initform nil  :accessor macro-view)
+   (steps :initform 1   :accessor macro-steps)))
+
+(defun %macro-render (w)
+  (let ((*print-pretty* t) (*package* (macro-pkg w)))
+    (set-text (macro-view w) (prin1-to-string (macro-form w)))
+    (setf (window-title w) (format nil "Macroexpand — ~d step~:p  (e: expand again)" (macro-steps w)))
+    (draw-view w)))
+
+(defun %macro-step (w)
+  (let ((*package* (macro-pkg w)))
+    (multiple-value-bind (exp expanded) (macroexpand-1 (macro-form w))
+      (if expanded
+          (progn (setf (macro-form w) exp) (incf (macro-steps w)) (%macro-render w))
+          (message-box "Fully expanded (the form is not a macro call)."
+                       (logior +mf-information+ +mf-ok-button+))))))
+
+(defmethod handle-event ((w tmacro-window) event)
+  (when (and (= (event-type event) +ev-key-down+)
+             (macro-view w)
+             (member (event-char-code event) (list (char-code #\e) (char-code #\E))))
+    (%macro-step w) (clear-event event))
+  (call-next-method))
+
 (defun do-macroexpand (app)
-  "Macroexpand-1 a form.  When an editor window is focused, the prompt defaults
-to the form at the cursor (the selection, the enclosing s-expression, or the
-current line)."
+  "Macroexpand a form, step by step.  When an editor window is focused, the
+prompt defaults to the form at the cursor; the result window's `e' key expands
+one more level."
   (let* ((rv (some-repl app))
          (ew (current-editor-window app))
          (default (when ew
@@ -757,9 +787,20 @@ current line)."
          (s (prompt-line "Macroexpand" "Form:" (or default ""))))
     (when s
       (handler-case
-          (let ((*print-pretty* t)
-                (*package* (if rv (repl-package rv) *package*)))
-            (show-text-window "Macroexpand-1" (prin1-to-string (macroexpand-1 (read-from-string s)))))
+          (let* ((pkg (if rv (repl-package rv) *package*))
+                 (form (let ((*package* pkg)) (macroexpand-1 (read-from-string s))))
+                 (desk (program-desktop app))
+                 (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+                 (w (min 78 (- dw 2))) (h (min 20 (- dh 2)))
+                 (win (make-instance 'tmacro-window :form form :pkg pkg
+                                     :bounds (make-trect 0 0 w h)))
+                 (vsb (standard-scrollbar win t))
+                 (tv (make-instance 'ttext-view :read-only t :bounds (make-trect 1 1 (1- w) (1- h)))))
+            (insert win tv) (text-attach-scrollbars tv :vscroll vsb)
+            (setf (macro-view win) tv)
+            (%macro-render win)
+            (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+            (insert desk win) (focus tv))
         (error (e) (err-box e))))))
 
 (defun describe-named (rv name)
@@ -1487,16 +1528,18 @@ run a form, and show the call-count/time report."
                 (error (e) (run-on-ui (lambda () (err-box e))))))))))))
 
 (defun do-function-browser (rv app)
-  (let ((s (prompt-line "Function / GF browser" "Function name:")))
+  (let ((s (prompt-line "Function / GF browser" "Function name:" (%point-symbol))))
     (when (and rv s)
       (handler-case
           (let* ((sym (read-in rv s)) (fn (and (fboundp sym) (fdefinition sym))))
             (cond
               ((typep fn 'generic-function)
                (let* ((methods (sb-mop:generic-function-methods fn))
+                      (ll (ignore-errors (sb-introspect:function-lambda-list fn)))
                       (labels (mapcar #'method-label methods))
                       (chosen (choose-from-list
-                               (format nil "~a — ~d method~:p" s (length methods)) labels)))
+                               (format nil "~a ~(~a~) — ~d method~:p" s (or ll "") (length methods))
+                               labels)))
                  (when chosen
                    (let* ((m (nth (position chosen labels :test #'string=) methods))
                           (src (ignore-errors
@@ -1505,8 +1548,8 @@ run a form, and show the call-count/time report."
                      (if path
                          (goto-source app :method (namestring path)
                                       (sb-introspect:definition-source-character-offset src))
-                         (message-box "No source for that method."
-                                      (logior +mf-information+ +mf-ok-button+)))))))
+                         ;; no method source -> fall back to the generic function's definition
+                         (goto-definition-of app sym))))))
               (fn (goto-definition-of app sym))
               (t (message-box (format nil "~a is not a function." s)
                               (logior +mf-information+ +mf-ok-button+)))))
