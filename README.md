@@ -196,6 +196,12 @@ parked with its stack live:
 
 ![Browsing directories in the file dialog by keyboard](media/file-dialog-nav.gif)
 
+`TLabel`s carry the classic mnemonic: the accented letter in `~N~ame` / `~F~iles`
+is an Alt-hotkey (and a click target) that moves focus to the linked control, so
+Alt-N jumps to the filename field and Alt-F to the browser.
+
+![File-dialog mnemonics: Alt-N focuses the Name field, Alt-F the file browser](media/file-dialog-mnemonics.gif)
+
 ![Browsing the Common Lisp HyperSpec in the THtmlView control](media/hyperspec.gif)
 
 ![HyperSpec lookup of the symbol at the cursor](media/hyperspec-lookup.gif)
