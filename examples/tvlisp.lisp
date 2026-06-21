@@ -994,41 +994,49 @@ SELECT preselects that item string.  Returns (values selected-item end-command).
                (sel (choose-index "Window list" labels :start (max 0 (or (position cur wins) 0)))))
           (when sel (set-current desk (nth sel wins) :normal-select))))))
 
+(defun %load-system-async (rv name force)
+  "Load (or force-reload) system NAME on the worker, streaming output to a window."
+  (repl-print rv (format nil "~%; ~:[loading~;reloading~] system ~a ...~%" force name))
+  (repl-call-on-worker rv
+    (lambda ()
+      (let ((out (with-output-to-string (o)
+                   (handler-case
+                       (let ((*standard-output* o) (*error-output* o))
+                         (asdf:load-system name :force force))
+                     (error (e) (format o ";; ~a~%" e))))))
+        (run-on-ui
+         (lambda ()
+           (show-text-window (format nil "~:[Load~;Reload~] system ~a" force name)
+                             (if (plusp (length out)) out (format nil "Loaded ~a." name)))))))))
+
 (defun do-systems (rv)
+  "Browse ASDF systems (* = already loaded).  Load (default), Inspect the system
+object (its dependencies/components), or force-Reload."
   (multiple-value-bind (fcmd filter) (input-box "ASDF Systems" "Filter (blank = all):" "" 60)
-   (when (= fcmd +cm-ok+)
-    (let* ((loaded (ignore-errors (asdf:already-loaded-systems)))
-           (all (sort (copy-list (asdf:registered-systems)) #'string<))
-           (names (if (plusp (length (string-trim " " filter)))
-                      (remove-if-not (lambda (n) (search (string-downcase (string-trim " " filter))
-                                                         (string-downcase n))) all)
-                      all))
-           ;; "* " marks an already-loaded system
-           (labels (mapcar (lambda (n) (format nil "~:[  ~;* ~]~a" (member n loaded :test #'string=) n))
-                           names))
-           (picked (and labels (choose-from-list "ASDF Systems" labels)))
-           (chosen (and picked (string-left-trim '(#\* #\Space) picked))))
-      (when chosen
-      (cond
-        ((null rv)
-         (message-box "No REPL open (needed to load on a worker thread)."
-                      (logior +mf-information+ +mf-ok-button+)))
-        (t
-         ;; load on the listener's worker so the UI stays responsive and Ctrl-C
-         ;; can interrupt a long build, rather than freezing the whole IDE
-         (repl-print rv (format nil "~%; loading system ~a ...~%" chosen))
-         (repl-call-on-worker rv
-           (lambda ()
-             (let ((out (with-output-to-string (o)
-                          (handler-case
-                              (let ((*standard-output* o) (*error-output* o))
-                                (asdf:load-system chosen))
-                            (error (e) (format o ";; ~a~%" e))))))
-               (run-on-ui
-                (lambda ()
-                  (show-text-window (format nil "Load system ~a" chosen)
-                                    (if (plusp (length out)) out
-                                        (format nil "Loaded ~a." chosen)))))))))))))))
+    (when (= fcmd +cm-ok+)
+      (let* ((loaded (ignore-errors (asdf:already-loaded-systems)))
+             (all (sort (copy-list (asdf:registered-systems)) #'string<))
+             (names (if (plusp (length (string-trim " " filter)))
+                        (remove-if-not (lambda (n) (search (string-downcase (string-trim " " filter))
+                                                           (string-downcase n))) all)
+                        all))
+             (labels (mapcar (lambda (n) (format nil "~:[  ~;* ~]~a" (member n loaded :test #'string=) n))
+                             names)))
+        (when labels
+          (multiple-value-bind (picked cmd)
+              (pick-with-inspect "ASDF Systems  (* = loaded)" labels :ok "~L~oad" :extra "~R~eload")
+            (let ((chosen (and picked (string-left-trim '(#\* #\Space) picked))))
+              (when chosen
+                (cond
+                  ((eql cmd +cm-pick-inspect+)
+                   (let ((sys (ignore-errors (asdf:find-system chosen nil))))
+                     (if sys (repl-inspect sys (format nil "system ~a" chosen))
+                         (message-box "Could not find that system object."
+                                      (logior +mf-information+ +mf-ok-button+)))))
+                  ((null rv)
+                   (message-box "No REPL open (needed to load on a worker thread)."
+                                (logior +mf-information+ +mf-ok-button+)))
+                  (t (%load-system-async rv chosen (eql cmd +cm-pick-extra+))))))))))))
 
 (defun %slot-label (s initformp)
   "Label for slot definition S: name, declared type, and (for direct slots) its
