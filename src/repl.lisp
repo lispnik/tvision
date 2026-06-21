@@ -895,6 +895,10 @@ therefore form a reference cycle (strings are leaves and never tracked)."
     (vector t)
     (t nil)))
 
+(defconstant +inspect-page+ 200
+  "How many elements OBJECT->OUTLINE shows per collection before a drillable
+`... N more' node; drilling that node pages through the remainder.")
+
 (defun object->outline (obj label &optional (depth 3) path)
   "Build a depth-limited TOutline node tree describing OBJ.  Robust against
 objects whose slots/elements error when read (e.g. system structures): a
@@ -913,6 +917,13 @@ PATH is the chain of ancestor objects; an OBJ already on it is rendered as a
                (push (handler-case (object->outline v lbl (1- depth) path*)
                        (serious-condition (e)
                          (make-outline-node (format nil "~a = <~a>" lbl (type-of e)))))
+                     children))
+             (overflow (n rest noun)
+               ;; a drillable `... N more' node for the truncated tail of a big
+               ;; collection (REST is re-inspected to page through the remainder)
+               (push (make-outline-node
+                      (if n (format nil "... ~d more ~a" n noun) (format nil "... more ~a" noun))
+                      nil rest)
                      children)))
         (handler-case
             (typecase obj
@@ -924,13 +935,26 @@ PATH is the chain of ancestor objects; an OBJ already on it is rendered as a
                (kid (package-nicknames obj) "nicknames")
                (kid (package-use-list obj) "use-list")
                (kid (package-used-by-list obj) "used-by-list"))
-              (cons (loop for x in obj for i from 0 below 200 do (kid x (format nil "[~d]" i))))
-              (vector (loop for x across obj for i from 0 below 200 do (kid x (format nil "[~d]" i))))
+              (cons
+               (let ((i 0) (tail obj))
+                 (loop while (and (consp tail) (< i +inspect-page+))
+                       do (kid (car tail) (format nil "[~d]" i)) (incf i) (setf tail (cdr tail)))
+                 (when (consp tail)
+                   (let ((m (list-length tail)))   ; NIL for a circular list
+                     (overflow m tail (if m "elements" "elements (circular)"))))))
+              (vector
+               (let ((n (length obj)))
+                 (dotimes (i (min n +inspect-page+)) (kid (aref obj i) (format nil "[~d]" i)))
+                 (when (> n +inspect-page+)
+                   (overflow (- n +inspect-page+) (subseq obj +inspect-page+) "elements"))))
               (hash-table
-               (let ((i 0))
+               (let ((i 0) (total (hash-table-count obj)))
                  (maphash (lambda (k v)
-                            (when (< i 200) (kid v (format nil "~a =>" (%short-repr k))) (incf i)))
-                          obj)))
+                            (when (< i +inspect-page+) (kid v (format nil "~a =>" (%short-repr k))))
+                            (incf i))
+                          obj)
+                 (when (> total +inspect-page+)
+                   (overflow (- total +inspect-page+) nil "entries"))))
               ((or structure-object standard-object)
                (dolist (slot (handler-case (sb-mop:class-slots (class-of obj)) (error () nil)))
                  (let ((name (sb-mop:slot-definition-name slot)))

@@ -610,6 +610,29 @@ broadcasts and drawing); return the control."
     (ok "neither sibling is flagged circular"
         (notany (lambda (k) (search "[circular ref]" (outline-node-text k))) kids))))
 
+(deftest inspector-paging
+  ;; big collections show one page plus a drillable "... N more" node, instead of
+  ;; silently truncating; re-inspecting that node's value pages the remainder
+  (let* ((cap tvision::+inspect-page+)
+         (big (loop for i below (+ cap 50) collect i))
+         (node (tvision::object->outline big "big"))
+         (kids (outline-node-children node)))
+    (is= "one page of elements plus an overflow node" (length kids) (1+ cap))
+    (let ((more (car (last kids))))
+      (ok "overflow node is labelled '... more'" (search "more" (outline-node-text more)))
+      (is= "overflow carries the un-shown tail" (outline-node-data more) (nthcdr cap big))
+      (ok "overflow node is itself a leaf" (null (outline-node-children more)))
+      ;; drilling the overflow re-inspects the tail -> the remaining 50 elements
+      (let ((page2 (tvision::object->outline (outline-node-data more) "rest")))
+        (is= "drilling the overflow pages the rest"
+             (length (outline-node-children page2)) 50))))
+  ;; a hash-table over the cap reports the overflow count too
+  (let ((h (make-hash-table)))
+    (dotimes (i (+ tvision::+inspect-page+ 5)) (setf (gethash i h) i))
+    (let ((kids (outline-node-children (tvision::object->outline h "h"))))
+      (is= "hash-table page plus overflow" (length kids) (1+ tvision::+inspect-page+))
+      (ok "overflow counts the rest" (search "5 more" (outline-node-text (car (last kids))))))))
+
 ;;; ===========================================================================
 ;;; HTML view (hypertext browser)
 ;;; ===========================================================================
