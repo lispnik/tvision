@@ -1076,37 +1076,70 @@ still shown (entries without a source location simply aren't navigable)."
   "The list of currently traced function names (symbols)."
   (remove-if-not #'symbolp (eval '(trace))))
 
+(defun choose-checklist (title labels &key all)
+  "Modal multi-select over LABELS (check boxes).  Return a list of checked
+indices, or NIL when cancelled.  When ALL, every box starts checked."
+  (when (and *application* labels)
+    (let* ((n (length labels))
+           (desk (program-desktop *application*))
+           (w 60) (h (min (+ n 6) (max 9 (- (point-y (view-size desk)) 2))))
+           (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
+           (cb (make-instance 'tcheck-boxes :labels labels
+                              :bounds (make-trect 2 1 (- w 2) (+ 1 n)))))
+      (when all (setf (cluster-value cb) (1- (ash 1 n))))
+      (insert d cb)
+      (insert d (make-button (make-trect (- w 24) (- h 3) (- w 14) (- h 1)) "~O~K" +cm-ok+ t))
+      (insert d (make-button (make-trect (- w 12) (- h 3) (- w 2) (- h 1)) "Cancel" +cm-cancel+))
+      (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
+               (max 0 (floor (- (point-y (view-size desk)) h) 2)))
+      (focus cb)
+      (when (= (exec-view desk d) +cm-ok+)
+        (loop with v = (cluster-value cb) for i below n when (logbitp i v) collect i)))))
+
 (defun do-trace (rv)
-  "Toggle TRACE on a function: trace it if untraced, untrace it if traced.
-Trace output appears in the REPL as the function is called."
+  "TRACE a function (with options) or UNTRACE it if already traced.  Trace output
+appears in the REPL, indented by call depth (SBCL's default)."
   (when rv
     (let ((s (prompt-line "Trace" "Function (toggles):" (%point-symbol))))
       (when s
         (handler-case
             (let ((sym (read-in rv s)))
-              (if (member sym (%traced-symbols))
-                  (progn (eval `(untrace ,sym))
-                         (repl-print rv (format nil "~%; untraced ~s~%" sym)))
-                  (progn (eval `(trace ,sym))
-                         (repl-print rv (format nil "~%; tracing ~s~%" sym))))
+              (cond
+                ((member sym (%traced-symbols))
+                 (eval `(untrace ,sym))
+                 (repl-print rv (format nil "~%; untraced ~s~%" sym)))
+                (t
+                 (let ((mode (choose-index "Trace options"
+                                           '("Normal" "Break on entry" "Conditional...")
+                                           :start 0))
+                       (note nil))
+                   (when mode
+                     (ecase mode
+                       (0 (eval `(trace ,sym)) (setf note ""))
+                       (1 (eval `(trace ,sym :break t)) (setf note " (break on entry)"))
+                       (2 (let ((c (prompt-line "Trace condition"
+                                                "Form (true => trace this call):" "t")))
+                            (when c (eval `(trace ,sym :condition ,(read-in rv c)))
+                                  (setf note " (conditional)")))))
+                     (when note
+                       (repl-print rv (format nil "~%; tracing ~s~a~%" sym note)))))))
               (tvision::repl-fresh-prompt rv) (draw-view rv))
           (error (e) (err-box e)))))))
 
 (defun do-untrace-all (rv)
-  "Show the traced functions and offer to untrace them all."
+  "Show the traced functions as a checklist (all checked); untrace the ones kept
+checked when you confirm."
   (when rv
     (let ((traced (%traced-symbols)))
       (if (null traced)
           (message-box "No functions are traced." (logior +mf-information+ +mf-ok-button+))
-          (when (= (message-box
-                    (format nil "Untrace ~d function~:p?~%~{~a~^, ~}"
-                            (length traced)
-                            (mapcar (lambda (s) (format nil "~a" s)) traced))
-                    (logior +mf-confirmation+ +mf-yes-button+ +mf-no-button+))
-                   +cm-yes+)
-            (eval '(untrace))
-            (repl-print rv (format nil "~%; untraced all~%"))
-            (tvision::repl-fresh-prompt rv) (draw-view rv))))))
+          (let ((picked (choose-checklist "Untrace functions"
+                                          (mapcar (lambda (s) (format nil "~s" s)) traced)
+                                          :all t)))
+            (when picked
+              (dolist (i picked) (eval `(untrace ,(nth i traced))))
+              (repl-print rv (format nil "~%; untraced ~d function~:p~%" (length picked)))
+              (tvision::repl-fresh-prompt rv) (draw-view rv)))))))
 
 (defun method-label (m)
   (string-trim " "
