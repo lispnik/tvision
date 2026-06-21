@@ -134,7 +134,8 @@ package errored new-hist)."
    ;; --- background evaluation (one worker thread per listener) ---
    (worker       :initform nil :accessor repl-worker)       ; sb-thread:thread
    (to-worker    :initform nil :accessor repl-to-worker)    ; mailbox of jobs
-   (busy         :initform nil :accessor repl-busy)))        ; eval in flight?
+   (busy         :initform nil :accessor repl-busy)         ; eval in flight?
+   (last-file    :initform nil :accessor repl-last-file)))  ; last file LOADed (for reload)
 
 (defmethod initialize-instance :after ((r trepl-view) &key)
   (unless (repl-package r) (setf (repl-package r) (ensure-repl-package)))
@@ -1157,6 +1158,7 @@ NOTES is a list of (kind . message-string); bound by the application.")
 compiler warnings / style-warnings / notes it emits (without dumping them raw
 into the transcript) and handing them to *LOAD-NOTES-HOOK* when done.  A real
 ERROR still reaches the debugger; the sticky package follows any in-package."
+  (setf (repl-last-file r) path)
   (repl-ensure-fresh-line r)
   (repl-print r (format nil "; loading ~a~%" path))
   (draw-view r)
