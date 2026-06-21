@@ -432,7 +432,8 @@ any #fragment so the browser can scroll to an anchor."
    (base   :initform "" :accessor hw-base)
    (back   :initform '() :accessor hw-back-stack)   ; pages behind the current one
    (fwd    :initform '() :accessor hw-fwd-stack)    ; pages ahead (after going Back)
-   (titles :initform '() :accessor hw-titles)))     ; (location . <title>) seen so far
+   (titles :initform '() :accessor hw-titles)        ; (location . <title>) seen so far
+   (times  :initform '() :accessor hw-times)))        ; (location . universal-time) last visit
 
 (defun hw-label (w loc)
   "How LOC should appear in the history: its <title> if we have one, else the URL."
@@ -477,6 +478,9 @@ Scrolls to the #fragment's anchor when present.  Return T on a successful load."
          (push (hw-base w) (hw-back-stack w))
          (setf (hw-fwd-stack w) '()))
        (setf (hw-base w) base)
+       ;; remember when this page was last visited (for the history list)
+       (setf (hw-times w) (cons (cons base (get-universal-time))
+                                (remove base (hw-times w) :key #'car :test #'string=)))
        ;; remember the page's <title> for the history list / caption
        (let ((title (html-document-title content)))
          (when title
@@ -573,6 +577,12 @@ around it."
   (let ((loc (prompt-line "HyperSpec / browse" "URL or file:" +hyperspec-default+)))
     (when loc (open-html-window app (string-trim " " loc)))))
 
+(defun %hhmm (universal-time)
+  "HH:MM for UNIVERSAL-TIME."
+  (multiple-value-bind (s m h) (decode-universal-time universal-time)
+    (declare (ignore s))
+    (format nil "~2,'0d:~2,'0d" h m)))
+
 (defun do-browser-history (app)
   "Pop up the focused browser window's history; selecting an entry visits it."
   (let ((w (group-current (program-desktop app))))
@@ -583,7 +593,9 @@ around it."
       (t (let* ((items (hw-history-list w))
                 (cur (hw-history-index w))
                 (labels (loop for loc in items for i from 0
-                              collect (format nil "~:[  ~;> ~]~a" (= i cur) (hw-label w loc)))))
+                              for ut = (cdr (assoc loc (hw-times w) :test #'string=))
+                              collect (format nil "~:[  ~;> ~]~@[~a  ~]~a"
+                                              (= i cur) (and ut (%hhmm ut)) (hw-label w loc)))))
            (let ((sel (choose-index "Browser history" labels :start cur)))
              (when sel (hw-goto-index w sel))))))))
 
