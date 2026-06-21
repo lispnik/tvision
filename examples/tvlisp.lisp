@@ -44,6 +44,7 @@
 (defparameter +cm-trace+       349)
 (defparameter +cm-untrace-all+ 350)
 (defparameter +cm-trace-pkg+   357)
+(defparameter +cm-trace-snap+  359)
 (defparameter +cm-goto-line+   351)
 (defparameter +cm-isearch+     352)
 (defparameter +cm-wrap+        353)
@@ -174,6 +175,7 @@
          (menu-item "~D~eterministic profile..." +cm-profile-det+)
          (menu-item "Tra~c~e..."          +cm-trace+)
          (menu-item "Trace pac~k~age..."  +cm-trace-pkg+)
+         (menu-item "Trace ~s~napshots..." +cm-trace-snap+)
          (menu-item "~U~ntrace all..."    +cm-untrace-all+)))
       (sub-menu "~B~rowse"
         (new-menu
@@ -1439,6 +1441,38 @@ appears in the REPL, indented by call depth (SBCL's default)."
               (tvision::repl-fresh-prompt rv) (draw-view rv))
           (error (e) (err-box e)))))))
 
+(defvar *trace-snapshots* '()
+  "Named saved sets of traced functions: (name . (symbol ...)).")
+
+(defun do-trace-snapshots (rv)
+  "Save the current traced-function set under a name, or restore a saved one
+ (untraces everything, then traces the snapshot's functions)."
+  (when rv
+    (let* ((choices (cons "Save current set..."
+                          (mapcar (lambda (s) (format nil "Restore: ~a (~d)" (car s) (length (cdr s))))
+                                  *trace-snapshots*)))
+           (sel (choose-index "Trace snapshots" choices)))
+      (when sel
+        (handler-case
+            (cond
+              ((zerop sel)                           ; save
+               (let ((name (prompt-line "Save trace snapshot" "Name:" "")))
+                 (when name
+                   (setf *trace-snapshots*
+                         (cons (cons name (%traced-symbols))
+                               (remove name *trace-snapshots* :key #'car :test #'string=)))
+                   (repl-print rv (format nil "~%; saved trace snapshot ~a (~d function~:p)~%"
+                                          name (length (%traced-symbols))))
+                   (tvision::repl-fresh-prompt rv) (draw-view rv))))
+              (t                                     ; restore the (1- sel)th snapshot
+               (let* ((snap (nth (1- sel) *trace-snapshots*)) (syms (cdr snap)))
+                 (eval '(untrace))
+                 (dolist (s syms) (ignore-errors (eval `(trace ,s))))
+                 (repl-print rv (format nil "~%; restored snapshot ~a: tracing ~d function~:p~%"
+                                        (car snap) (length syms)))
+                 (tvision::repl-fresh-prompt rv) (draw-view rv))))
+          (error (e) (err-box e)))))))
+
 (defun do-untrace-all (rv)
   "Show the traced functions as a checklist (all checked); untrace the ones kept
 checked when you confirm."
@@ -2565,6 +2599,7 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-wrap+)        (do-toggle-wrap app) (clear-event event))
           ((= c +cm-trace+)       (do-trace rv) (clear-event event))
           ((= c +cm-trace-pkg+)   (do-trace-package rv) (clear-event event))
+          ((= c +cm-trace-snap+)  (do-trace-snapshots rv) (clear-event event))
           ((= c +cm-untrace-all+) (do-untrace-all rv) (clear-event event))
           ((= c +cm-histsearch+)  (do-history-search rv) (clear-event event))
           ((= c +cm-new-file+)    (do-new-editor app) (clear-event event))
