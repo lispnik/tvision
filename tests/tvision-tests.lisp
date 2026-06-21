@@ -1053,7 +1053,11 @@ broadcasts and drawing); return the control."
         (member (sb-thread:main-thread) (thread-list-threads tl)))
     (ok "current thread marked *"
         (let ((i (position sb-thread:*current-thread* (thread-list-threads tl))))
-          (and i (char= (char (list-item tl i) 0) #\*))))))
+          (and i (char= (char (list-item tl i) 0) #\*))))
+    ;; backtrace capture of the current thread (the fast self path)
+    (let ((bt (tvision::%thread-backtrace sb-thread:*current-thread* 10)))
+      (ok "captures a backtrace string for the current thread"
+          (and (stringp bt) (plusp (length bt)))))))
 
 ;;; ===========================================================================
 ;;; REPL backend (inline path)
