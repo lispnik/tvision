@@ -877,16 +877,39 @@ Inspect opens it in an Inspector window."
                       collect (list type (namestring path)
                                     (sb-introspect:definition-source-character-offset src))))))
 
+(defvar *line-index-cache* (make-hash-table :test 'equal)
+  "Caches a file's newline character offsets keyed by (truename . write-date),
+so repeated %OFFSET-TO-LINE calls -- goto-def / xref over many hits in one file
+-- don't re-scan the file each time.  Stale entries are replaced on write-date
+change; the table only grows with the number of distinct files visited.")
+
+(defun %newline-offsets (path)
+  "Sorted SIMPLE-VECTOR of the character offsets just past each #\\Newline in
+PATH (cached by write-date), or NIL if PATH can't be read."
+  (let ((key (ignore-errors (cons (namestring (truename path)) (file-write-date path)))))
+    (or (and key (gethash key *line-index-cache*))
+        (let ((offs (ignore-errors
+                     (with-open-file (s path)
+                       (let ((v (make-array 256 :adjustable t :fill-pointer 0)) (i 0))
+                         (loop for c = (read-char s nil nil) while c do
+                           (incf i)
+                           (when (char= c #\Newline) (vector-push-extend i v)))
+                         (coerce v 'simple-vector))))))
+          (when (and key offs) (setf (gethash key *line-index-cache*) offs))
+          offs))))
+
 (defun %offset-to-line (path offset)
-  "1-based line number containing character OFFSET in PATH."
-  (or (ignore-errors
-       (with-open-file (s path)
-         (let ((line 1))
-           (dotimes (i (or offset 0) line)
-             (let ((c (read-char s nil nil)))
-               (unless c (return line))
-               (when (char= c #\Newline) (incf line)))))))
-      1))
+  "1-based line number containing character OFFSET in PATH (file scanned once
+and cached; subsequent lookups are a binary search over its newline offsets)."
+  (let ((offs (%newline-offsets path)) (off (or offset 0)))
+    (if offs
+        ;; line = 1 + (number of newline-ends at or before OFF)
+        (let ((lo 0) (hi (length offs)))
+          (loop while (< lo hi)
+                for mid = (ash (+ lo hi) -1)
+                do (if (<= (svref offs mid) off) (setf lo (1+ mid)) (setf hi mid)))
+          (1+ lo))
+        1)))
 
 (defun goto-source (app type path offset)
   (declare (ignore type))
