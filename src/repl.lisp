@@ -441,6 +441,19 @@ the debugger must prompt for one before invoking."
   (let ((n (restart-name restart)))
     (and n (member (symbol-name n) '("USE-VALUE" "STORE-VALUE") :test #'string=))))
 
+(defun %restart-label (rs)
+  "A human label for restart RS: its symbolic name plus its report description
+ (SLIME-style), e.g. \"RETRY — Retry the request.\".  Either part may be absent."
+  (let* ((name (restart-name rs))
+         (report (handler-case (string-trim '(#\Space #\Tab #\Newline) (format nil "~a" rs))
+                   (error () "")))
+         (label (cond ((null name) report)                       ; anonymous restart
+                      ((or (zerop (length report))               ; report adds nothing
+                           (string-equal report (princ-to-string name)))
+                       (princ-to-string name))
+                      (t (format nil "~a — ~a" name report)))))
+    (if (> (length label) 90) (concatenate 'string (subseq label 0 87) "...") label)))
+
 (defun repl-restart-dialog (condition restarts &optional backtrace package)
   "UI-thread only: show RESTARTS for CONDITION and, when the chosen restart needs
 a value (USE-VALUE/STORE-VALUE), prompt for a Lisp form supplying it.  A
@@ -448,7 +461,7 @@ Backtrace button opens the frame browser (frames/locals; PACKAGE is used for
 eval-in-frame).  Returns (values index value-form-string); INDEX is NIL when the
 user aborts.  Safe to call while a worker thread is blocked waiting."
   (when (and *application* restarts)
-    (let* ((labels (mapcar (lambda (rs) (format nil "~a" rs)) restarts))
+    (let* ((labels (mapcar #'%restart-label restarts))
            (desk (program-desktop *application*))
            (w 64) (h 17)
            (d (make-instance 'trestart-dialog :title "Error — pick a restart"
@@ -973,33 +986,72 @@ PATH is the chain of ancestor objects; an OBJ already on it is rendered as a
 so the inspector's `g' key can jump to source.")
 
 (defclass tinspector-window (twindow)
-  ((outline :initform nil :accessor inspector-outline))
+  ((outline :initform nil :accessor inspector-outline)
+   ;; NB: slot names must NOT be `current'/`history' -- those collide with
+   ;; TGROUP's own `current' slot (CLOS merges same-named slots).
+   (inspect-current :initform nil :accessor inspector-current)   ; (obj . label) shown now
+   (inspect-history :initform nil :accessor inspector-history))  ; back-stack of (obj . label)
   (:documentation "An Inspector window whose tree can be drilled into: Enter /
-double-click / `i' re-inspects the focused value in a fresh window, `g' jumps to
-its definition."))
+double-click / `i' re-roots the view on the focused value (in place); Backspace
+goes back to the previous object; `g' jumps to its definition.  The window title
+shows the breadcrumb path."))
 
-(defun %inspect-node (node)
-  "Open a fresh inspector on NODE's value (drilling past the depth limit)."
+(defun %node-label (node)
+  "The label portion (before \" = \") of outline NODE's text."
+  (let* ((txt (outline-node-text node)) (sep (search " = " txt)))
+    (if sep (subseq txt 0 sep) "value")))
+
+(defun %inspector-retitle (w)
+  (let* ((crumbs (append (reverse (mapcar #'cdr (inspector-history w)))
+                         (and (inspector-current w) (list (cdr (inspector-current w))))))
+         (path (format nil "~{~a~^ > ~}" crumbs))
+         (path (if (> (length path) 46)
+                   (concatenate 'string "..." (subseq path (- (length path) 43)))
+                   path)))
+    (setf (window-title w)
+          (format nil "Inspector: ~a  (Enter/i:in~:[~; Bksp:back~] g:src)"
+                  path (inspector-history w)))))
+
+(defun %inspector-show (w obj label)
+  "Re-root the inspector window W on (OBJ . LABEL), in place."
+  (let ((ol (inspector-outline w)))
+    (setf (inspector-current w) (cons obj label)
+          (outline-roots ol) (list (object->outline obj label)))
+    (outline-update-limit ol)
+    (scroll-to ol 0 0)
+    (outline-focus ol 0)
+    (%inspector-retitle w)
+    (draw-view w)))
+
+(defun %inspector-drill (w node)
+  "Drill into NODE's value, remembering the current view so Backspace returns."
   (when node
-    (let* ((txt (outline-node-text node))
-           (sep (search " = " txt))
-           (label (if sep (subseq txt 0 sep) "value")))
-      (repl-inspect (outline-node-data node) label))))
+    (push (inspector-current w) (inspector-history w))
+    (%inspector-show w (outline-node-data node) (%node-label node))))
+
+(defun %inspector-back (w)
+  "Return to the previous object on the history stack, if any."
+  (when (inspector-history w)
+    (let ((prev (pop (inspector-history w))))
+      (%inspector-show w (car prev) (cdr prev)))))
 
 (defmethod handle-event ((w tinspector-window) event)
   (cond
-    ;; Enter on a leaf / double-click broadcasts this -> drill in
+    ;; Enter on a leaf / double-click broadcasts this -> drill in (in place)
     ((and (= (event-type event) +ev-broadcast+)
           (= (event-command event) +cm-outline-item-selected+)
           (eq (event-info event) (inspector-outline w)))
-     (%inspect-node (outline-current (inspector-outline w)))
+     (%inspector-drill w (outline-current (inspector-outline w)))
      (clear-event event))
     ((= (event-type event) +ev-key-down+)
-     (let ((ch (event-char-code event)))
+     (let ((k (event-key-code event)) (ch (event-char-code event)))
        (cond
          ;; `i' drills into the focused node (works on parents too)
          ((or (= ch (char-code #\i)) (= ch (char-code #\I)))
-          (%inspect-node (outline-current (inspector-outline w))) (clear-event event))
+          (%inspector-drill w (outline-current (inspector-outline w))) (clear-event event))
+         ;; Backspace -> back to the previous object
+         ((= k +kb-back+)
+          (%inspector-back w) (clear-event event))
          ;; `g' jumps to the focused value's definition (if the app supplied a hook)
          ((and *inspect-goto-hook* (or (= ch (char-code #\g)) (= ch (char-code #\G))))
           (let ((n (outline-current (inspector-outline w))))
@@ -1010,18 +1062,20 @@ its definition."))
 
 (defun repl-inspect (obj &optional (label "value"))
   "Open an Inspector window showing OBJ as a collapsible tree.  Enter / a click /
-`i' drills into the focused value; `g' jumps to its definition."
+`i' drills into the focused value (re-rooting the same window); Backspace goes
+back; `g' jumps to its definition."
   (when *application*
     (let* ((desk (program-desktop *application*))
            (w (make-instance 'tinspector-window
-                             :title "Inspector  (Enter/i: drill in  g: source)"
                              :bounds (make-trect 4 2 (min 62 (point-x (view-size desk)))
                                                  (min 20 (point-y (view-size desk))))))
            (vsb (standard-scrollbar w t))
            (ol (make-instance 'toutline :roots (list (object->outline obj label))
                               :bounds (make-trect 1 1 (1- (point-x (view-size w)))
                                                   (1- (point-y (view-size w)))))))
-      (setf (inspector-outline w) ol)
+      (setf (inspector-outline w) ol
+            (inspector-current w) (cons obj label))
+      (%inspector-retitle w)
       (insert w ol) (attach-scrollbars ol :vscroll vsb)
       (insert desk w) (focus ol)
       ol)))

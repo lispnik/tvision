@@ -633,6 +633,39 @@ broadcasts and drawing); return the control."
       (is= "hash-table page plus overflow" (length kids) (1+ tvision::+inspect-page+))
       (ok "overflow counts the rest" (search "5 more" (outline-node-text (car (last kids))))))))
 
+(deftest inspector-back
+  ;; drilling re-roots in place and records history; Backspace restores the
+  ;; previous object (one window, not a pile of them)
+  (let* ((host (make-instance 'twindow :bounds (make-trect 0 0 60 20)))
+         (w  (make-instance 'tvision::tinspector-window :bounds (make-trect 0 0 50 16)))
+         (ol (make-instance 'toutline
+                            :roots (list (tvision::object->outline (list 10 20) "root"))
+                            :bounds (make-trect 1 1 48 14))))
+    (setf (tvision::inspector-outline w) ol
+          (tvision::inspector-current w) (cons (list 10 20) "root"))
+    (insert w ol) (insert host w)
+    (let ((child (first (outline-node-children (first (outline-roots ol))))))  ; the [0] node
+      (is= "drill target is the [0] node" (tvision::%node-label child) "[0]")
+      (tvision::%inspector-drill w child)
+      (is= "drilling records one history entry" (length (tvision::inspector-history w)) 1)
+      (is= "current view is the drilled value" (cdr (tvision::inspector-current w)) "[0]")
+      (tvision::%inspector-back w)
+      (is= "back empties the history" (length (tvision::inspector-history w)) 0)
+      (is= "back restores the previous view" (cdr (tvision::inspector-current w)) "root"))))
+
+(deftest restart-labels
+  ;; the debugger labels restarts with their NAME plus their report description
+  (restart-case
+      (let ((named (find-restart 'retry-now))
+            (anon  (find-restart 'plain)))
+        (let ((l (tvision::%restart-label named)))
+          (ok "named restart shows its symbolic name" (search "RETRY-NOW" l))
+          (ok "named restart shows its report text" (search "Retry the operation" l)))
+        (ok "restart label is non-empty even without a useful report"
+            (plusp (length (tvision::%restart-label anon)))))
+    (retry-now () :report "Retry the operation" nil)
+    (plain () nil)))
+
 ;;; ===========================================================================
 ;;; HTML view (hypertext browser)
 ;;; ===========================================================================
