@@ -1736,8 +1736,14 @@ literal or regular-expression."
     (when ew
       (multiple-value-bind (cmd s) (input-box "Go to line" "Line number:" "" 12)
         (when (= cmd +cm-ok+)
-          (let ((n (parse-integer s :junk-allowed t)))
-            (when n (text-goto (editor-window-editor ew) (max 1 n) 0))))))))
+          (let ((n (parse-integer s :junk-allowed t)) (ed (editor-window-editor ew)))
+            (when n
+              (text-goto ed (max 1 n) 0)
+              ;; flash: select the whole target line so the landing spot is obvious
+              (let* ((li (text-cur-line ed)) (len (length (nth-line ed li))))
+                (setf (text-anchor ed) (cons li 0)
+                      (text-cur-line ed) li (text-cur-col ed) len))
+              (draw-view ed))))))))
 
 (defun do-isearch (app)
   "Incremental search in the focused editor: type to jump, Down for next,
@@ -2037,7 +2043,9 @@ debugger support, exactly as if typed)."
                (text (text-string ed)) (off (%editor-offset ed))
                (form (%toplevel-form-at-offset text off)))
           (if form
-              (%eval-in-repl app (%with-buffer-package app (%buffer-in-package text off) form))
+              ;; evaluate, but keep point in the editor (like SLIME's C-c C-c)
+              (progn (%eval-in-repl app (%with-buffer-package app (%buffer-in-package text off) form))
+                     (focus ew))
               (message-box "No top-level form at the cursor."
                            (logior +mf-information+ +mf-ok-button+)))))))
 
@@ -2049,8 +2057,9 @@ debugger support, exactly as if typed)."
         (let* ((ed (editor-window-editor ew))
                (sel (selected-string ed)))
           (if (and sel (plusp (length (string-trim '(#\Space #\Tab #\Newline) sel))))
-              (%eval-in-repl app (%with-buffer-package
-                                  app (%buffer-in-package (text-string ed) (%editor-offset ed)) sel))
+              (progn (%eval-in-repl app (%with-buffer-package
+                                         app (%buffer-in-package (text-string ed) (%editor-offset ed)) sel))
+                     (focus ew))
               (message-box "Select a region first." (logior +mf-information+ +mf-ok-button+)))))))
 
 ;;; --- session save/restore --------------------------------------------------
