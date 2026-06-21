@@ -26,20 +26,32 @@ with a snapshot in THREADS so the focused row maps to a thread object."))
         ((sb-thread:thread-alive-p th) " ")
         (t "x")))                                          ; dead
 
+(defun %thread-role (th)
+  "A short state/role word for TH."
+  (cond ((eq th sb-thread:*current-thread*) "ui")
+        ((eq th (sb-thread:main-thread)) "main")
+        ((not (sb-thread:thread-alive-p th)) "dead")
+        ((let ((n (sb-thread:thread-name th)))
+           (and n (search "repl" (string-downcase n)))) "worker")
+        (t "live")))
+
 (defun %thread-label (th)
-  (format nil "~a ~a~@[ ~a~]"
+  (format nil "~a ~a~vt[~a]"
           (%thread-marker th)
           (or (sb-thread:thread-name th) "(anonymous)")
-          (unless (sb-thread:thread-alive-p th) "[dead]")))
+          32 (%thread-role th)))
 
 (defun thread-list-selected (tl)
   (nth (list-focused tl) (thread-list-threads tl)))
 
 (defun thread-list-refresh (tl)
-  "Re-query the running threads and rebuild the list."
-  (let ((threads (sb-thread:list-all-threads)))
+  "Re-query the running threads and rebuild the list, keeping the focused row."
+  (let ((threads (sb-thread:list-all-threads))
+        (keep (thread-list-selected tl)))            ; preserve selection across refresh
     (setf (thread-list-threads tl) threads)
     (list-set-items tl (mapcar #'%thread-label threads))
+    (let ((i (and keep (position keep threads))))
+      (when i (list-focus-item tl (min i (max 0 (1- (length threads)))))))
     (let ((st (thread-list-status tl)))
       (when st
         (setf (static-text-text st)

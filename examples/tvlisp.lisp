@@ -275,6 +275,22 @@
           (let ((rv (find-if (lambda (v) (typep v 'trepl-view)) (group-subviews w))))
             (when rv (return rv)))))))
 
+(defvar *last-thread-check* 0
+  "Throttle for idle-time thread-monitor auto-refresh.")
+
+(defmethod tvision::idle ((app tvlisp-app))
+  "While a thread monitor is open, refresh it when the live thread set changes
+ (checked a few times a second on idle, so new/dead threads appear on their own)."
+  (let ((now (get-internal-real-time)))
+    (when (> (- now *last-thread-check*) (floor internal-time-units-per-second 4))   ; ~250ms
+      (setf *last-thread-check* now)
+      (let ((w (first-that (program-desktop app) (lambda (v) (typep v 'tthread-window)))))
+        (when w
+          (let ((tl (tw-list w)))
+            (unless (equal (sb-thread:list-all-threads) (thread-list-threads tl))
+              (thread-list-refresh tl)
+              (when tvision:*screen* (flush-screen tvision:*screen*)))))))))
+
 (defun open-thread-window (app)
   (let* ((desk (program-desktop app))
          (existing (first-that desk (lambda (v) (typep v 'tthread-window)))))
