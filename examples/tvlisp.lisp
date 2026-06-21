@@ -65,6 +65,7 @@
 (defparameter +cm-new-file+    336)
 (defparameter +cm-save+        337)
 (defparameter +cm-saveas+      338)
+(defparameter +cm-save-all+    354)
 (defparameter +cm-profile+     339)
 (defparameter +cm-profile-det+ 340)
 (defparameter +cm-browse+      341)
@@ -76,8 +77,10 @@
 (defparameter +cm-eval-region+ 347)
 
 (defparameter +hc-repl+ 1)
-(defparameter +history-file+ (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
-(defparameter +session-file+ (merge-pathnames ".tvlisp_session" (user-homedir-pathname)))
+;; Computed at runtime (not load/build time) so they follow the running user's
+;; $HOME -- a dumped binary must not bake in the build machine's home directory.
+(defun history-file () (merge-pathnames ".tvlisp_history" (user-homedir-pathname)))
+(defun session-file () (merge-pathnames ".tvlisp_session" (user-homedir-pathname)))
 
 (defparameter +kb-ctrl-c+ 3)
 (defparameter +kb-ctrl-f+ 6)
@@ -109,10 +112,11 @@
       (menu-item "Open in ~e~ditor..." +cm-editor+)
       (menu-item "~S~ave"            +cm-save+     :key-text "Ctrl-S")
       (menu-item "Save ~A~s..."      +cm-saveas+)
+      (menu-item "Sa~v~e all"        +cm-save-all+)
       (menu-item "~L~oad file..."    +cm-load+     :key-code +kb-f7+ :key-text "F7")
       (menu-item "Save ~t~ranscript..." +cm-savetx+)
       (menu-separator)
-      (menu-item "Save sessio~n~"    +cm-session-save+)
+      (menu-item "Save sessi~o~n"    +cm-session-save+)   ; ~o~: ~n~ collides with New
       (menu-item "Restore sess~i~on" +cm-session-load+)
       (menu-separator)
       (menu-item "E~x~it"            +cm-quit+     :key-code +kb-alt-x+ :key-text "Alt-X")))
@@ -228,17 +232,18 @@
 
 ;;; --- windows ---------------------------------------------------------------
 
-(defun open-repl-window (app &key maximized (package nil))
+(defun open-repl-window (app &key maximized (package nil) bounds)
   (let* ((desk (program-desktop app))
          (n (incf (repl-count app)))
          (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
-         (bounds (if maximized
-                     (make-trect 0 0 dw dh)
-                     (let ((ox (* (mod (1- n) 5) 3)) (oy (mod (1- n) 5)))
-                       (make-trect ox oy (min dw (+ ox 72)) (min dh (+ oy 22)))))))
+         (bounds (or bounds
+                     (if maximized
+                         (make-trect 0 0 dw dh)
+                         (let ((ox (* (mod (1- n) 5) 3)) (oy (mod (1- n) 5)))
+                           (make-trect ox oy (min dw (+ ox 72)) (min dh (+ oy 22))))))))
     (multiple-value-bind (w rv)
         (make-repl-window bounds :title (format nil "Lisp REPL ~d" n)
-                                 :history-file +history-file+)
+                                 :history-file (history-file))
       (setf (view-help-ctx w) +hc-repl+)
       (when package (let ((p (find-package package))) (when p (setf (repl-package rv) p))))
       (insert desk w)
@@ -1642,6 +1647,18 @@ Backspace shortens, Esc cancels (restores point), Enter keeps the match."
 
 ;;; --- editor + load buffer --------------------------------------------------
 
+(defun %backup-file (path)
+  "Copy PATH to PATH~ before it is overwritten (best-effort)."
+  (when (probe-file path)
+    (ignore-errors
+     (let ((bak (concatenate 'string (namestring path) "~")))
+       (with-open-file (in path :element-type '(unsigned-byte 8))
+         (with-open-file (out bak :direction :output :element-type '(unsigned-byte 8)
+                                  :if-exists :supersede :if-does-not-exist :create)
+           (let ((buf (make-array 65536 :element-type '(unsigned-byte 8))))
+             (loop for n = (read-sequence buf in) while (plusp n)
+                   do (write-sequence buf out :end n)))))))))
+
 (defun do-new-editor (app)
   "Open a fresh, empty editor window."
   (let* ((desk (program-desktop app))
@@ -1682,6 +1699,7 @@ Backspace shortens, Esc cancels (restores point), Enter keeps the match."
             ((= ans +cm-yes+)
              (let ((path (or (editor-filename ed) (file-save-dialog :title "Save As"))))
                (when path
+                 (%backup-file path)
                  (text-save-file ed path)
                  (setf (editor-filename ed) path
                        (window-title w) (file-namestring path)))
@@ -1698,6 +1716,7 @@ Backspace shortens, Esc cancels (restores point), Enter keeps the match."
         (when path
           (handler-case
               (let ((ed (editor-window-editor w)))
+                (%backup-file path)
                 (text-save-file ed path)
                 (setf (editor-filename ed) path
                       (window-title w) (file-namestring path))
@@ -1709,15 +1728,29 @@ Backspace shortens, Esc cancels (restores point), Enter keeps the match."
               nil)))))))
 
 (defun do-save-editor (app)
-  "Save the focused editor window (Save As if it has no filename yet)."
+  "Save the focused editor window (Save As if it has no filename yet), keeping a
+PATH~ backup of the previous contents."
   (let ((w (current-editor-window app)))
     (when w
       (let* ((ed (editor-window-editor w)) (path (editor-filename ed)))
         (if path
-            (handler-case (progn (text-save-file ed path) (draw-view w))
+            (handler-case (progn (%backup-file path) (text-save-file ed path) (draw-view w))
               (error (e) (message-box (format nil "Could not save:~%~a" e)
                                       (logior +mf-error+ +mf-ok-button+))))
             (do-saveas-editor app))))))
+
+(defun do-save-all (app)
+  "Save every modified, file-backed editor window (with PATH~ backups)."
+  (let ((n 0))
+    (dolist (w (group-subviews (program-desktop app)))
+      (when (typep w 'teditor-window)
+        (let ((ed (editor-window-editor w)))
+          (when (and ed (editor-filename ed) (text-modified ed))
+            (handler-case (progn (%backup-file (editor-filename ed))
+                                 (text-save-file ed (editor-filename ed)) (draw-view w) (incf n))
+              (error () nil))))))
+    (message-box (format nil "Saved ~d modified editor~:p." n)
+                 (logior +mf-information+ +mf-ok-button+))))
 
 (defun do-load-buffer (app)
   (let* ((win (group-current (program-desktop app)))
@@ -1789,26 +1822,58 @@ debugger support, exactly as if typed)."
 
 ;;; --- session save/restore --------------------------------------------------
 
+(defun %window-bounds-list (w)
+  (let ((b (get-bounds w))) (list (rect-ax b) (rect-ay b) (rect-bx b) (rect-by b))))
+
 (defun do-session-save (app)
+  "Save the desktop: each REPL's package and each file-backed editor's path,
+cursor line and window geometry (so the layout comes back on restore)."
   (ignore-errors
-   (with-open-file (s +session-file+ :direction :output :if-exists :supersede
+   (with-open-file (s (session-file) :direction :output :if-exists :supersede
                                      :if-does-not-exist :create)
-     (let ((repls '()))
-       (dolist (w (reverse (group-subviews (program-desktop app))))
+     (let ((wins '()))
+       (dolist (w (reverse (group-subviews (program-desktop app))))   ; back-to-front
          (when (typep w 'twindow)
-           (let ((rv (find-if (lambda (v) (typep v 'trepl-view)) (group-subviews w))))
-             (when rv (push (package-name (repl-package rv)) repls)))))
-       (prin1 (list :repls repls) s))))
+           (let ((rv (find-if (lambda (v) (typep v 'trepl-view)) (group-subviews w)))
+                 (ed (and (typep w 'teditor-window) (editor-window-editor w))))
+             (cond
+               (rv (push (list :repl :package (package-name (repl-package rv))
+                               :bounds (%window-bounds-list w)) wins))
+               ((and ed (editor-filename ed))
+                (push (list :editor :file (namestring (editor-filename ed))
+                            :line (1+ (text-cur-line ed)) :bounds (%window-bounds-list w)) wins))))))
+       (prin1 (list :version 2 :windows (nreverse wins)) s))))
   (message-box "Session saved." (logior +mf-information+ +mf-ok-button+)))
+
+(defun %restore-window (app wspec)
+  ;; WSPEC is a tagged list (:repl ...props) / (:editor ...props); read props
+  ;; from the CDR (the head is the type tag, not a plist key).
+  (let ((props (cdr wspec)))
+    (ecase (first wspec)
+      (:repl (open-repl-window app :package (getf props :package)
+                               :bounds (let ((b (getf props :bounds))) (and b (apply #'make-trect b)))))
+      (:editor (let ((file (getf props :file)))
+                 (when (and file (probe-file file))
+                   (let ((bounds (let ((b (getf props :bounds)))
+                                   (if b (apply #'make-trect b) (make-trect 2 1 78 22)))))
+                     (multiple-value-bind (w ed)
+                         (make-edit-window bounds :title (file-namestring file) :filename file)
+                       (insert (program-desktop app) w)
+                       (when (getf props :line) (text-goto ed (getf props :line) 0))
+                       (focus w)))))))))
 
 (defun do-session-load (app)
   (let ((data (ignore-errors
-               (with-open-file (s +session-file+ :if-does-not-exist nil)
+               (with-open-file (s (session-file) :if-does-not-exist nil)
                  (and s (read s nil nil))))))
-    (if (and (consp data) (eq (car data) :repls))
-        (dolist (pkg (getf data :repls))
-          (open-repl-window app :package pkg))
-        (message-box "No saved session." (logior +mf-information+ +mf-ok-button+)))))
+    (cond
+      ((and (consp data) (eql (getf data :version) 2))           ; new format
+       (dolist (wspec (getf data :windows))
+         (handler-case (%restore-window app wspec)
+           (error (e) (err-box e)))))
+      ((and (consp data) (eq (car data) :repls))                 ; legacy format
+       (dolist (pkg (getf data :repls)) (open-repl-window app :package pkg)))
+      (t (message-box "No saved session." (logior +mf-information+ +mf-ok-button+))))))
 
 ;;; --- options ---------------------------------------------------------------
 
@@ -2058,6 +2123,7 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-editor+)      (do-open-editor app) (clear-event event))
           ((= c +cm-save+)        (do-save-editor app) (clear-event event))
           ((= c +cm-saveas+)      (do-saveas-editor app) (clear-event event))
+          ((= c +cm-save-all+)    (do-save-all app) (clear-event event))
           ((= c +cm-interrupt+)   (when rv (repl-interrupt rv)) (clear-event event))
           ((= c +cm-session-save+) (do-session-save app) (clear-event event))
           ((= c +cm-session-load+) (do-session-load app) (clear-event event))
