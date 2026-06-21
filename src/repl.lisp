@@ -886,15 +886,31 @@ candidate list when several remain."
     (let ((s (handler-case (prin1-to-string obj) (error () "#<unprintable>"))))
       (if (> (length s) 56) (concatenate 'string (subseq s 0 53) "...") s))))
 
-(defun object->outline (obj label &optional (depth 3))
+(defun %inspect-trackable-p (obj)
+  "True for aggregate objects that OBJECT->OUTLINE recurses into and that can
+therefore form a reference cycle (strings are leaves and never tracked)."
+  (typecase obj
+    (string nil)
+    ((or cons hash-table standard-object structure-object) t)
+    (vector t)
+    (t nil)))
+
+(defun object->outline (obj label &optional (depth 3) path)
   "Build a depth-limited TOutline node tree describing OBJ.  Robust against
 objects whose slots/elements error when read (e.g. system structures): a
-failing branch becomes an `<error>' leaf rather than crashing the inspector."
-  (let ((children '()))
+failing branch becomes an `<error>' leaf rather than crashing the inspector.
+PATH is the chain of ancestor objects; an OBJ already on it is rendered as a
+`[circular ref]' leaf instead of being expanded again."
+  (when (and (%inspect-trackable-p obj) (member obj path :test #'eq))
+    (return-from object->outline
+      (make-outline-node (format nil "~a = ~a  [circular ref]" label (%short-repr obj))
+                         nil obj)))
+  (let ((children '())
+        (path* (if (%inspect-trackable-p obj) (cons obj path) path)))
     (when (plusp depth)
       (flet ((kid (v lbl)
                ;; never let a recursive step escape -- it would kill the UI loop
-               (push (handler-case (object->outline v lbl (1- depth))
+               (push (handler-case (object->outline v lbl (1- depth) path*)
                        (serious-condition (e)
                          (make-outline-node (format nil "~a = <~a>" lbl (type-of e)))))
                      children)))

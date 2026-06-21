@@ -588,6 +588,28 @@ broadcasts and drawing); return the control."
       (is= "string node value" (outline-node-data sn) "hi")
       (ok "string node has no children" (null (outline-node-children sn))))))
 
+(deftest inspector-cycles
+  ;; a value that points back to an ancestor object is rendered as a leaf marked
+  ;; [circular ref], not expanded again (so the inspector can't loop on cycles)
+  (let ((v (vector 1 2 nil)))
+    (setf (aref v 2) v)                       ; v[2] = v -> a reference cycle
+    (let* ((node (tvision::object->outline v "v"))
+           (kids (outline-node-children node)))
+      (is= "vector shows its three slots" (length kids) 3)
+      (let ((back (third kids)))
+        (ok "the self-reference is marked circular"
+            (search "[circular ref]" (outline-node-text back)))
+        (ok "the circular node is a leaf (not re-expanded)"
+            (null (outline-node-children back)))
+        (is= "the circular node still carries the value" (outline-node-data back) v))))
+  ;; a shared-but-acyclic value is NOT mistaken for a cycle (siblings re-expand)
+  (let* ((shared (list 7))
+         (node (tvision::object->outline (list shared shared) "pair"))
+         (kids (outline-node-children node)))
+    (is= "both siblings present" (length kids) 2)
+    (ok "neither sibling is flagged circular"
+        (notany (lambda (k) (search "[circular ref]" (outline-node-text k))) kids))))
+
 ;;; ===========================================================================
 ;;; HTML view (hypertext browser)
 ;;; ===========================================================================
