@@ -1002,6 +1002,24 @@ PATH is the chain of ancestor objects; an OBJ already on it is rendered as a
                (kid (package-nicknames obj) "nicknames")
                (kid (package-use-list obj) "use-list")
                (kid (package-used-by-list obj) "used-by-list"))
+              ;; a symbol: show its full namespace -- value, function/macro,
+              ;; class, plist and documentation -- not just its printed name
+              (symbol
+               (kid (symbol-name obj) "symbol-name")
+               ;; package as a name (not the package object, whose internals
+               ;; would swamp the more useful value/function cells)
+               (when (symbol-package obj) (kid (package-name (symbol-package obj)) "package"))
+               (when (and (boundp obj) (not (eq (symbol-value obj) obj)))
+                 (kid (symbol-value obj) "value"))
+               (cond ((special-operator-p obj) (kid :special-operator "operator"))
+                     ((macro-function obj)      (kid (macro-function obj) "macro-function"))
+                     ((fboundp obj)             (kid (symbol-function obj) "function")))
+               (let ((c (find-class obj nil)))   (when c  (kid c "class")))
+               (let ((pl (symbol-plist obj)))    (when pl (kid pl "plist")))
+               (let ((doc (or (ignore-errors (documentation obj 'function))
+                              (ignore-errors (documentation obj 'variable))
+                              (ignore-errors (documentation obj 'type)))))
+                 (when doc (kid doc "documentation"))))
               (cons
                (let ((i 0) (tail obj))
                  (loop while (and (consp tail) (< i +inspect-page+))

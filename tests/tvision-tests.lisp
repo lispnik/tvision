@@ -610,6 +610,20 @@ broadcasts and drawing); return the control."
     (ok "neither sibling is flagged circular"
         (notany (lambda (k) (search "[circular ref]" (outline-node-text k))) kids))))
 
+(deftest inspector-symbol
+  ;; inspecting a symbol shows its namespace: name, package, value, function, ...
+  (defvar *inspector-symbol-test-var* 99)
+  (let* ((node (tvision::object->outline '*inspector-symbol-test-var* "v"))
+         (labels (mapcar #'outline-node-text (outline-node-children node))))
+    (flet ((has (s) (some (lambda (l) (search s l)) labels)))
+      (ok "shows symbol-name" (has "symbol-name"))
+      (ok "shows package" (has "package"))
+      (ok "shows the bound value" (has "value"))))
+  ;; a function symbol shows its function cell
+  (let* ((node (tvision::object->outline 'car "f"))
+         (labels (mapcar #'outline-node-text (outline-node-children node))))
+    (ok "function symbol shows its function" (some (lambda (l) (search "function" l)) labels))))
+
 (deftest inspector-paging
   ;; big collections show one page plus a drillable "... N more" node, instead of
   ;; silently truncating; re-inspecting that node's value pages the remainder
