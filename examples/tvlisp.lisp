@@ -76,6 +76,7 @@
 (defparameter +cm-hslookup+    343)
 (defparameter +cm-pick-inspect+ 344)   ; "Inspect" button in a list picker
 (defparameter +cm-pick-extra+   345)   ; optional extra action button in a picker
+(defparameter +cm-pick-extra2+  358)   ; a second optional extra action
 (defparameter +cm-winlist+     345)
 (defparameter +cm-eval-defun+  346)
 (defparameter +cm-eval-region+ 347)
@@ -956,18 +957,20 @@ one more level."
 (defmethod handle-event ((d tlist-pick-dialog) event)
   (cond
     ((and (= (event-type event) +ev-command+)
-          (member (event-command event) (list +cm-pick-inspect+ +cm-pick-extra+))
+          (member (event-command event) (list +cm-pick-inspect+ +cm-pick-extra+ +cm-pick-extra2+))
           (logtest (view-state d) +sf-modal+))
      (end-modal d (event-command event)) (clear-event event))
     (t (call-next-method))))
 
-(defun pick-with-inspect (title items &key (ok "~O~K") extra select)
-  "Modal picker over (sorted) ITEMS with OK / Inspect [/ EXTRA] / Cancel buttons.
-EXTRA, when given, is a label for a third action (returns +cm-pick-extra+).
-SELECT preselects that item string.  Returns (values selected-item end-command)."
+(defun pick-with-inspect (title items &key (ok "~O~K") extra extra2 select)
+  "Modal picker over (sorted) ITEMS with OK / Inspect [/ EXTRA [/ EXTRA2]] /
+Cancel buttons.  EXTRA / EXTRA2 are labels for extra actions (returning
++cm-pick-extra+ / +cm-pick-extra2+).  SELECT preselects that item string.
+Returns (values selected-item end-command)."
   (when (and *application* items)
     (let* ((desk (program-desktop *application*))
-           (w 58) (h 18)
+           (nbtn (+ 3 (if extra 1 0) (if extra2 1 0)))
+           (w (max 58 (+ 4 (* nbtn 13)))) (h 18)
            (d (make-instance 'tlist-pick-dialog :title title :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar d t))
            (lb (make-instance 'tsorted-list-box :items items :command +cm-ok+
@@ -982,7 +985,8 @@ SELECT preselects that item string.  Returns (values selected-item end-command).
                  (incf x 13)))
           (btn ok +cm-ok+ t)
           (btn "~I~nspect" +cm-pick-inspect+)
-          (when extra (btn extra +cm-pick-extra+))
+          (when extra  (btn extra  +cm-pick-extra+))
+          (when extra2 (btn extra2 +cm-pick-extra2+))
           (btn "~C~ancel" +cm-cancel+)))
       (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
                (max 0 (floor (- (point-y (view-size desk)) h) 2)))
@@ -1075,7 +1079,8 @@ object (its dependencies/components), or force-Reload."
                              names)))
         (when labels
           (multiple-value-bind (picked cmd)
-              (pick-with-inspect "ASDF Systems  (* = loaded)" labels :ok "~L~oad" :extra "~R~eload")
+              (pick-with-inspect "ASDF Systems  (* = loaded)" labels
+                                 :ok "~L~oad" :extra "~R~eload" :extra2 "~U~nload")
             (let ((chosen (and picked (string-left-trim '(#\* #\Space) picked))))
               (when chosen
                 (cond
@@ -1084,6 +1089,14 @@ object (its dependencies/components), or force-Reload."
                      (if sys (repl-inspect sys (format nil "system ~a" chosen))
                          (message-box "Could not find that system object."
                                       (logior +mf-information+ +mf-ok-button+)))))
+                  ((eql cmd +cm-pick-extra2+)
+                   ;; ASDF has no true unload; clear-system forgets it so the next
+                   ;; load fully recompiles (definitions stay until redefined)
+                   (handler-case
+                       (progn (asdf:clear-system chosen)
+                              (when rv (repl-print rv (format nil "~%; cleared ASDF state for ~a (next load recompiles)~%" chosen))
+                                    (tvision::repl-fresh-prompt rv) (draw-view rv)))
+                     (error (e) (err-box e))))
                   ((null rv)
                    (message-box "No REPL open (needed to load on a worker thread)."
                                 (logior +mf-information+ +mf-ok-button+)))
