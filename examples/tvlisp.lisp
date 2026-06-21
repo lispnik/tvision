@@ -793,16 +793,30 @@ Returns (values selected-item end-command)."
                (sel (choose-index "Window list" labels :start (max 0 (or (position cur wins) 0)))))
           (when sel (set-current desk (nth sel wins) :normal-select))))))
 
-(defun do-systems ()
+(defun do-systems (rv)
   (let ((chosen (choose-from-list "ASDF Systems"
                                   (sort (copy-list (asdf:registered-systems)) #'string<))))
     (when chosen
-      (let ((out (with-output-to-string (o)
-                   (handler-case
-                       (let ((*standard-output* o) (*error-output* o)) (asdf:load-system chosen))
-                     (error (e) (format o ";; ~a~%" e))))))
-        (show-text-window (format nil "Load system ~a" chosen)
-                          (if (plusp (length out)) out (format nil "Loaded ~a." chosen)))))))
+      (cond
+        ((null rv)
+         (message-box "No REPL open (needed to load on a worker thread)."
+                      (logior +mf-information+ +mf-ok-button+)))
+        (t
+         ;; load on the listener's worker so the UI stays responsive and Ctrl-C
+         ;; can interrupt a long build, rather than freezing the whole IDE
+         (repl-print rv (format nil "~%; loading system ~a ...~%" chosen))
+         (repl-call-on-worker rv
+           (lambda ()
+             (let ((out (with-output-to-string (o)
+                          (handler-case
+                              (let ((*standard-output* o) (*error-output* o))
+                                (asdf:load-system chosen))
+                            (error (e) (format o ";; ~a~%" e))))))
+               (run-on-ui
+                (lambda ()
+                  (show-text-window (format nil "Load system ~a" chosen)
+                                    (if (plusp (length out)) out
+                                        (format nil "Loaded ~a." chosen)))))))))))))
 
 (defun class-outline (class)
   (flet ((cls-nodes (cs) (mapcar (lambda (c) (make-outline-node (format nil "~a" (class-name c)) nil)) cs))
@@ -844,7 +858,9 @@ Inspect opens it in an Inspector window."
             ((eql cmd +cm-ok+)
              (handler-case (goto-definition-of app (class-name class)) (error (e) (err-box e))))
             ((eql cmd +cm-pick-inspect+)
-             (ignore-errors (sb-mop:finalize-inheritance class))
+             ;; read-only browse: don't force FINALIZE-INHERITANCE (a mutation
+             ;; with side effects on subclasses); the inspector tolerates the
+             ;; unbound metaobject slots of a not-yet-finalized class.
              (repl-inspect class (format nil "class ~a" name)))))))))
 
 ;;; --- navigation: go-to-definition, cross-reference, function browser -------
@@ -885,6 +901,78 @@ Inspect opens it in an Inspector window."
           (focus w)))
       (message-box (format nil "No source file:~%~a" path) (logior +mf-error+ +mf-ok-button+))))
 
+;;; A shared cross-reference / definitions results window: a sortable table of
+;;; (kind, where, file, line) source hits.  Enter on a row jumps to that
+;;; location.  Used by Go-to-definition (multiple matches), Who-calls and
+;;; Who-references, so they all share one navigable result list instead of a
+;;; one-shot picker that exits after a single jump.
+(defclass txref-window (twindow)
+  ((app   :initarg :app   :initform nil :accessor xref-app)
+   (table :initarg :table :initform nil :accessor xref-table)))
+
+(defun %xref-columns ()
+  (vector (make-table-column "Kind" 9 (lambda (r) (string-downcase (princ-to-string (getf r :kind)))))
+          (make-table-column "Where" 28 (lambda (r) (getf r :label)))
+          (make-table-column "File" 22 (lambda (r) (getf r :file)))
+          (make-table-column "Line" 6 (lambda (r) (getf r :line)) :numeric t)))
+
+(defun %xref-goto (w)
+  (let ((row (and (xref-table w) (table-selected-row (xref-table w)))))
+    (when (and row (xref-app w) (getf row :path))
+      (goto-source (xref-app w) (getf row :kind) (getf row :path) (getf row :offset)))))
+
+(defmethod handle-event ((w txref-window) event)
+  (cond
+    ((and (= (event-type event) +ev-broadcast+)
+          (= (event-command event) +cm-list-item-selected+)
+          (xref-table w))
+     (%xref-goto w) (clear-event event))
+    (t (call-next-method))))
+
+(defun show-xref-results (app title rows)
+  "Open a TXREF-WINDOW over ROWS (each a plist :kind :label :file :path :offset
+:line).  Enter on a row jumps to its source.  With no jumpable rows, ROWS is
+still shown (entries without a source location simply aren't navigable)."
+  (when (and app rows)
+    (let* ((desk (program-desktop app))
+           (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+           (w (min 74 (- dw 2))) (h (min 20 (- dh 2)))
+           (win (make-instance 'txref-window :app app
+                               :title (format nil "~a  (Enter: jump to source)" title)
+                               :bounds (make-trect 0 0 w h)))
+           (vsb (standard-scrollbar win t))
+           (tbl (make-instance 'ttable-view :columns (%xref-columns) :rows rows
+                               :sort-col 2 :sort-asc t
+                               :bounds (make-trect 1 1 (1- w) (1- h)))))
+      (insert win tbl)
+      (attach-scrollbars tbl :vscroll vsb)
+      (setf (xref-table win) tbl)
+      (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+      (insert desk win)
+      (focus tbl))))
+
+(defun %def-rows (sym defs)
+  "Result rows for SYMBOL-DEFINITIONS triples (type path offset) of SYM."
+  (loop for (type path offset) in defs
+        collect (list :kind type :label (princ-to-string sym)
+                      :file (file-namestring path) :path path :offset offset
+                      :line (%offset-to-line path offset))))
+
+(defun %xref-rows (kind entries)
+  "Result rows from SB-INTROSPECT:WHO-CALLS / WHO-REFERENCES ENTRIES, each a
+ (name . definition-source); the source location is the call/reference site."
+  (let ((rows (loop for e in entries
+                    for name = (car e)
+                    for src = (cdr e)
+                    for path = (ignore-errors (sb-introspect:definition-source-pathname src))
+                    for offset = (ignore-errors (sb-introspect:definition-source-character-offset src))
+                    collect (list :kind kind :label (princ-to-string name)
+                                  :file (if path (file-namestring path) "")
+                                  :path (and path (namestring path)) :offset offset
+                                  :line (if path (%offset-to-line (namestring path) offset) 0)))))
+    (remove-duplicates rows :test #'equal
+                       :key (lambda (r) (list (getf r :label) (getf r :file) (getf r :line))))))
+
 (defun goto-definition-of (app sym)
   (let ((defs (symbol-definitions sym)))
     (cond
@@ -892,10 +980,8 @@ Inspect opens it in an Inspector window."
        (message-box (format nil "No source location for ~a." sym)
                     (logior +mf-information+ +mf-ok-button+)))
       ((= 1 (length defs)) (apply #'goto-source app (first defs)))
-      (t (let* ((labels (mapcar (lambda (d) (format nil "~(~a~)  ~a" (first d) (second d))) defs))
-                (chosen (choose-from-list "Definitions" labels)))
-           (when chosen
-             (apply #'goto-source app (nth (position chosen labels :test #'string=) defs))))))))
+      (t (show-xref-results app (format nil "Definitions of ~a (~d)" sym (length defs))
+                            (%def-rows sym defs))))))
 
 (defun do-goto-definition (rv app)
   (let ((s (prompt-line "Go to definition" "Symbol:")))
@@ -907,19 +993,15 @@ Inspect opens it in an Inspector window."
     (when (and rv s)
       (handler-case
           (let* ((sym (read-in rv s))
+                 (*package* (repl-package rv))   ; print caller names as the listener sees them
                  (entries (ecase kind
                             (:calls (sb-introspect:who-calls sym))
                             (:references (sb-introspect:who-references sym))))
-                 (names (sort (remove-duplicates
-                               (mapcar (lambda (e) (format nil "~s" (car e))) entries)
-                               :test #'string=)
-                              #'string<)))
-            (if (null names)
+                 (rows (%xref-rows kind entries)))
+            (if (null rows)
                 (message-box (format nil "Nothing ~(~a~) ~a." kind s)
                              (logior +mf-information+ +mf-ok-button+))
-                (let ((chosen (choose-from-list
-                               (format nil "Who ~(~a~) ~a (~d)" kind s (length names)) names)))
-                  (when chosen (goto-definition-of app (read-in rv chosen))))))
+                (show-xref-results app (format nil "Who ~(~a~) ~a (~d)" kind s (length rows)) rows)))
         (error (e) (err-box e))))))
 
 (defun %traced-symbols ()
@@ -1701,7 +1783,7 @@ and named functions resolve to a source location."
           ((= c +cm-whocalls+)    (do-xref rv app :calls) (clear-event event))
           ((= c +cm-whorefs+)     (do-xref rv app :references) (clear-event event))
           ((= c +cm-packages+)    (do-packages rv) (clear-event event))
-          ((= c +cm-systems+)     (do-systems) (clear-event event))
+          ((= c +cm-systems+)     (do-systems rv) (clear-event event))
           ((= c +cm-load-buffer+) (do-load-buffer app) (clear-event event))
           ((= c +cm-eval-defun+)  (do-eval-defun app) (clear-event event))
           ((= c +cm-eval-region+) (do-eval-region app) (clear-event event))
