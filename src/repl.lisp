@@ -1148,24 +1148,46 @@ back; `g' jumps to its definition."
        (let ((h (read s nil nil)))
          (when (listp h) (setf (repl-history r) h)))))))
 
+(defvar *load-notes-hook* nil
+  "Optional (PATH NOTES) -> display compilation NOTES from loading PATH, where
+NOTES is a list of (kind . message-string); bound by the application.")
+
 (defun repl-load-file (r path)
-  "LOAD PATH on the worker thread (so the UI stays responsive), streaming output
-into the transcript and re-prompting when done.  Errors open the debugger; the
-sticky package follows any in-package in the file."
+  "LOAD PATH on the worker thread (so the UI stays responsive), collecting the
+compiler warnings / style-warnings / notes it emits (without dumping them raw
+into the transcript) and handing them to *LOAD-NOTES-HOOK* when done.  A real
+ERROR still reaches the debugger; the sticky package follows any in-package."
   (repl-ensure-fresh-line r)
   (repl-print r (format nil "; loading ~a~%" path))
   (draw-view r)
   (repl-call-on-worker r
     (lambda ()
-      (unwind-protect (load path)
-        (let ((pkg *package*))
-          (run-on-ui (lambda ()
-                       (setf (repl-package r) pkg)
-                       (repl-ensure-fresh-line r)
-                       (repl-print r (format nil "; loaded ~a~%" path))
-                       (repl-fresh-prompt r)
-                       (draw-view r)
-                       (when *screen* (flush-screen *screen*)))))))))
+      (let ((notes '()))
+        (flet ((grab (c kind)
+                 (push (cons kind (princ-to-string c)) notes)
+                 ;; suppress the default printing and keep compiling
+                 (when (find-restart 'muffle-warning c) (muffle-warning c))))
+          (unwind-protect
+              (handler-bind
+                  ;; STYLE-WARNING is a subtype of WARNING, so list it first
+                  ((style-warning        (lambda (c) (grab c :style)))
+                   (sb-ext:compiler-note (lambda (c) (grab c :note)))
+                   (warning              (lambda (c) (grab c :warning))))
+                ;; one unit, so a function referenced before its later definition
+                ;; in the same file isn't falsely reported as undefined
+                (with-compilation-unit (:override t)
+                  (load path)))
+            (let ((pkg *package*) (ns (nreverse notes)))
+              (run-on-ui (lambda ()
+                           (setf (repl-package r) pkg)
+                           (repl-ensure-fresh-line r)
+                           (repl-print r (format nil "; loaded ~a  (~d warning~:p)~%"
+                                                 path (length ns)))
+                           (repl-fresh-prompt r)
+                           (draw-view r)
+                           (when (and ns *load-notes-hook*)
+                             (ignore-errors (funcall *load-notes-hook* path ns)))
+                           (when *screen* (flush-screen *screen*)))))))))))
 
 ;;; --- history recall (Up/Down at the prompt edges) --------------------------
 
