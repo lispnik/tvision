@@ -1165,20 +1165,20 @@ checked when you confirm."
   (let ((s (princ-to-string node-name)))
     (if (> (length s) 48) (concatenate 'string (subseq s 0 45) "...") s)))
 
-(defun run-profile (form package)
-  "Evaluate FORM under sb-sprof (sampling only this thread) and return a plist
- (:total samples :secs seconds :rows (row-plist ...)); each row is
- (:name N :self S :cumul C :self% f :cumul% f :callees (labels...))."
+(defun run-profile (form package &key (interval 0.001) (mode :time) all-threads)
+  "Evaluate FORM under sb-sprof and return a plist (:total :secs :mode :rows ...).
+MODE is :time (CPU) or :alloc (allocations); INTERVAL is the sample interval in
+seconds; ALL-THREADS samples every thread, not just this one."
   (let ((*package* package) (t0 (get-internal-real-time)))
     (sb-sprof:reset)
-    (sb-sprof:start-profiling :max-samples 200000 :sample-interval 0.001 :mode :time
-                              :threads (list sb-thread:*current-thread*))
+    (sb-sprof:start-profiling :max-samples 200000 :sample-interval interval :mode mode
+                              :threads (if all-threads :all (list sb-thread:*current-thread*)))
     (unwind-protect (eval form) (sb-sprof:stop-profiling))
     (let* ((secs (/ (- (get-internal-real-time) t0) internal-time-units-per-second))
            (cg (sb-sprof::make-call-graph sb-sprof::*samples* most-positive-fixnum))
            (total (max 1 (sb-sprof::call-graph-nsamples cg)))
            (flat (sb-sprof::call-graph-flat-nodes cg)))
-      (list :total total :secs secs
+      (list :total total :secs secs :mode mode
             :rows (loop for n in flat
                         for self = (sb-sprof::node-count n)
                         for cumul = (sb-sprof::node-accrued-count n)
@@ -1190,6 +1190,43 @@ checked when you confirm."
                                                      collect (%fn-name (sb-sprof::node-name
                                                                         (sb-sprof::edge-vertex e))))))))))
 
+;;; A table window that can export its rows to CSV with the `e' key; the profile
+;;; windows build on it.
+(defclass tdata-window (twindow)
+  ((table :initarg :table :initform nil :accessor data-table)))
+
+(defun %csv-cell (v)
+  (let ((s (princ-to-string v)))
+    (if (find-if (lambda (c) (member c '(#\, #\" #\Newline))) s)
+        (with-output-to-string (o)
+          (write-char #\" o)
+          (loop for c across s do (when (char= c #\") (write-char #\" o)) (write-char c o))
+          (write-char #\" o))
+        s)))
+
+(defun %export-table-csv (tv title)
+  "Write TV's columns and rows to a CSV file chosen by the user."
+  (let ((path (file-save-dialog :title (format nil "Export ~a to CSV" title))))
+    (when path
+      (handler-case
+          (progn
+            (with-open-file (s path :direction :output :if-exists :supersede :if-does-not-exist :create)
+              (let ((cols (coerce (table-columns tv) 'list)))
+                (format s "~{~a~^,~}~%" (mapcar (lambda (c) (%csv-cell (tvision::table-column-title c))) cols))
+                (loop for row across (table-rows tv) do
+                  (format s "~{~a~^,~}~%"
+                          (mapcar (lambda (c) (%csv-cell (funcall (tvision::table-column-key c) row))) cols)))))
+            (message-box (format nil "Wrote ~a" path) (logior +mf-information+ +mf-ok-button+)))
+        (error (e) (err-box e))))))
+
+(defmethod handle-event ((w tdata-window) event)
+  (when (and (= (event-type event) +ev-key-down+)
+             (data-table w)
+             (member (event-char-code event) (list (char-code #\e) (char-code #\E))))
+    (%export-table-csv (data-table w) (window-title w))
+    (clear-event event))
+  (call-next-method))
+
 (defun %profile-columns ()
   (vector (make-table-column "Self%"  6 (lambda (r) (getf r :self%))  :numeric t
                              :format (lambda (v) (format nil "~,1f" v)))
@@ -1198,9 +1235,8 @@ checked when you confirm."
           (make-table-column "Samples" 8 (lambda (r) (getf r :self)) :numeric t)
           (make-table-column "Function" 48 (lambda (r) (%fn-name (getf r :name))))))
 
-(defclass tprofile-window (twindow)
+(defclass tprofile-window (tdata-window)
   ((data  :initarg :data  :initform nil :accessor profile-data)
-   (table :initarg :table :initform nil :accessor profile-table)
    (app   :initarg :app   :initform nil :accessor profile-app)))
 
 (defun show-profile-tree (w)
@@ -1216,8 +1252,8 @@ checked when you confirm."
   (cond
     ((and (= (event-type event) +ev-broadcast+)
           (= (event-command event) +cm-list-item-selected+)
-          (profile-table w))
-     (let ((row (table-selected-row (profile-table w))))
+          (data-table w))
+     (let ((row (table-selected-row (data-table w))))
        (when (and row (symbolp (getf row :name)) (profile-app w))
          (goto-definition-of (profile-app w) (getf row :name))))
      (clear-event event))
@@ -1232,8 +1268,8 @@ checked when you confirm."
          (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
          (w (min 82 (- dw 2))) (h (min 22 (- dh 2)))
          (win (make-instance 'tprofile-window :data data :app app
-                             :title (format nil "Profile — ~d samples, ~,2fs  (Enter:src g:graph s:sort)"
-                                            (getf data :total) (getf data :secs))
+                             :title (format nil "Profile (~(~a~)) — ~d samples, ~,2fs  (Enter:src g:graph s:sort e:csv)"
+                                            (or (getf data :mode) :time) (getf data :total) (getf data :secs))
                              :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t))
          (tbl (make-instance 'ttable-view :columns (%profile-columns) :rows (getf data :rows)
@@ -1241,7 +1277,7 @@ checked when you confirm."
                              :bounds (make-trect 1 1 (1- w) (1- h)))))
     (insert win tbl)
     (attach-scrollbars tbl :vscroll vsb)
-    (setf (profile-table win) tbl)
+    (setf (data-table win) tbl)
     (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
     (insert desk win)
     (focus tbl)))
@@ -1249,16 +1285,66 @@ checked when you confirm."
 (defun do-profile (rv app)
   (let ((s (prompt-line "Profile" "Form to profile:")))
     (when (and rv s)
-      (let ((form (read-in rv s)) (pkg (repl-package rv)))
-        ;; run on the worker thread so the UI stays responsive (Ctrl-C aborts)
-        (repl-call-on-worker rv
-          (lambda ()
-            (let ((data (run-profile form pkg)))
-              (run-on-ui (lambda ()
-                           (if (getf data :rows)
-                               (show-profile-results app data)
-                               (message-box "No samples collected (the form ran too quickly)."
-                                            (logior +mf-information+ +mf-ok-button+))))))))))))
+      (let ((mode (choose-index "Profiler mode" '("CPU time" "Allocations") :start 0)))
+        (when mode
+          (let* ((alloc (= mode 1))
+                 (ms (unless alloc (prompt-line "Profile" "Sample interval (ms):" "1.0")))
+                 (interval (if ms (/ (or (ignore-errors (read-from-string ms)) 1.0) 1000.0) 0.001))
+                 (form (read-in rv s)) (pkg (repl-package rv)))
+            ;; run on the worker thread so the UI stays responsive (Ctrl-C aborts)
+            (repl-call-on-worker rv
+              (lambda ()
+                (let ((data (run-profile form pkg :interval interval
+                                         :mode (if alloc :alloc :time))))
+                  (run-on-ui (lambda ()
+                               (if (getf data :rows)
+                                   (show-profile-results app data)
+                                   (message-box "No samples collected (the form ran too quickly)."
+                                                (logior +mf-information+ +mf-ok-button+))))))))))))))
+
+(defun %split-bar (line)
+  "Split LINE on the | column separators of an SB-PROFILE:REPORT row."
+  (let ((out '()) (start 0))
+    (dotimes (i (length line))
+      (when (char= (char line i) #\|)
+        (push (subseq line start i) out) (setf start (1+ i))))
+    (nreverse (cons (subseq line start) out))))
+
+(defun %parse-sb-profile-report (text)
+  "Parse SB-PROFILE:REPORT output (seconds|gc|consed|calls|sec/call|name) into row
+plists (:seconds :consed :calls :name).  Header/rule lines are skipped."
+  (let ((rows '()))
+    (with-input-from-string (s text)
+      (loop for line = (read-line s nil nil) while line do
+        (let ((cells (%split-bar line)))
+          (when (>= (length cells) 6)
+            (let ((nums (mapcar (lambda (c) (ignore-errors (read-from-string (string-trim " " c) nil nil)))
+                                (butlast cells)))
+                  (name (string-trim " " (car (last cells)))))
+              (when (and (realp (first nums)) (plusp (length name)))
+                (push (list :seconds (or (nth 0 nums) 0) :consed (or (nth 2 nums) 0)
+                            :calls (or (nth 3 nums) 0) :name name)
+                      rows)))))))
+    (nreverse rows)))
+
+(defun show-deterministic-profile (app title rows)
+  "Show parsed deterministic-profile ROWS in a sortable, CSV-exportable table."
+  (let* ((desk (program-desktop app))
+         (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+         (w (min 76 (- dw 2))) (h (min 22 (- dh 2)))
+         (cols (vector (make-table-column "Calls" 9 (lambda (r) (getf r :calls)) :numeric t)
+                       (make-table-column "Seconds" 10 (lambda (r) (getf r :seconds)) :numeric t
+                                          :format (lambda (v) (format nil "~,4f" v)))
+                       (make-table-column "Consed" 13 (lambda (r) (getf r :consed)) :numeric t)
+                       (make-table-column "Function" 38 (lambda (r) (getf r :name)))))
+         (win (make-instance 'tdata-window :title (format nil "~a  (s:sort  e:csv)" title)
+                             :bounds (make-trect 0 0 w h)))
+         (vsb (standard-scrollbar win t))
+         (tbl (make-instance 'ttable-view :columns cols :rows rows :sort-col 1 :sort-asc nil
+                             :bounds (make-trect 1 1 (1- w) (1- h)))))
+    (insert win tbl) (attach-scrollbars tbl :vscroll vsb) (setf (data-table win) tbl)
+    (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+    (insert desk win) (focus tbl)))
 
 (defun do-profile-deterministic (rv)
   "Deterministic profiler (sb-profile): instrument every function in a package,
@@ -1284,9 +1370,14 @@ run a form, and show the call-count/time report."
                                          (sb-profile:report)))))
                       (eval (list 'sb-profile:unprofile pkg))
                       (sb-profile:reset))
-                    (run-on-ui (lambda ()
-                                 (show-text-window (format nil "Deterministic profile: ~a" pkg)
-                                                   (or txt "")))))
+                    (run-on-ui
+                     (lambda ()
+                       (let ((rows (and txt (%parse-sb-profile-report txt))))
+                         (if rows
+                             (show-deterministic-profile
+                              *application* (format nil "Deterministic profile: ~a" pkg) rows)
+                             (show-text-window (format nil "Deterministic profile: ~a" pkg)
+                                               (or txt "")))))))
                 (error (e) (run-on-ui (lambda () (err-box e))))))))))))
 
 (defun do-function-browser (rv app)
