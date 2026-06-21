@@ -719,9 +719,19 @@ current line)."
 (defun do-apropos (rv)
   (let ((s (prompt-line "Apropos" "Substring:")))
     (when (and rv s)
-      (let* ((names (sort (mapcar #'prin1-to-string (apropos-list s)) #'string<))
-             (chosen (choose-from-list (format nil "Apropos \"~a\" (~d)" s (length names)) names)))
-        (when chosen (describe-named rv chosen))))))
+      (let ((names (sort (mapcar #'prin1-to-string (apropos-list s)) #'string<)))
+        (if (null names)
+            (message-box (format nil "Nothing matches \"~a\"." s)
+                         (logior +mf-information+ +mf-ok-button+))
+            ;; multi-action picker: Describe (default) or Inspect the symbol
+            (multiple-value-bind (chosen cmd)
+                (pick-with-inspect (format nil "Apropos \"~a\" (~d)" s (length names)) names
+                                   :ok "~D~escribe")
+              (when chosen
+                (cond ((eql cmd +cm-ok+) (describe-named rv chosen))
+                      ((eql cmd +cm-pick-inspect+)
+                       (handler-case (repl-inspect (read-in rv chosen) chosen)
+                         (error (e) (err-box e))))))))))))
 
 (defun do-inspect-expr (rv)
   (let ((s (prompt-line "Inspect" "Expression:")))
