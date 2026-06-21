@@ -3,3 +3,8 @@
 .cache/
 /systems/
 /tvlisp
+
+# OS / editor / Python junk
+.DS_Store
+__pycache__/
+*.pyc
