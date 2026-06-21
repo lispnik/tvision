@@ -1561,6 +1561,21 @@ seconds; ALL-THREADS samples every thread, not just this one."
                               (mapcar (lambda (c) (make-outline-node c nil)) (getf r :callees))))))
     (open-outline-window "Call graph (function -> callees)" roots)))
 
+(defun show-profile-tree-reverse (w)
+  "Open a TOutline of the hottest functions, each expandable to its CALLERS
+(the inverse of the callee graph)."
+  (let ((rows (getf (profile-data w) :rows))
+        (callers (make-hash-table :test 'equal)))
+    (dolist (r rows)                                   ; invert the callee edges
+      (let ((nm (%fn-name (getf r :name))))
+        (dolist (c (getf r :callees)) (pushnew nm (gethash c callers) :test #'string=))))
+    (let ((roots (loop for r in (subseq rows 0 (min 30 (length rows)))
+                       for nm = (%fn-name (getf r :name))
+                       collect (make-outline-node
+                                (format nil "~5,1f%  ~a" (getf r :self%) nm)
+                                (mapcar (lambda (c) (make-outline-node c nil)) (gethash nm callers))))))
+      (open-outline-window "Call graph (function <- callers)" roots))))
+
 (defmethod handle-event ((w tprofile-window) event)
   (cond
     ((and (= (event-type event) +ev-broadcast+)
@@ -1574,6 +1589,10 @@ seconds; ALL-THREADS samples every thread, not just this one."
           (member (event-char-code event) (list (char-code #\g) (char-code #\G))))
      (show-profile-tree w)
      (clear-event event))
+    ((and (= (event-type event) +ev-key-down+)
+          (member (event-char-code event) (list (char-code #\r) (char-code #\R))))
+     (show-profile-tree-reverse w)
+     (clear-event event))
     (t (call-next-method))))
 
 (defun show-profile-results (app data)
@@ -1581,7 +1600,7 @@ seconds; ALL-THREADS samples every thread, not just this one."
          (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
          (w (min 82 (- dw 2))) (h (min 22 (- dh 2)))
          (win (make-instance 'tprofile-window :data data :app app
-                             :title (format nil "Profile (~(~a~)) — ~d samples, ~,2fs  (Enter:src g:graph s:sort e:csv)"
+                             :title (format nil "Profile (~(~a~)) — ~d samples, ~,2fs  (Enter:src g:callees r:callers s:sort e:csv)"
                                             (or (getf data :mode) :time) (getf data :total) (getf data :secs))
                              :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t))
@@ -1725,29 +1744,66 @@ run a form, and show the call-count/time report."
                                                (or txt "")))))))
                 (error (e) (run-on-ui (lambda () (err-box e))))))))))))
 
+;;; A modeless, refreshable browser of a generic function's methods: Enter jumps
+;;; to a method's source (the window stays open, so you can visit several), `r'
+;;; re-fetches (newly-defined methods appear), and the list's type-ahead filters.
+(defclass tfun-browser (twindow)
+  ((gf    :initarg :gf  :accessor fb-gf)
+   (app   :initarg :app :accessor fb-app)
+   (lb    :initform nil :accessor fb-lb)
+   (alist :initform nil :accessor fb-alist)))   ; (label . method)
+
+(defun %fb-refresh (w)
+  (let* ((gf (fb-gf w))
+         (alist (mapcar (lambda (m) (cons (method-label m) m))
+                        (sb-mop:generic-function-methods gf))))
+    (setf (fb-alist w) alist)
+    (list-set-items (fb-lb w) (mapcar #'car alist))
+    (setf (window-title w)
+          (format nil "~(~a~) — ~d method~:p  (Enter: source  r: refresh)"
+                  (sb-mop:generic-function-name gf) (length alist)))
+    (draw-view w)))
+
+(defun %fb-goto (w)
+  (let* ((lb (fb-lb w))
+         (label (and (plusp (list-count lb)) (list-item lb (list-focused lb))))
+         (m (cdr (assoc label (fb-alist w) :test #'string=)))
+         (src (and m (ignore-errors (sb-introspect:find-definition-source (sb-mop:method-function m)))))
+         (path (and src (sb-introspect:definition-source-pathname src))))
+    (cond (path (goto-source (fb-app w) :method (namestring path)
+                             (sb-introspect:definition-source-character-offset src)))
+          (m (goto-definition-of (fb-app w) (sb-mop:generic-function-name (fb-gf w)))))))
+
+(defmethod handle-event ((w tfun-browser) event)
+  (cond
+    ((and (= (event-type event) +ev-broadcast+)
+          (= (event-command event) +cm-list-item-selected+) (fb-lb w))
+     (%fb-goto w) (clear-event event))
+    ((and (= (event-type event) +ev-key-down+)
+          (member (event-char-code event) (list (char-code #\r) (char-code #\R))))
+     (%fb-refresh w) (clear-event event))
+    (t (call-next-method))))
+
+(defun show-method-browser (app gf)
+  (let* ((desk (program-desktop app))
+         (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+         (w (min 72 (- dw 2))) (h (min 20 (- dh 2)))
+         (win (make-instance 'tfun-browser :gf gf :app app :bounds (make-trect 0 0 w h)))
+         (vsb (standard-scrollbar win t))
+         (lb (make-instance 'tsorted-list-box :bounds (make-trect 1 1 (1- w) (1- h)))))
+    (insert win lb) (attach-scrollbars lb :vscroll vsb)
+    (setf (fb-lb win) lb)
+    (%fb-refresh win)
+    (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+    (insert desk win) (focus lb)))
+
 (defun do-function-browser (rv app)
   (let ((s (prompt-line "Function / GF browser" "Function name:" (%point-symbol))))
     (when (and rv s)
       (handler-case
           (let* ((sym (read-in rv s)) (fn (and (fboundp sym) (fdefinition sym))))
             (cond
-              ((typep fn 'generic-function)
-               (let* ((methods (sb-mop:generic-function-methods fn))
-                      (ll (ignore-errors (sb-introspect:function-lambda-list fn)))
-                      (labels (mapcar #'method-label methods))
-                      (chosen (choose-from-list
-                               (format nil "~a ~(~a~) — ~d method~:p" s (or ll "") (length methods))
-                               labels)))
-                 (when chosen
-                   (let* ((m (nth (position chosen labels :test #'string=) methods))
-                          (src (ignore-errors
-                                (sb-introspect:find-definition-source (sb-mop:method-function m))))
-                          (path (and src (sb-introspect:definition-source-pathname src))))
-                     (if path
-                         (goto-source app :method (namestring path)
-                                      (sb-introspect:definition-source-character-offset src))
-                         ;; no method source -> fall back to the generic function's definition
-                         (goto-definition-of app sym))))))
+              ((typep fn 'generic-function) (show-method-browser app fn))
               (fn (goto-definition-of app sym))
               (t (message-box (format nil "~a is not a function." s)
                               (logior +mf-information+ +mf-ok-button+)))))
