@@ -72,6 +72,7 @@
 (defparameter +cm-bhistory+    342)
 (defparameter +cm-hslookup+    343)
 (defparameter +cm-pick-inspect+ 344)   ; "Inspect" button in a list picker
+(defparameter +cm-pick-extra+   345)   ; optional extra action button in a picker
 (defparameter +cm-winlist+     345)
 (defparameter +cm-eval-defun+  346)
 (defparameter +cm-eval-region+ 347)
@@ -787,14 +788,15 @@ current line)."
 (defmethod handle-event ((d tlist-pick-dialog) event)
   (cond
     ((and (= (event-type event) +ev-command+)
-          (= (event-command event) +cm-pick-inspect+)
+          (member (event-command event) (list +cm-pick-inspect+ +cm-pick-extra+))
           (logtest (view-state d) +sf-modal+))
-     (end-modal d +cm-pick-inspect+) (clear-event event))
+     (end-modal d (event-command event)) (clear-event event))
     (t (call-next-method))))
 
-(defun pick-with-inspect (title items &key (ok "~O~K"))
-  "Modal picker over (sorted) ITEMS with OK / Inspect / Cancel buttons.
-Returns (values selected-item end-command)."
+(defun pick-with-inspect (title items &key (ok "~O~K") extra select)
+  "Modal picker over (sorted) ITEMS with OK / Inspect [/ EXTRA] / Cancel buttons.
+EXTRA, when given, is a label for a third action (returns +cm-pick-extra+).
+SELECT preselects that item string.  Returns (values selected-item end-command)."
   (when (and *application* items)
     (let* ((desk (program-desktop *application*))
            (w 58) (h 18)
@@ -803,9 +805,17 @@ Returns (values selected-item end-command)."
            (lb (make-instance 'tsorted-list-box :items items :command +cm-ok+
                               :bounds (make-trect 1 1 (1- w) (- h 3)))))
       (insert d lb) (attach-scrollbars lb :vscroll vsb)
-      (insert d (make-button (make-trect (- w 42) (- h 3) (- w 30) (- h 1)) ok +cm-ok+ t))
-      (insert d (make-button (make-trect (- w 28) (- h 3) (- w 16) (- h 1)) "~I~nspect" +cm-pick-inspect+))
-      (insert d (make-button (make-trect (- w 14) (- h 3) (- w 4) (- h 1)) "~C~ancel" +cm-cancel+))
+      (when select
+        (dotimes (i (list-count lb))
+          (when (string= (list-item lb i) select) (list-focus-item lb i) (return))))
+      (let ((x 2))
+        (flet ((btn (label cmd &optional default)
+                 (insert d (make-button (make-trect x (- h 3) (+ x 11) (- h 1)) label cmd default))
+                 (incf x 13)))
+          (btn ok +cm-ok+ t)
+          (btn "~I~nspect" +cm-pick-inspect+)
+          (when extra (btn extra +cm-pick-extra+))
+          (btn "~C~ancel" +cm-cancel+)))
       (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
                (max 0 (floor (- (point-y (view-size desk)) h) 2)))
       (focus lb)
@@ -819,15 +829,39 @@ Returns (values selected-item end-command)."
     (tvision::repl-fresh-prompt rv)
     (draw-view rv)))
 
+(defun do-package-symbols (rv pkg)
+  "Browse PKG's exported symbols: Describe (default), Inspect, or Goto definition."
+  (let ((names (sort (let (acc) (do-external-symbols (s pkg acc) (push (prin1-to-string s) acc)))
+                     #'string<)))
+    (if (null names)
+        (message-box (format nil "~a exports no symbols." (package-name pkg))
+                     (logior +mf-information+ +mf-ok-button+))
+        (multiple-value-bind (chosen cmd)
+            (pick-with-inspect (format nil "~a — exported (~d)" (package-name pkg) (length names))
+                               names :ok "~D~escribe" :extra "~G~oto")
+          (when chosen
+            (let ((sym (ignore-errors (let ((*package* pkg)) (read-from-string chosen)))))
+              (cond
+                ((eql cmd +cm-ok+)
+                 (show-text-window (format nil "Describe ~a" chosen)
+                   (with-output-to-string (s)
+                     (let ((*package* pkg)) (ignore-errors (describe (read-from-string chosen) s))))))
+                ((and (eql cmd +cm-pick-inspect+) sym) (repl-inspect sym chosen))
+                ((and (eql cmd +cm-pick-extra+) sym)
+                 (handler-case (goto-definition-of *application* sym) (error (e) (err-box e)))))))))))
+
 (defun do-packages (rv)
-  (multiple-value-bind (name cmd)
-      (pick-with-inspect "Packages"
-                         (sort (mapcar #'package-name (list-all-packages)) #'string<))
-    (let ((p (and name (find-package name))))
-      (when p
-        (cond ((eql cmd +cm-ok+) (pkg-switch rv p))
-              ((eql cmd +cm-pick-inspect+)
-               (repl-inspect p (format nil "package ~a" (package-name p)))))))))
+  (let ((cur (and rv (package-name (repl-package rv)))))
+    (multiple-value-bind (name cmd)
+        (pick-with-inspect "Packages"
+                           (sort (mapcar #'package-name (list-all-packages)) #'string<)
+                           :extra "S~y~mbols" :select cur)
+      (let ((p (and name (find-package name))))
+        (when p
+          (cond ((eql cmd +cm-ok+) (pkg-switch rv p))
+                ((eql cmd +cm-pick-inspect+)
+                 (repl-inspect p (format nil "package ~a" (package-name p))))
+                ((eql cmd +cm-pick-extra+) (do-package-symbols rv p))))))))
 
 (defun do-window-list (app)
   "Pop up a list of every open window (Alt-0); Enter/OK raises and focuses it."
@@ -844,9 +878,20 @@ Returns (values selected-item end-command)."
           (when sel (set-current desk (nth sel wins) :normal-select))))))
 
 (defun do-systems (rv)
-  (let ((chosen (choose-from-list "ASDF Systems"
-                                  (sort (copy-list (asdf:registered-systems)) #'string<))))
-    (when chosen
+  (multiple-value-bind (fcmd filter) (input-box "ASDF Systems" "Filter (blank = all):" "" 60)
+   (when (= fcmd +cm-ok+)
+    (let* ((loaded (ignore-errors (asdf:already-loaded-systems)))
+           (all (sort (copy-list (asdf:registered-systems)) #'string<))
+           (names (if (plusp (length (string-trim " " filter)))
+                      (remove-if-not (lambda (n) (search (string-downcase (string-trim " " filter))
+                                                         (string-downcase n))) all)
+                      all))
+           ;; "* " marks an already-loaded system
+           (labels (mapcar (lambda (n) (format nil "~:[  ~;* ~]~a" (member n loaded :test #'string=) n))
+                           names))
+           (picked (and labels (choose-from-list "ASDF Systems" labels)))
+           (chosen (and picked (string-left-trim '(#\* #\Space) picked))))
+      (when chosen
       (cond
         ((null rv)
          (message-box "No REPL open (needed to load on a worker thread)."
@@ -866,7 +911,7 @@ Returns (values selected-item end-command)."
                 (lambda ()
                   (show-text-window (format nil "Load system ~a" chosen)
                                     (if (plusp (length out)) out
-                                        (format nil "Loaded ~a." chosen)))))))))))))
+                                        (format nil "Loaded ~a." chosen)))))))))))))))
 
 (defun class-outline (class)
   (flet ((cls-nodes (cs) (mapcar (lambda (c) (make-outline-node (format nil "~a" (class-name c)) nil)) cs))
@@ -895,13 +940,32 @@ Returns (values selected-item end-command)."
       (walk (find-class t)))
     (sort (delete-duplicates acc :key #'car :test #'string=) #'string< :key #'car)))
 
+(defun do-class-methods (app class)
+  "List the methods that specialise on CLASS; Enter jumps to the generic
+function's definition."
+  (let* ((methods (ignore-errors (sb-mop:specializer-direct-methods class)))
+         (labels (mapcar (lambda (m)
+                           (format nil "~(~a~) ~a"
+                                   (sb-mop:generic-function-name (sb-mop:method-generic-function m))
+                                   (method-label m)))
+                         methods)))
+    (if (null methods)
+        (message-box (format nil "No methods specialise on ~a." (class-name class))
+                     (logior +mf-information+ +mf-ok-button+))
+        (let ((sel (choose-index (format nil "Methods on ~a (~d)" (class-name class) (length methods))
+                                 labels)))
+          (when sel
+            (let ((gf (sb-mop:method-generic-function (nth sel methods))))
+              (handler-case (goto-definition-of app (sb-mop:generic-function-name gf))
+                (error (e) (err-box e)))))))))
+
 (defun do-classes (rv app)
   "Browse every class.  OK / Enter jumps to the selected class's definition;
-Inspect opens it in an Inspector window."
+Inspect opens it in an Inspector window; Methods lists its methods."
   (let* ((*package* (if rv (repl-package rv) *package*))   ; names as the listener sees them
          (alist (class-list)))
     (multiple-value-bind (name cmd)
-        (pick-with-inspect "Classes" (mapcar #'car alist) :ok "~G~oto def")
+        (pick-with-inspect "Classes" (mapcar #'car alist) :ok "~G~oto def" :extra "~M~ethods")
       (let ((class (and name (cdr (assoc name alist :test #'string=)))))
         (when class
           (cond
@@ -911,7 +975,8 @@ Inspect opens it in an Inspector window."
              ;; read-only browse: don't force FINALIZE-INHERITANCE (a mutation
              ;; with side effects on subclasses); the inspector tolerates the
              ;; unbound metaobject slots of a not-yet-finalized class.
-             (repl-inspect class (format nil "class ~a" name)))))))))
+             (repl-inspect class (format nil "class ~a" name)))
+            ((eql cmd +cm-pick-extra+) (do-class-methods app class))))))))
 
 ;;; --- navigation: go-to-definition, cross-reference, function browser -------
 
