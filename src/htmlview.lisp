@@ -19,11 +19,19 @@
 
 (defparameter +html-entities+
   '(("lt" . "<") ("gt" . ">") ("amp" . "&") ("quot" . "\"") ("apos" . "'")
-    ("nbsp" . " ") ("mdash" . "--") ("ndash" . "-") ("minus" . "-")
+    ("nbsp" . " ") ("ensp" . " ") ("emsp" . " ") ("thinsp" . " ") ("shy" . "")
+    ("mdash" . "--") ("ndash" . "-") ("minus" . "-") ("dash" . "-")
     ("hellip" . "...") ("copy" . "(c)") ("reg" . "(R)") ("trade" . "(tm)")
-    ("rarr" . "->") ("larr" . "<-") ("rsquo" . "'") ("lsquo" . "'")
-    ("rdquo" . "\"") ("ldquo" . "\"") ("quot" . "\"") ("times" . "x")
-    ("middot" . ".") ("bull" . "*") ("deg" . "deg") ("frac12" . "1/2")))
+    ("rarr" . "->") ("larr" . "<-") ("harr" . "<->") ("uarr" . "^") ("darr" . "v")
+    ("rArr" . "=>") ("lArr" . "<=") ("rsquo" . "'") ("lsquo" . "'") ("sbquo" . ",")
+    ("rdquo" . "\"") ("ldquo" . "\"") ("bdquo" . "\"") ("times" . "x") ("divide" . "/")
+    ("middot" . ".") ("bull" . "*") ("deg" . "deg") ("frac12" . "1/2")
+    ("frac14" . "1/4") ("frac34" . "3/4") ("plusmn" . "+/-") ("micro" . "u")
+    ("sect" . "S") ("para" . "P") ("dagger" . "+") ("Dagger" . "++") ("permil" . "0/00")
+    ("le" . "<=") ("ge" . ">=") ("ne" . "/=") ("equiv" . "==") ("infin" . "inf")
+    ("alpha" . "alpha") ("beta" . "beta") ("lambda" . "lambda") ("pi" . "pi")
+    ("hearts" . "<3") ("check" . "v") ("cross" . "x") ("prime" . "'") ("Prime" . "\"")
+    ("laquo" . "<<") ("raquo" . ">>") ("euro" . "EUR") ("pound" . "GBP") ("cent" . "c")))
 
 (defun %html-decode-entity (s i)
   "S[i] is #\\&.  Return (values replacement next-index)."
@@ -192,6 +200,13 @@ comments / declarations."
                  (setf start (1+ k))))
              (emit (list :pre (subseq str start)))))
          (handle-tag (name attrs closing)
+           ;; record id= / <a name=> as a navigable anchor at this point in flow
+           (when (and (not closing) (zerop skip))
+             (let ((id (or (cdr (assoc "id" attrs :test #'string-equal))
+                           (and (string= name "a")
+                                (cdr (assoc "name" attrs :test #'string-equal))))))
+               (when (and id (plusp (length id)))
+                 (emit (list :anchor (string-downcase id))))))
            (cond
              ((member name '("script" "style" "head" "title") :test #'string=)
               (if closing (when (plusp skip) (decf skip)) (incf skip)))
@@ -254,8 +269,11 @@ comments / declarations."
 ;;; ---------------------------------------------------------------------------
 
 (defun %html-layout (tokens width links)
+  "Lay TOKENS out to WIDTH; return (values lines anchors), ANCHORS being an
+alist of (name . line-index)."
   (let* ((w (max 4 width))
          (lines (make-array 0 :adjustable t :fill-pointer 0))
+         (anchors '())
          (cur '()) (col 0) (pending nil))
     (loop for lk across links do (setf (html-link-line lk) nil))
     (labels
@@ -300,9 +318,12 @@ comments / declarations."
            (destructuring-bind (str style link) (cdr tok) (add str style link)))
           ((and (consp tok) (eq (car tok) :pre))
            (do-break)
-           (push-line (list (make-html-run :text (second tok) :style :code))))))
+           (push-line (list (make-html-run :text (second tok) :style :code))))
+          ((and (consp tok) (eq (car tok) :anchor))
+           ;; map the anchor to the line upcoming content will occupy
+           (push (cons (second tok) (fill-pointer lines)) anchors))))
       (unless (cur-empty) (finish))
-      lines)))
+      (values lines (nreverse anchors)))))
 
 (defun %html-lines-width (lines)
   (let ((mw 1))
@@ -319,6 +340,7 @@ comments / declarations."
   ((source       :initform "" :accessor html-source)
    (tokens       :initform '() :accessor html-tokens)
    (lines        :initform #() :accessor html-lines)
+   (anchors      :initform '() :accessor html-anchors)       ; (name . line) alist
    (links        :initform #() :accessor html-links)
    (focused-link :initform nil :accessor html-focused-link)
    (search       :initform nil :accessor html-search)        ; current find query
@@ -331,9 +353,19 @@ comments / declarations."
 (defun html-link-count (v) (length (html-links v)))
 
 (defun %html-relayout (v)
-  (let ((lines (%html-layout (html-tokens v) (point-x (view-size v)) (html-links v))))
-    (setf (html-lines v) lines)
+  (multiple-value-bind (lines anchors)
+      (%html-layout (html-tokens v) (point-x (view-size v)) (html-links v))
+    (setf (html-lines v) lines
+          (html-anchors v) anchors)
     (set-scroller-limit v (%html-lines-width lines) (max 1 (length lines)))))
+
+(defun html-goto-anchor (v name)
+  "Scroll the view so the anchor NAME is at the top.  Return T if found."
+  (let ((hit (assoc (string-downcase name) (html-anchors v) :test #'string=)))
+    (when hit
+      (scroll-to v (point-x (scroller-delta v)) (min (cdr hit) (max 0 (1- (length (html-lines v))))))
+      (draw-view v)
+      t)))
 
 (defun set-html (v html)
   "Replace the document shown by V with the HTML string HTML."
@@ -417,6 +449,28 @@ jump to the first, and return the match count."
     (draw-view v)
     (length (html-matches v))))
 
+(defun html-find-regex (v pattern)
+  "Find regex PATTERN across the rendered lines (reusing the editor's regex
+engine); record matches, jump to the first, and return the count."
+  (setf (html-search v) pattern)
+  (let ((items (ignore-errors (%rx-parse pattern))) (ms '()))
+    (when items
+      (dotimes (li (length (html-lines v)))
+        (let ((line (%html-line-text v li)) (start 0))
+          (loop
+            (multiple-value-bind (s e) (%rx-search-line items line start)
+              (if (null s)
+                  (return)
+                  (progn (push (list li s e) ms)
+                         (setf start (if (= e s) (1+ e) e))
+                         (when (> start (length line)) (return)))))))))
+    (setf (html-matches v) (nreverse ms)
+          (html-match-index v) (if (html-matches v) 0 nil))
+    (when (html-match-index v)
+      (%html-scroll-line-into-view v (first (nth 0 (html-matches v)))))
+    (draw-view v)
+    (length (html-matches v))))
+
 (defun html-find-next (v &optional (dir 1))
   "Move to the next (DIR 1) or previous (DIR -1) find match, wrapping."
   (let ((n (length (html-matches v))))
@@ -426,11 +480,25 @@ jump to the first, and return the match count."
       (draw-view v))))
 
 (defun %html-prompt-find (v)
-  (multiple-value-bind (cmd s) (input-box "Find in page" "Text:" (or (html-search v) "") 200)
-    (when (and (= cmd +cm-ok+) (plusp (length s)))
-      (when (zerop (html-find v s))
-        (message-box (format nil "Not found: ~a" s)
-                     (logior +mf-information+ +mf-ok-button+))))))
+  (when *application*
+    (let* ((desk (program-desktop *application*))
+           (w 52) (h 9)
+           (d (make-instance 'tdialog :title "Find in page" :bounds (make-trect 0 0 w h)))
+           (il (make-instance 'tinputline :data (or (html-search v) "") :maxlen 200
+                              :bounds (make-trect 9 2 (- w 3) 3)))
+           (re (make-instance 'tcheck-boxes :labels '("Rege~x~p")
+                              :bounds (make-trect 3 4 (- w 3) 5))))
+      (insert d (make-instance 'tlabel :text "Text:" :link il :bounds (make-trect 3 2 8 3)))
+      (insert d il) (insert d re)
+      (%add-buttons d (logior +mf-ok-button+ +mf-cancel-button+) 6)
+      (center-dialog d)
+      (focus il)
+      (when (= (exec-view desk d) +cm-ok+)
+        (let ((s (get-data il)) (rx (logbitp 0 (cluster-value re))))
+          (when (plusp (length s))
+            (when (zerop (if rx (html-find-regex v s) (html-find v s)))
+              (message-box (format nil "Not found: ~a" s)
+                           (logior +mf-information+ +mf-ok-button+)))))))))
 
 ;;; --- link navigation -------------------------------------------------------
 

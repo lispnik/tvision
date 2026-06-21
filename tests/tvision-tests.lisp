@@ -677,6 +677,15 @@ broadcasts and drawing); return the control."
       (loop for r in ln do (write-string (tvision::html-run-text r) s))
       (terpri s))))
 
+(deftest html-anchors-find
+  (let ((v (focused (host (make-instance 'thtml-view :bounds (make-trect 0 0 40 10))))))
+    (set-html v "<p id=top>Top</p><h2 id=sec>Section</h2><p>body 123 end</p>")
+    (ok "id anchors recorded" (assoc "sec" (tvision::html-anchors v) :test #'string=))
+    (ok "goto a known anchor succeeds" (html-goto-anchor v "sec"))
+    (ok "goto a missing anchor returns nil" (not (html-goto-anchor v "nope")))
+    (is= "regex find-in-page counts the digit run" (html-find-regex v "[0-9]+") 1)
+    (is= "extended entity decodes" (tvision::%html-decode-string "a&le;b") "a<=b")))
+
 (deftest html-view
   (let* ((src "<h1>Title</h1>
 <p>Hello <b>bold</b> &amp; <a href=\"a.htm\">one</a> and
