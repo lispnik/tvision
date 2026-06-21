@@ -83,6 +83,7 @@
 (defparameter +kb-ctrl-f+ 6)
 (defparameter +kb-ctrl-l+ 12)
 (defparameter +kb-ctrl-r+ 18)
+(defparameter +kb-ctrl-rbracket+ 29)   ; Ctrl-] : jump to matching paren
 
 (defclass tvlisp-app (tapplication)
   ((repl-count   :initform 0   :accessor repl-count)
@@ -1404,7 +1405,9 @@ Backspace shortens, Esc cancels (restores point), Enter keeps the match."
                  (let ((q (coerce query 'string)))
                    (if (zerop (length q))
                        (setf found t)
-                       (let ((m (text-find ed q :from-line (car from) :from-col (cdr from))))
+                       ;; search forward from FROM; on miss, wrap around to the top
+                       (let ((m (or (text-find ed q :from-line (car from) :from-col (cdr from))
+                                    (text-find ed q :from-line 0 :from-col 0))))
                          (if m (progn (text-select-match ed m q) (setf found t))
                              (setf found nil)))))))
           (prompt)
@@ -1746,18 +1749,44 @@ and named functions resolve to a source location."
 
 (setf tvision:*inspect-goto-hook* #'%inspect-goto)
 
+(defun %point-in-string/comment-p (view)
+  "True when the cursor in text VIEW sits inside a string literal or a ; comment
+ (so auto-close should stay out of the way)."
+  (let ((text (text-string view)) (off (%editor-offset view))
+        (i 0) (len 0) (in-str nil) (in-com nil))
+    (setf len (length text))
+    (loop while (< i off) do
+      (let ((c (char text i)))
+        (cond
+          (in-com (when (char= c #\Newline) (setf in-com nil)) (incf i))
+          (in-str (cond ((char= c #\\) (incf i 2))
+                        ((char= c #\") (setf in-str nil) (incf i))
+                        (t (incf i))))
+          ((char= c #\;) (setf in-com t) (incf i))
+          ((char= c #\") (setf in-str t) (incf i))
+          ((and (char= c #\#) (< (1+ i) len) (char= (char text (1+ i)) #\\)) (incf i 3))
+          (t (incf i)))))
+    (or in-str in-com)))
+
 (defun maybe-auto-close (app event)
-  "When auto-close is on, typing ( inserts () with the cursor between."
-  (when (and (auto-close app)
-             (= (event-type event) +ev-key-down+)
-             (= (event-char-code event) (char-code #\()))
-    (let ((rv (current-repl app)))
-      (when (and rv (not (repl-busy rv)) (tvision::can-edit-here-p rv))
-        (insert-string rv "()")
-        (setf (text-cur-col rv) (1- (text-cur-col rv)))
-        (draw-view rv)
-        (clear-event event)
-        t))))
+  "When auto-close is on, typing an opening ( [ { or \" inserts the matching pair
+with the cursor between -- in the focused editor or REPL, but never inside a
+string or comment (so it won't fight existing literals)."
+  (when (and (auto-close app) (= (event-type event) +ev-key-down+))
+    (let* ((ch (event-char-code event))
+           (c (and (plusp ch) (< ch char-code-limit) (code-char ch)))
+           (pair (case c (#\( "()") (#\[ "[]") (#\{ "{}") (#\" "\"\""))))
+      (when pair
+        (let ((view (%current-text-view app)) (rv (current-repl app)))
+          (when (and view (typep view 'ttext-view)
+                     (not (and (eq view rv) (repl-busy rv)))
+                     (tvision::can-edit-here-p view)
+                     (not (%point-in-string/comment-p view)))
+            (insert-string view pair)
+            (setf (text-cur-col view) (1- (text-cur-col view)))
+            (draw-view view)
+            (clear-event event)
+            t))))))
 
 ;;; --- context menu ----------------------------------------------------------
 
@@ -1811,6 +1840,9 @@ and named functions resolve to a source location."
         ((= k +kb-ctrl-r+) (do-history-search (current-repl app)) (clear-event event))
         ((and (= k 19) (current-editor-window app)) ; Ctrl-S: save focused editor
          (do-save-editor app) (clear-event event))
+        ((= k +kb-ctrl-rbracket+)                   ; Ctrl-]: jump to matching paren
+         (let ((v (%current-text-view app)))
+           (when (and v (match-paren-jump v)) (draw-view v) (clear-event event))))
         ((and (logtest (event-modifiers event) +md-alt+) (= (event-char-code event) 46)) ; M-.
          (do-goto-definition (current-repl app) app) (clear-event event)))))
   ;; auto-close parens
