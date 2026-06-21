@@ -50,6 +50,7 @@
 (defparameter +cm-color-demo+  355)
 (defparameter +cm-editor+      321)
 (defparameter +cm-load-buffer+ 322)
+(defparameter +cm-compile-buffer+ 356)
 (defparameter +cm-session-save+ 323)
 (defparameter +cm-session-load+ 324)
 (defparameter +cm-theme+       325)
@@ -148,6 +149,7 @@
       (menu-item "E~v~al defun"       +cm-eval-defun+)
       (menu-item "Eval ~r~egion"      +cm-eval-region+)
       (menu-item "~L~oad buffer"      +cm-load-buffer+)
+      (menu-item "~C~ompile buffer"   +cm-compile-buffer+)
       (menu-separator)
       (sub-menu "~N~avigate"
         (new-menu
@@ -1919,6 +1921,45 @@ Backspace shortens, Esc cancels (restores point), Enter keeps the match."
                            (logior +mf-error+ +mf-ok-button+))
               nil)))))))
 
+(defun do-compile-buffer (app)
+  "Compile the focused editor's buffer (without loading it) and show the
+compiler warnings/notes -- a quick check.  Runs on the listener's worker."
+  (let* ((win (group-current (program-desktop app)))
+         (ed (and (typep win 'teditor-window) (editor-window-editor win)))
+         (rv (some-repl app)))
+    (cond
+      ((not ed) (message-box "Focus an editor window first." (logior +mf-information+ +mf-ok-button+)))
+      ((not rv) (message-box "No REPL open." (logior +mf-information+ +mf-ok-button+)))
+      (t (let ((text (text-string ed)) (pkg (repl-package rv))
+               (name (if (editor-filename ed) (file-namestring (editor-filename ed)) "buffer")))
+           (repl-print rv (format nil "~%; compiling ~a ...~%" name))
+           (repl-call-on-worker rv
+             (lambda ()
+               (let* ((src (format nil "/tmp/tvlisp-compile-~36r.lisp" (get-universal-time)))
+                      (result
+                        (handler-case
+                            (progn
+                              (with-open-file (s src :direction :output :if-exists :supersede
+                                                     :if-does-not-exist :create :external-format :utf-8)
+                                (format s "(in-package ~s)~%~a~%" (package-name pkg) text))
+                              (cons :ok (nth-value 1 (call-collecting-notes
+                                                      (lambda ()
+                                                        (let ((*package* pkg))
+                                                          (compile-file src :verbose nil :print nil)))))))
+                          (error (e) (cons :error (format nil "~a" e))))))
+                 (ignore-errors (delete-file src))
+                 (ignore-errors (delete-file (compile-file-pathname src)))
+                 (run-on-ui
+                  (lambda ()
+                    (tvision::repl-ensure-fresh-line rv)
+                    (if (eq (car result) :error)
+                        (repl-print rv (format nil "; compile error: ~a~%" (cdr result)))
+                        (let ((notes (cdr result)))
+                          (repl-print rv (format nil "; compiled ~a  (~d warning~:p)~%" name (length notes)))
+                          (when notes (%show-load-notes name notes))))
+                    (tvision::repl-fresh-prompt rv) (draw-view rv)
+                    (when tvision:*screen* (flush-screen tvision:*screen*))))))))))))
+
 (defun do-save-editor (app)
   "Save the focused editor window (Save As if it has no filename yet), keeping a
 PATH~ backup of the previous contents."
@@ -2300,6 +2341,7 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-packages+)    (do-packages rv) (clear-event event))
           ((= c +cm-systems+)     (do-systems rv) (clear-event event))
           ((= c +cm-load-buffer+) (do-load-buffer app) (clear-event event))
+          ((= c +cm-compile-buffer+) (do-compile-buffer app) (clear-event event))
           ((= c +cm-eval-defun+)  (do-eval-defun app) (clear-event event))
           ((= c +cm-eval-region+) (do-eval-region app) (clear-event event))
           ((= c +cm-find+)        (do-find app) (clear-event event))

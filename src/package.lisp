@@ -171,6 +171,7 @@
    #:ensure-repl-package #:repl-clear #:repl-history #:repl-history-file
    #:repl-complete #:repl-inspect #:object->outline #:repl-load-file
    #:tinspector-window #:*inspect-goto-hook* #:*load-notes-hook* #:repl-last-file
+   #:call-collecting-notes
    #:save-repl-history #:load-repl-history #:*repl-debugger* #:popup-list
    #:repl-backend-completions #:repl-backend-eval #:longest-common-prefix
    #:*repl-async* #:repl-busy #:repl-interrupt #:repl-worker #:repl-submit
