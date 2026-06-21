@@ -352,6 +352,31 @@ broadcasts and drawing); return the control."
     (draw-view st)
     (is= "static text renders" (text-at 1 1 5) "Hello")))
 
+(deftest label-mnemonic
+  ;; TLabel: ~marker~ derives an Alt-hotkey, the ~ is stripped on screen, and
+  ;; Alt-<letter> (or a click) hands focus to the linked control.
+  (let* ((d  (make-instance 'tdialog :bounds (make-trect 0 0 40 10)))
+         (i1 (make-instance 'tinputline :bounds (make-trect 10 2 30 3) :data ""))
+         (i2 (make-instance 'tinputline :bounds (make-trect 10 4 30 5) :data ""))
+         (lbl (make-instance 'tlabel :text "~N~ame" :link i2
+                                     :bounds (make-trect 2 4 9 5))))
+    (insert d i1) (insert d i2) (insert d lbl)
+    (is= "hotkey is the marked letter" (tvision::label-hotkey lbl) #\n)
+    ;; render strips the ~ markers
+    (draw-view d)
+    (is= "the ~ markers are not drawn" (text-at 2 4 4) "Name")
+    ;; focus starts on the first field (focus only cascades from a focused group)
+    (focused d)
+    (tvision::set-current d i1 :normal-select)
+    (ok "field 1 starts focused" (logtest (view-state i1) +sf-focused+))
+    ;; a non-matching Alt key leaves focus alone
+    (handle-event lbl (ev-key 0 (char-code #\z) tvision::+md-alt+))
+    (ok "Alt-Z (no match) leaves focus on field 1" (logtest (view-state i1) +sf-focused+))
+    ;; Alt-N jumps focus to the linked field
+    (handle-event lbl (ev-key 0 (char-code #\n) tvision::+md-alt+))
+    (ok "Alt-N moves focus to the linked field" (logtest (view-state i2) +sf-focused+))
+    (ok "field 1 is no longer focused" (not (logtest (view-state i1) +sf-focused+)))))
+
 ;;; ===========================================================================
 ;;; Input line
 ;;; ===========================================================================

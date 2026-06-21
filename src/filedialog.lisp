@@ -203,23 +203,27 @@ into the Name field, and (when OPEN) the dialog is accepted."
   (let* ((w 52) (h 19)
          (d (make-instance 'tfile-dialog :title title :dir directory
                            :bounds (make-trect 0 0 w h)))
-         (lbl (make-instance 'tlabel :text "Name:"))
          (input (make-instance 'tfile-input-line :dialog d
                                :bounds (make-trect 9 2 (- w 3) 3) :maxlen 255))
          (vsb nil)
          (lb (make-instance 'tfd-list :command 0 :dialog d
                             :bounds (make-trect 2 4 (- w 4) (- h 6))))
+         ;; mnemonic labels: Alt-N jumps to the Name field, Alt-F to the browser
+         (lbl  (make-instance 'tlabel :text "~N~ame:" :link input
+                                      :bounds (make-trect 3 2 8 3)))
+         (flbl (make-instance 'tlabel :text "~F~iles" :link lb
+                                      :bounds (make-trect 2 3 9 4)))
          (info (make-instance 'tfile-info-pane :dialog d :text ""
                               :bounds (make-trect 2 (- h 5) (- w 2) (- h 4)))))
-    (set-bounds lbl (make-trect 3 2 8 3))
     (insert d lbl)
     (insert d input)
+    (insert d flbl)
     (insert d lb)
     (insert d info)
     (setf vsb (standard-scrollbar d t))
     (attach-scrollbars lb :vscroll vsb)
     (insert d (make-button (make-trect (- w 26) (- h 3) (- w 16) (- h 1)) "~O~K" +cm-ok+ t))
-    (insert d (make-button (make-trect (- w 13) (- h 3) (- w 3) (- h 1)) "Cancel" +cm-cancel+))
+    (insert d (make-button (make-trect (- w 13) (- h 3) (- w 3) (- h 1)) "~C~ancel" +cm-cancel+))
     (setf (fd-input d) input (fd-list d) lb (fd-info d) info)
     (fd-refresh d)
     (focus lb)              ; start in the browser; Tab to the Name field to type

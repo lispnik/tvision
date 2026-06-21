@@ -38,19 +38,55 @@
 (defclass tlabel (tstatic-text)
   ((link :initarg :link :initform nil :accessor label-link)))
 
-(defmethod get-palette ((v tlabel)) (make-palette 7 8))
+(defmethod initialize-instance :after ((v tlabel) &key)
+  ;; A label isn't selectable itself, but it must see Alt-<key> from anywhere in
+  ;; the dialog (and a click) so it can hand focus to its linked control.
+  (setf (view-options v) (logior (view-options v)
+                                 +of-pre-process+ +of-post-process+)))
+
+;; logical: 1 normal text, 2 highlighted text (link focused), 3 shortcut,
+;; 4 shortcut highlighted -- the classic cpLabel "\07\08\09\09".
+(defmethod get-palette ((v tlabel)) (make-palette 7 8 9 9))
+
+(defun label-hotkey (v)
+  "The label's Alt-mnemonic character (the one marked with ~ in its text),
+downcased, or NIL when the text carries no ~marker~."
+  (let* ((s (or (static-text-text v) "")) (p (position #\~ s)))
+    (when (and p (< (1+ p) (length s)))
+      (char-downcase (char s (1+ p))))))
 
 (defmethod draw ((v tlabel))
   (let* ((w (point-x (view-size v)))
          (focused (and (label-link v)
                        (logtest (view-state (label-link v)) +sf-focused+)))
-         (c (get-color v (if focused 2 1)))
+         (text-c (get-color v (if focused 2 1)))
+         (hot-c  (get-color v (if focused 4 3)))
          (db (make-draw-buffer w)))
-    (db-fill db #\Space c)
-    (db-move-str db 0 (let ((s (static-text-text v)))
-                        (if (> (length s) w) (subseq s 0 w) s))
-                 c)
+    (db-fill db #\Space text-c)
+    ;; render the text, dropping ~ markers and accenting the marked letter
+    (loop with x = 0 and hot = nil
+          for ch across (static-text-text v)
+          while (< x w)
+          do (if (char= ch #\~)
+                 (setf hot (not hot))
+                 (progn (db-put-char db x ch (if hot hot-c text-c)) (incf x))))
     (write-line* v 0 0 w 1 db)))
+
+(defmethod handle-event ((v tlabel) event)
+  (let ((link (label-link v)))
+    (when link
+      (cond
+        ;; click the label -> focus its control
+        ((and (= (event-type event) +ev-mouse-down+) (mouse-in-view-p v event))
+         (focus link) (clear-event event))
+        ;; Alt-<mnemonic> -> focus its control (labels are pre-process views,
+        ;; so they get this even though they are never focused themselves)
+        ((and (= (event-type event) +ev-key-down+)
+              (logtest (event-modifiers event) +md-alt+)
+              (plusp (event-char-code event))
+              (let ((hk (label-hotkey v)))
+                (and hk (char-equal (code-char (event-char-code event)) hk))))
+         (focus link) (clear-event event))))))
 
 ;;; ===========================================================================
 ;;; TButton
