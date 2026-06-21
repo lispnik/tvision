@@ -344,9 +344,10 @@ boundary — enough for both the REPL and the editor example below.
   **Grapheme clusters** (`sb-unicode:graphemes`) — base+combining marks and
   ZWJ / skin-tone emoji sequences — are interned into a single cell, so they
   render as one glyph and arrow-keys / backspace / mouse / selection treat them
-  as one unit.  Word-wrap mode shares the same layout: lines break on grapheme
-  boundaries (never splitting a wide glyph), and cursor up/down and mouse hits
-  map through display columns, not code-point counts.
+  as one unit.  Word-wrap mode shares the same layout: lines wrap at word
+  boundaries (hard-splitting only a word wider than the view), never split a wide
+  glyph, and cursor up/down and mouse hits map through display columns, not
+  code-point counts.
 
   ![Editing Greek, Cyrillic, accents and math symbols](media/unicode.gif)
 

@@ -126,21 +126,40 @@ and mouse hits in wrapped text."
 
 (defun wrap-segments (line w)
   "Code-point start index of each visual row when LINE is wrapped to W display
-columns -- breaking only at grapheme boundaries, never splitting a wide glyph.
-A trailing empty row is added when the last row fills the width exactly (so the
-cursor has somewhere to sit past a full line).  Always returns at least (0)."
+columns.  Breaks at word boundaries (whitespace) when it can, hard-splitting a
+single word that is itself wider than W; always on grapheme boundaries and never
+splitting a wide glyph.  Trailing whitespace runs past the margin rather than
+wrapping.  A trailing empty row is added when the last row fills W exactly (so
+the cursor can sit past a full line).  Always returns at least (0)."
   (let* ((len (length line)) (w (max 1 w)))
-    (if (simple-line-p line)
-        (let ((segs (if (zerop len) (list 0) (loop for s from 0 below len by w collect s))))
-          (if (and (plusp len) (zerop (mod len w))) (append segs (list len)) segs))
-        (let ((segs (list 0)) (i 0) (col 0) (offs (grapheme-offsets line)))
-          (loop while (< i len) do
-            (let ((cw (char-width (char line i)))
-                  (gend (or (find-if (lambda (o) (> o i)) offs) len)))
-              (when (and (> (+ col cw) w) (plusp col)) (push i segs) (setf col 0))
-              (incf col cw) (setf i (min gend len))))
+    (if (zerop len)
+        (list 0)
+        (let ((segs (list 0)) (col 0) (i 0)
+              (simple (simple-line-p line)))
+          (flet ((cwidth (j) (if simple 1 (char-width (char line j))))
+                 (gnext (j) (if simple (1+ j) (next-grapheme-col line j)))
+                 (spacep (j) (let ((c (char line j))) (or (char= c #\Space) (char= c #\Tab)))))
+            (labels ((hard-split (start end)
+                       ;; lay [START,END) onto fresh rows, returning the final col
+                       (let ((j start) (rc 0))
+                         (loop while (< j end) do
+                           (let ((cw (cwidth j)))
+                             (when (and (> (+ rc cw) w) (plusp rc)) (push j segs) (setf rc 0))
+                             (incf rc cw) (setf j (gnext j))))
+                         rc)))
+              (loop while (< i len) do
+                ;; measure the next token: a run of whitespace, or one word
+                (let ((tok-start i) (tok-w 0) (space (spacep i)))
+                  (loop while (and (< i len) (eq (spacep i) space))
+                        do (incf tok-w (cwidth i)) (setf i (gnext i)))
+                  (cond
+                    ((<= (+ col tok-w) w) (incf col tok-w))           ; fits on this row
+                    (space (setf col w))                             ; spaces overrun the margin
+                    ((zerop col) (setf col (hard-split tok-start i))) ; word alone wider than W
+                    (t (push tok-start segs)                         ; wrap the word to a new row
+                       (setf col (if (<= tok-w w) tok-w (hard-split tok-start i)))))))))
           (setf segs (nreverse segs))
-          (if (>= (visual-col line (car (last segs)) len) w) (append segs (list len)) segs)))))
+          (if (>= col w) (append segs (list len)) segs)))))
 
 (defstruct (draw-buffer (:constructor %make-draw-buffer))
   (data (make-array 0 :element-type '(unsigned-byte 53)) :type (simple-array (unsigned-byte 53) (*)))

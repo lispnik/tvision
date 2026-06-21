@@ -219,6 +219,10 @@ broadcasts and drawing); return the control."
   (is= "ASCII wraps at the width boundary" (tvision::wrap-segments "abcdefg" 4) '(0 4))
   (is= "an exactly-full line gets a trailing cursor row" (tvision::wrap-segments "abcd" 4) '(0 4))
   (is= "an empty line is one row" (tvision::wrap-segments "" 4) '(0))
+  ;; word-boundary wrapping: break at the space, not mid-word
+  (is= "wraps at a word boundary" (tvision::wrap-segments "aa bb cc" 5) '(0 6))
+  (is= "a too-long word is hard-split" (tvision::wrap-segments "abcdefg" 4) '(0 4))
+  (is= "short words pack onto one row" (tvision::wrap-segments "a b c" 6) '(0))
   (let ((cjk "中中中"))                          ; three width-2 glyphs, total width 6
     (is= "a wide glyph never straddles the boundary" (tvision::wrap-segments cjk 4) '(0 2))
     (is= "the first row fills exactly four columns" (tvision::visual-col cjk 0 2) 4)
