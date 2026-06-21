@@ -1493,6 +1493,34 @@ plists (:seconds :consed :calls :name).  Header/rule lines are skipped."
     (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
     (insert desk win) (focus tbl)))
 
+(defun %one-line (s)
+  "Flatten S to a single line (newlines/tabs -> spaces) for a table cell."
+  (string-trim " " (substitute #\Space #\Tab (substitute #\Space #\Newline s))))
+
+(defun %show-load-notes (path notes)
+  "Display compilation NOTES ((kind . message) ...) from loading PATH in a
+sortable, CSV-exportable Kind/Message table.  Bound to TVISION:*LOAD-NOTES-HOOK*."
+  (when (and *application* notes)
+    (let* ((rows (mapcar (lambda (n) (list :kind (car n) :msg (cdr n))) notes))
+           (desk (program-desktop *application*))
+           (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+           (w (min 86 (- dw 2))) (h (min 22 (- dh 2)))
+           (cols (vector (make-table-column "Kind" 9
+                                            (lambda (r) (string-downcase (princ-to-string (getf r :kind)))))
+                         (make-table-column "Message" 72 (lambda (r) (%one-line (getf r :msg))))))
+           (win (make-instance 'tdata-window
+                               :title (format nil "~a — ~d warning~:p  (s:sort  e:csv)"
+                                              (file-namestring path) (length notes))
+                               :bounds (make-trect 0 0 w h)))
+           (vsb (standard-scrollbar win t))
+           (tbl (make-instance 'ttable-view :columns cols :rows rows :sort-col 0 :sort-asc t
+                               :bounds (make-trect 1 1 (1- w) (1- h)))))
+      (insert win tbl) (attach-scrollbars tbl :vscroll vsb) (setf (data-table win) tbl)
+      (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+      (insert desk win) (focus tbl))))
+
+(setf tvision:*load-notes-hook* #'%show-load-notes)
+
 (defun do-profile-deterministic (rv)
   "Deterministic profiler (sb-profile): instrument every function in a package,
 run a form, and show the call-count/time report."
