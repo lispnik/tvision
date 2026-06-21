@@ -1113,9 +1113,21 @@ initform."
             (and type (not (eq type t)) type)
             (and initf (let ((*print-length* 4) (*print-level* 2)) (prin1-to-string initf))))))
 
+(defun %subclass-tree (class depth budget)
+  "Outline node for CLASS, recursively expandable to its subclasses, to DEPTH.
+BUDGET is a (count) cell capping total nodes so inspecting a class with a vast
+subtree (e.g. T) can't explode; children are collapsed until the user drills in."
+  (let* ((subs (and (plusp depth) (plusp (car budget))
+                    (ignore-errors (sb-mop:class-direct-subclasses class))))
+         (kids (loop for c in subs
+                     while (plusp (car budget))
+                     do (decf (car budget))
+                     collect (%subclass-tree c (1- depth) budget))))
+    (make-outline-node (princ-to-string (class-name class)) kids)))
+
 (defun class-outline (class)
-  "A curated structural view of CLASS: superclasses, subclasses, and direct vs
-inherited slots (with declared types and direct initforms)."
+  "A curated structural view of CLASS: superclasses, a recursive subclass tree,
+and direct vs inherited slots (with declared types and direct initforms)."
   (flet ((cls-nodes (cs) (mapcar (lambda (c) (make-outline-node (princ-to-string (class-name c)) nil)) cs))
          (slot-nodes (ss initformp)
            (mapcar (lambda (s) (make-outline-node (%slot-label s initformp) nil)) ss))
@@ -1128,7 +1140,9 @@ inherited slots (with declared types and direct initforms)."
            (dnames (mapcar #'sb-mop:slot-definition-name directs))
            (inherited (remove-if (lambda (s) (member (sb-mop:slot-definition-name s) dnames)) effective))
            (kids (list (grp (format nil "Superclasses (~d)" (length supers)) (cls-nodes supers))
-                       (grp (format nil "Subclasses (~d)" (length subs)) (cls-nodes subs))
+                       (grp (format nil "Subclasses (~d)" (length subs))
+                            (let ((budget (list 400)))
+                              (mapcar (lambda (c) (%subclass-tree c 6 budget)) subs)))
                        (grp (format nil "Direct slots (~d)" (length directs)) (slot-nodes directs t)))))
       (when inherited
         (setf kids (append kids (list (grp (format nil "Inherited slots (~d)" (length inherited))
