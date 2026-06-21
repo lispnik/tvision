@@ -789,6 +789,27 @@ broadcasts and drawing); return the control."
 ;;; Memo + editor
 ;;; ===========================================================================
 
+(deftest regex-find
+  (let ((tv (focused (host (make-instance 'tmemo :bounds (make-trect 0 0 40 8))))))
+    (set-text tv (format nil "(defun foo ())~%  (defvar *x* 42)~%bar123baz"))
+    ;; anchored match
+    (is= "^.defun matches only the first line" (tvision::text-find-regex tv "^.defun") '(0 0 6))
+    ;; no match on lines that don't start with it
+    (is= "anchor respected (line 1 indented)" (tvision::text-find-regex tv "^.defvar") nil)
+    ;; character class + quantifier
+    (is= "[0-9]+ finds the digit run" (tvision::text-find-regex tv "[0-9]+" :from-line 2 :from-col 0)
+         '(2 3 6))
+    ;; dot-star is greedy within the line (first 'f' is in 'defun')
+    (is= "f.*o is greedy within the line" (tvision::text-find-regex tv "f.*o" :from-line 0 :from-col 0)
+         '(0 3 10))
+    ;; \d escape
+    (is= "\\d+ matches digits" (tvision::text-find-regex tv "\\d+" :from-line 1 :from-col 0)
+         '(1 14 16))
+    ;; replace-all with regex
+    (set-text tv "a1b22c333")
+    (is= "regex replace count" (text-replace-all-regex tv "[0-9]+" "#") 3)
+    (is= "regex replace result" (nth-line tv 0) "a#b#c#")))
+
 (deftest match-paren
   (let ((tv (focused (host (make-instance 'tmemo :bounds (make-trect 0 0 30 5))))))
     (set-text tv "(foo (bar))")
