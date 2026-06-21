@@ -287,6 +287,17 @@ cursor and its match -- or NIL."
           (let ((m (%paren-match-offset (text-string tv) target)))
             (when m (list (lc target) (lc m)))))))))
 
+(defun match-paren-jump (tv)
+  "Move the cursor to the paren matching the one at/just-before it.  Returns T
+when it moved, NIL when there is no balanced paren at point."
+  (let ((pair (%matching-parens tv)))
+    (when pair
+      (let ((dest (second pair)))                  ; (line . col) of the match
+        (setf (text-cur-line tv) (car dest)
+              (text-cur-col tv) (cdr dest))
+        (ensure-visible tv)
+        t))))
+
 ;;; --- Lisp auto-indent ------------------------------------------------------
 
 ;;; Indentation specs, after Emacs cl-indent: N = number of "distinguished"

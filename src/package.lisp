@@ -192,6 +192,7 @@
    #:text-snapshot #:text-undo! #:text-redo! #:text-anchor #:set-lines
    #:text-modified #:text-overwrite #:text-goto #:word-left #:word-right
    #:text-find #:text-find-and-select #:text-select-match #:text-replace-all
+   #:match-paren-jump
    #:text-replace-selection #:text-load-file #:text-save-file
    #:tindicator #:indicator-source #:tmemo #:text-wrap #:set-text-wrap
    #:tfile-editor #:teditor-window #:make-edit-window #:editor-filename

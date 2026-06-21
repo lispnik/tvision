@@ -789,6 +789,17 @@ broadcasts and drawing); return the control."
 ;;; Memo + editor
 ;;; ===========================================================================
 
+(deftest match-paren
+  (let ((tv (focused (host (make-instance 'tmemo :bounds (make-trect 0 0 30 5))))))
+    (set-text tv "(foo (bar))")
+    (setf (text-cur-line tv) 0 (text-cur-col tv) 0)        ; on the outer (
+    (ok "jumps from an open paren" (match-paren-jump tv))
+    (is= "lands on the matching close paren" (text-cur-col tv) 10)
+    (ok "jumps back from the close paren" (match-paren-jump tv))
+    (is= "returns to the open paren" (text-cur-col tv) 0)
+    (setf (text-cur-col tv) 2)                             ; on 'o' of foo
+    (ok "no jump when point isn't on a paren" (not (match-paren-jump tv)))))
+
 (deftest memo
   (let ((m (host (make-instance 'tmemo :bounds (make-trect 1 1 30 6)))))
     (set-data m (format nil "one~%two~%three"))
