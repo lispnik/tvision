@@ -103,6 +103,12 @@ parked with its stack live:
   jumps to its definition (for symbols, classes and named functions).
 
   ![Inspecting a value and drilling into a nested element](media/inspector-drill.gif)
+
+  Inspecting a **symbol** shows its whole namespace — name, home package, value,
+  function / macro / special-operator, the class it names, plist and
+  documentation — each cell drillable:
+
+  ![Inspecting a symbol: value, plist and documentation as a drillable tree](media/inspect-symbol.gif)
 - **Macroexpand**, **Describe**, **Documentation**, **Disassemble** — into
   scrollable windows.
 - **Trace / Untrace** — toggle `trace` on a function (output streams into the
