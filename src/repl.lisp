@@ -979,12 +979,13 @@ PATH is the chain of ancestor objects; an OBJ already on it is rendered as a
   (let ((children '())
         (path* (if (%inspect-trackable-p obj) (cons obj path) path)))
     (when (plusp depth)
-      (flet ((kid (v lbl)
+      (flet ((kid (v lbl &optional setter)
                ;; never let a recursive step escape -- it would kill the UI loop
-               (push (handler-case (object->outline v lbl (1- depth) path*)
-                       (serious-condition (e)
-                         (make-outline-node (format nil "~a = <~a>" lbl (type-of e)))))
-                     children))
+               (let ((node (handler-case (object->outline v lbl (1- depth) path*)
+                             (serious-condition (e)
+                               (make-outline-node (format nil "~a = <~a>" lbl (type-of e)))))))
+                 (when setter (setf (outline-node-setter node) setter))
+                 (push node children)))
              (overflow (n rest noun)
                ;; a drillable `... N more' node for the truncated tail of a big
                ;; collection (REST is re-inspected to page through the remainder)
@@ -1010,7 +1011,7 @@ PATH is the chain of ancestor objects; an OBJ already on it is rendered as a
                ;; would swamp the more useful value/function cells)
                (when (symbol-package obj) (kid (package-name (symbol-package obj)) "package"))
                (when (and (boundp obj) (not (eq (symbol-value obj) obj)))
-                 (kid (symbol-value obj) "value"))
+                 (kid (symbol-value obj) "value" (lambda (new) (setf (symbol-value obj) new))))
                (cond ((special-operator-p obj) (kid :special-operator "operator"))
                      ((macro-function obj)      (kid (macro-function obj) "macro-function"))
                      ((fboundp obj)             (kid (symbol-function obj) "function")))
@@ -1023,19 +1024,28 @@ PATH is the chain of ancestor objects; an OBJ already on it is rendered as a
               (cons
                (let ((i 0) (tail obj))
                  (loop while (and (consp tail) (< i +inspect-page+))
-                       do (kid (car tail) (format nil "[~d]" i)) (incf i) (setf tail (cdr tail)))
+                       do (let ((cell tail))
+                            (kid (car tail) (format nil "[~d]" i)
+                                 (lambda (new) (setf (car cell) new))))
+                          (incf i) (setf tail (cdr tail)))
                  (when (consp tail)
                    (let ((m (list-length tail)))   ; NIL for a circular list
                      (overflow m tail (if m "elements" "elements (circular)"))))))
               (vector
                (let ((n (length obj)))
-                 (dotimes (i (min n +inspect-page+)) (kid (aref obj i) (format nil "[~d]" i)))
+                 (dotimes (i (min n +inspect-page+))
+                   (let ((idx i))
+                     (kid (aref obj i) (format nil "[~d]" i)
+                          (lambda (new) (setf (aref obj idx) new)))))
                  (when (> n +inspect-page+)
                    (overflow (- n +inspect-page+) (subseq obj +inspect-page+) "elements"))))
               (hash-table
                (let ((i 0) (total (hash-table-count obj)))
                  (maphash (lambda (k v)
-                            (when (< i +inspect-page+) (kid v (format nil "~a =>" (%short-repr k))))
+                            (when (< i +inspect-page+)
+                              (let ((key k))
+                                (kid v (format nil "~a =>" (%short-repr k))
+                                     (lambda (new) (setf (gethash key obj) new)))))
                             (incf i))
                           obj)
                  (when (> total +inspect-page+)
@@ -1045,7 +1055,8 @@ PATH is the chain of ancestor objects; an OBJ already on it is rendered as a
                  (let ((name (sb-mop:slot-definition-name slot)))
                    (when (handler-case (slot-boundp obj name) (error () nil))
                      (kid (handler-case (slot-value obj name) (serious-condition (e) e))
-                          (format nil "~a" name)))))))
+                          (format nil "~a" name)
+                          (lambda (new) (setf (slot-value obj name) new))))))))
           (serious-condition () nil))))
     ;; store the value in the node so the inspector can drill into it
     (let ((node (make-outline-node (format nil "~a = ~a" label (%short-repr obj))
@@ -1081,7 +1092,7 @@ shows the breadcrumb path."))
                    (concatenate 'string "..." (subseq path (- (length path) 43)))
                    path)))
     (setf (window-title w)
-          (format nil "Inspector: ~a  (Enter/i:in~:[~; Bksp:back~] g:src)"
+          (format nil "Inspector: ~a  (Enter/i:in~:[~; Bksp:back~] e:edit /:find g:src)"
                   path (inspector-history w)))))
 
 (defun %inspector-show (w obj label)
@@ -1107,6 +1118,39 @@ shows the breadcrumb path."))
     (let ((prev (pop (inspector-history w))))
       (%inspector-show w (car prev) (cdr prev)))))
 
+(defun %inspector-edit (w)
+  "Edit the focused node's value in place, if it sits at a settable place."
+  (let ((node (outline-current (inspector-outline w))))
+    (when node
+      (if (outline-node-setter node)
+          (multiple-value-bind (cmd s)
+              (input-box "Set value" (format nil "New value for ~a (a Lisp form):" (%node-label node)) "")
+            (when (and (= cmd +cm-ok+) (plusp (length (string-trim '(#\Space #\Tab) s))))
+              (handler-case
+                  (progn (funcall (outline-node-setter node) (eval (read-from-string s)))
+                         ;; rebuild from the root so the new value (and anything
+                         ;; derived from it) is reflected
+                         (%inspector-show w (car (inspector-current w)) (cdr (inspector-current w))))
+                (error (e) (message-box (format nil "~a" e) (logior +mf-error+ +mf-ok-button+))))))
+          (message-box "That value isn't editable here." (logior +mf-information+ +mf-ok-button+))))))
+
+(defun %inspector-find (w)
+  "Find a visible node whose text contains a substring, and focus it."
+  (let ((ol (inspector-outline w)))
+    (multiple-value-bind (cmd s) (input-box "Find in object" "Text:" "")
+      (when (and (= cmd +cm-ok+) (plusp (length s)))
+        (let* ((q (string-downcase s))
+               (vis (outline-visible ol))
+               ;; search from just after the current focus, wrapping
+               (n (length vis)) (start (1+ (outline-focused ol)))
+               (idx (loop for off below n
+                          for i = (mod (+ start off) n)
+                          when (search q (string-downcase (outline-node-text (car (nth i vis)))))
+                          do (return i))))
+          (if idx (outline-focus ol idx)
+              (message-box (format nil "Not found: ~a" s)
+                           (logior +mf-information+ +mf-ok-button+))))))))
+
 (defmethod handle-event ((w tinspector-window) event)
   (cond
     ;; Enter on a leaf / double-click broadcasts this -> drill in (in place)
@@ -1124,6 +1168,12 @@ shows the breadcrumb path."))
          ;; Backspace -> back to the previous object
          ((= k +kb-back+)
           (%inspector-back w) (clear-event event))
+         ;; `e' edits the focused value (where it's a settable place)
+         ((or (= ch (char-code #\e)) (= ch (char-code #\E)))
+          (%inspector-edit w) (clear-event event))
+         ;; `/' finds a node by text
+         ((= ch (char-code #\/))
+          (%inspector-find w) (clear-event event))
          ;; `g' jumps to the focused value's definition (if the app supplied a hook)
          ((and *inspect-goto-hook* (or (= ch (char-code #\g)) (= ch (char-code #\G))))
           (let ((n (outline-current (inspector-outline w))))

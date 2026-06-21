@@ -628,6 +628,23 @@ broadcasts and drawing); return the control."
          (labels (mapcar #'outline-node-text (outline-node-children node))))
     (ok "function symbol shows its function" (some (lambda (l) (search "function" l)) labels))))
 
+(deftest inspector-edit
+  ;; nodes for settable places carry a setter that writes the value back
+  (let* ((v (vector 1 2 3))
+         (node (tvision::object->outline v "v"))
+         (slot (second (outline-node-children node))))   ; the [1] element
+    (ok "vector element has a setter" (outline-node-setter slot))
+    (funcall (outline-node-setter slot) 99)
+    (is= "setter writes through to the vector" (aref v 1) 99))
+  ;; hash entries are settable
+  (let ((h (make-hash-table)))
+    (setf (gethash :k h) 1)
+    (let* ((node (tvision::object->outline h "h"))
+           (entry (first (outline-node-children node))))
+      (ok "hash entry has a setter" (outline-node-setter entry))
+      (funcall (outline-node-setter entry) 7)
+      (is= "setter updates the hash value" (gethash :k h) 7))))
+
 (deftest inspector-paging
   ;; big collections show one page plus a drillable "... N more" node, instead of
   ;; silently truncating; re-inspecting that node's value pages the remainder

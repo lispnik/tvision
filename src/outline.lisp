@@ -4,11 +4,12 @@
 
 (defconstant +cm-outline-item-selected+ 63)
 
-(defstruct (outline-node (:constructor make-outline-node (text &optional children data)))
+(defstruct (outline-node (:constructor make-outline-node (text &optional children data setter)))
   (text "" )
   (children '())
   (expanded nil)
-  (data nil))
+  (data nil)
+  (setter nil))   ; optional (lambda (new-value)) writing DATA back to its place
 
 (defun outline-node (text &rest children)
   "Convenience: a node with TEXT and the given child nodes (expanded)."

@@ -98,7 +98,7 @@
    #:table-sort-col #:table-sort-asc #:table-column-title #:table-column-width
    ;; outline (tree view)
    #:toutline #:outline-node #:make-outline-node #:outline-node-text
-   #:outline-node-children #:outline-node-expanded #:outline-node-data
+   #:outline-node-children #:outline-node-expanded #:outline-node-data #:outline-node-setter
    #:outline-roots #:outline-current #:outline-focus #:outline-toggle
    #:outline-select #:outline-command #:+cm-outline-item-selected+
    ;; html view (hypertext browser)
