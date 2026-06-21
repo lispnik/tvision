@@ -1028,20 +1028,40 @@ SELECT preselects that item string.  Returns (values selected-item end-command).
                                     (if (plusp (length out)) out
                                         (format nil "Loaded ~a." chosen)))))))))))))))
 
+(defun %slot-label (s initformp)
+  "Label for slot definition S: name, declared type, and (for direct slots) its
+initform."
+  (let ((name (sb-mop:slot-definition-name s))
+        (type (ignore-errors (sb-mop:slot-definition-type s)))
+        (initf (and initformp (ignore-errors (sb-mop:slot-definition-initform s)))))
+    (format nil "~a~@[ : ~(~a~)~]~@[ = ~a~]"
+            name
+            (and type (not (eq type t)) type)
+            (and initf (let ((*print-length* 4) (*print-level* 2)) (prin1-to-string initf))))))
+
 (defun class-outline (class)
-  (flet ((cls-nodes (cs) (mapcar (lambda (c) (make-outline-node (format nil "~a" (class-name c)) nil)) cs))
-         (slot-nodes (ss) (mapcar (lambda (s) (make-outline-node
-                                               (format nil "~a" (sb-mop:slot-definition-name s)) nil)) ss)))
-    (let* ((supers (sb-mop:class-direct-superclasses class))
-           (subs (sb-mop:class-direct-subclasses class))
-           (slots (ignore-errors (sb-mop:class-slots class)))
-           (node (make-outline-node
-                  (format nil "Class ~a" (class-name class))
-                  (list (make-outline-node (format nil "Superclasses (~d)" (length supers)) (cls-nodes supers))
-                        (make-outline-node (format nil "Subclasses (~d)" (length subs)) (cls-nodes subs))
-                        (make-outline-node (format nil "Slots (~d)" (length slots)) (slot-nodes slots))))))
-      (setf (outline-node-expanded node) t)
-      node)))
+  "A curated structural view of CLASS: superclasses, subclasses, and direct vs
+inherited slots (with declared types and direct initforms)."
+  (flet ((cls-nodes (cs) (mapcar (lambda (c) (make-outline-node (princ-to-string (class-name c)) nil)) cs))
+         (slot-nodes (ss initformp)
+           (mapcar (lambda (s) (make-outline-node (%slot-label s initformp) nil)) ss))
+         (grp (text kids) (let ((n (make-outline-node text kids))) (setf (outline-node-expanded n) t) n)))
+    (let* ((supers (ignore-errors (sb-mop:class-direct-superclasses class)))
+           (subs (ignore-errors (sb-mop:class-direct-subclasses class)))
+           (directs (ignore-errors (sb-mop:class-direct-slots class)))
+           (finalized (ignore-errors (sb-mop:class-finalized-p class)))
+           (effective (and finalized (ignore-errors (sb-mop:class-slots class))))
+           (dnames (mapcar #'sb-mop:slot-definition-name directs))
+           (inherited (remove-if (lambda (s) (member (sb-mop:slot-definition-name s) dnames)) effective))
+           (kids (list (grp (format nil "Superclasses (~d)" (length supers)) (cls-nodes supers))
+                       (grp (format nil "Subclasses (~d)" (length subs)) (cls-nodes subs))
+                       (grp (format nil "Direct slots (~d)" (length directs)) (slot-nodes directs t)))))
+      (when inherited
+        (setf kids (append kids (list (grp (format nil "Inherited slots (~d)" (length inherited))
+                                           (slot-nodes inherited nil))))))
+      (let ((node (make-outline-node (format nil "Class ~a" (class-name class)) kids)))
+        (setf (outline-node-expanded node) t)
+        node))))
 
 (defun class-list ()
   "Sorted ((name-string . class)) for every class reachable from the class T."
@@ -1087,10 +1107,10 @@ Inspect opens it in an Inspector window; Methods lists its methods."
             ((eql cmd +cm-ok+)
              (handler-case (goto-definition-of app (class-name class)) (error (e) (err-box e))))
             ((eql cmd +cm-pick-inspect+)
-             ;; read-only browse: don't force FINALIZE-INHERITANCE (a mutation
-             ;; with side effects on subclasses); the inspector tolerates the
-             ;; unbound metaobject slots of a not-yet-finalized class.
-             (repl-inspect class (format nil "class ~a" name)))
+             ;; a curated structural view (supers/subs/slots with types), more
+             ;; useful for a class than the raw metaobject; no finalization forced
+             (open-outline-window (format nil "Class ~a — supers / subs / slots" name)
+                                  (list (class-outline class))))
             ((eql cmd +cm-pick-extra+) (do-class-methods app class))))))))
 
 ;;; --- navigation: go-to-definition, cross-reference, function browser -------
