@@ -575,6 +575,13 @@ a failed load is retried next time."
   (let ((w (group-current (program-desktop app))))
     (if (typep w 'teditor-window) (editor-window-editor w) (current-repl app))))
 
+(defun %point-symbol ()
+  "The symbol token at the cursor of the focused editor/REPL view, or \"\" --
+used to prefill the Lisp-tool prompts (Describe, Go-to-def, Trace, ...)."
+  (let* ((app *application*)
+         (view (and app (%current-text-view app))))
+    (or (and view (%symbol-at-point view)) "")))
+
 (defun do-hyperspec-lookup (app)
   "Open a browser on the HyperSpec page for the symbol at point.  When there is
 no symbol, or it is not a standard symbol, prompt (prefilled with what we found)."
@@ -692,10 +699,10 @@ current line)."
     (error (e) (err-box e))))
 
 (defun do-describe (rv)
-  (let ((s (prompt-line "Describe" "Symbol:"))) (when (and rv s) (describe-named rv s))))
+  (let ((s (prompt-line "Describe" "Symbol:" (%point-symbol)))) (when (and rv s) (describe-named rv s))))
 
 (defun do-documentation (rv)
-  (let ((s (prompt-line "Documentation" "Symbol:")))
+  (let ((s (prompt-line "Documentation" "Symbol:" (%point-symbol))))
     (when (and rv s)
       (handler-case
           (let ((sym (read-in rv s)))
@@ -708,7 +715,7 @@ current line)."
         (error (e) (err-box e))))))
 
 (defun do-disassemble (rv)
-  (let ((s (prompt-line "Disassemble" "Function:")))
+  (let ((s (prompt-line "Disassemble" "Function:" (%point-symbol))))
     (when (and rv s)
       (handler-case
           (show-text-window (format nil "Disassemble ~a" s)
@@ -717,7 +724,7 @@ current line)."
         (error (e) (err-box e))))))
 
 (defun do-apropos (rv)
-  (let ((s (prompt-line "Apropos" "Substring:")))
+  (let ((s (prompt-line "Apropos" "Substring:" (%point-symbol))))
     (when (and rv s)
       (let ((names (sort (mapcar #'prin1-to-string (apropos-list s)) #'string<)))
         (if (null names)
@@ -734,7 +741,7 @@ current line)."
                          (error (e) (err-box e))))))))))))
 
 (defun do-inspect-expr (rv)
-  (let ((s (prompt-line "Inspect" "Expression:")))
+  (let ((s (prompt-line "Inspect" "Expression:" (%point-symbol))))
     (when (and rv s)
       (handler-case (repl-inspect (eval (read-in rv s)) s)
         (error (e) (err-box e))))))
@@ -1017,12 +1024,12 @@ still shown (entries without a source location simply aren't navigable)."
                             (%def-rows sym defs))))))
 
 (defun do-goto-definition (rv app)
-  (let ((s (prompt-line "Go to definition" "Symbol:")))
+  (let ((s (prompt-line "Go to definition" "Symbol:" (%point-symbol))))
     (when (and rv s)
       (handler-case (goto-definition-of app (read-in rv s)) (error (e) (err-box e))))))
 
 (defun do-xref (rv app kind)
-  (let ((s (prompt-line (format nil "Who ~(~a~)" kind) "Symbol:")))
+  (let ((s (prompt-line (format nil "Who ~(~a~)" kind) "Symbol:" (%point-symbol))))
     (when (and rv s)
       (handler-case
           (let* ((sym (read-in rv s))
@@ -1045,7 +1052,7 @@ still shown (entries without a source location simply aren't navigable)."
   "Toggle TRACE on a function: trace it if untraced, untrace it if traced.
 Trace output appears in the REPL as the function is called."
   (when rv
-    (let ((s (prompt-line "Trace" "Function (toggles):")))
+    (let ((s (prompt-line "Trace" "Function (toggles):" (%point-symbol))))
       (when s
         (handler-case
             (let ((sym (read-in rv s)))
