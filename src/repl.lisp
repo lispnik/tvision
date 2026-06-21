@@ -385,14 +385,30 @@ with the frame's locals bound."
   (:documentation "The backtrace browser: a list of frames; Enter opens a frame's
 locals browser, from which a value can be inspected/drilled into."))
 
+(defun %backtrace-text (frames)
+  "A full-backtrace string: each frame's label followed by its locals."
+  (with-output-to-string (s)
+    (dolist (f frames)
+      (format s "~a~%" (getf f :label))
+      (dolist (lv (getf f :locals))
+        (format s "        ~a = ~a~%" (first lv) (second lv)))
+      (terpri s))))
+
 (defmethod handle-event ((d tframe-dialog) event)
-  (when (and (message-event-p event)
-             (= (event-command event) +cm-list-item-selected+)
-             (frame-dialog-lb d))
-    (let ((frame (nth (list-focused (frame-dialog-lb d)) (frame-dialog-frames d))))
-      (when frame (show-locals-dialog frame (frame-dialog-package d))))
-    (clear-event event))
-  (call-next-method))
+  (cond
+    ((and (message-event-p event)
+          (= (event-command event) +cm-list-item-selected+)
+          (frame-dialog-lb d))
+     (let ((frame (nth (list-focused (frame-dialog-lb d)) (frame-dialog-frames d))))
+       (when frame (show-locals-dialog frame (frame-dialog-package d))))
+     (clear-event event))
+    ;; `e' exports the whole backtrace (frames + locals) to a scrollable window
+    ((and (= (event-type event) +ev-key-down+)
+          (plusp (event-char-code event))
+          (member (char-downcase (code-char (event-char-code event))) '(#\e)))
+     (show-text-dialog "Backtrace (full)" (%backtrace-text (frame-dialog-frames d)) :height 24)
+     (clear-event event))
+    (t (call-next-method))))
 
 (defun show-frames-dialog (frames &optional package)
   "Modal backtrace browser; pick a frame (Enter) to inspect its locals."
@@ -406,7 +422,7 @@ locals browser, from which a value can be inspected/drilled into."))
                                   :items (mapcar (lambda (f) (getf f :label)) frames)
                                   :command 0 :bounds (make-trect 1 1 (1- w) (- h 4))))
                (d (make-instance 'tframe-dialog :frames frames :lb lb :package package
-                                 :title "Backtrace — Enter for locals"
+                                 :title "Backtrace — Enter: locals  E: export"
                                  :bounds (make-trect 0 0 w h)))
                (vsb (standard-scrollbar d t)))
           (insert d lb) (attach-scrollbars lb :vscroll vsb)
@@ -483,12 +499,21 @@ user aborts.  Safe to call while a worker thread is blocked waiting."
       (if (= (exec-view desk d) +cm-ok+)
           (let* ((idx (list-focused lb)) (rs (nth idx restarts)))
             (if (%restart-needs-value-p rs)
-                (multiple-value-bind (cmd s)
-                    (input-box "Restart value"
-                               (format nil "Lisp form to ~(~a~):" (restart-name rs)) "")
-                  (if (and (= cmd +cm-ok+) (plusp (length (string-trim '(#\Space #\Tab) s))))
-                      (values idx s)
-                      (values nil nil)))     ; cancelled the value -> abort
+                ;; loop until the value form reads cleanly (or the user cancels),
+                ;; so a typo re-prompts instead of silently aborting
+                (loop
+                  (multiple-value-bind (cmd s)
+                      (input-box "Restart value"
+                                 (format nil "Lisp form to ~(~a~):" (restart-name rs)) "")
+                    (cond
+                      ((or (/= cmd +cm-ok+)
+                           (zerop (length (string-trim '(#\Space #\Tab) s))))
+                       (return (values nil nil)))             ; cancelled -> abort
+                      ((let ((*package* (or package *package*)))
+                         (ignore-errors (read-from-string s) t))
+                       (return (values idx s)))               ; readable -> use it
+                      (t (message-box "That isn't a readable Lisp form -- try again."
+                                      (logior +mf-error+ +mf-ok-button+))))))
                 (values idx nil)))
           (values nil nil)))))
 

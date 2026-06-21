@@ -1063,6 +1063,13 @@ broadcasts and drawing); return the control."
 ;;; REPL backend (inline path)
 ;;; ===========================================================================
 
+(deftest backtrace-export
+  (let* ((frames (list (list :label "0  FOO" :locals '(("x" "10" 10) ("y" "20" 20)))
+                       (list :label "1  BAR" :locals nil)))
+         (txt (tvision::%backtrace-text frames)))
+    (ok "includes both frame labels" (and (search "0  FOO" txt) (search "1  BAR" txt)))
+    (ok "includes a local and its value" (search "x = 10" txt))))
+
 (deftest repl-backend
   (let ((cands (repl-backend-completions "list-len" (find-package :cl))))
     (ok "completion finds list-length" (member "list-length" cands :test #'string=)))
