@@ -675,6 +675,32 @@ Skips strings, #\\char literals and ; comments so their parens don't count."
           (t (incf i)))))
     nil))
 
+(defun %buffer-in-package (text upto)
+  "Package-name STRING of the last (in-package ...) form starting before offset
+UPTO in TEXT, or NIL -- so eval-defun / eval-region run in the buffer's declared
+package rather than the listener's current one."
+  (let ((pos 0) (found nil))
+    (loop for i = (search "(in-package" text :start2 pos :test #'char-equal)
+          while (and i (< i upto))
+          do (let ((form (ignore-errors
+                          (with-input-from-string (s text :start i) (read s nil nil)))))
+               (when (and (consp form) (symbolp (first form))
+                          (string-equal (symbol-name (first form)) "IN-PACKAGE")
+                          (cdr form))
+                 (setf found (string (second form))))
+               (setf pos (+ i 11))))
+    found))
+
+(defun %with-buffer-package (app pkg form-text)
+  "Prefix FORM-TEXT with (in-package PKG) when the buffer declares a package PKG
+that exists and differs from the listener's current one (so the form evaluates
+in its file's package, and the listener follows -- like compiling a file)."
+  (let* ((rv (some-repl app))
+         (cur (and rv (package-name (repl-package rv)))))
+    (if (and pkg (find-package pkg) (not (string-equal pkg cur)))
+        (format nil "(in-package ~s)~%~a" pkg form-text)
+        form-text)))
+
 (defun do-macroexpand (app)
   "Macroexpand-1 a form.  When an editor window is focused, the prompt defaults
 to the form at the cursor (the selection, the enclosing s-expression, or the
@@ -1545,18 +1571,22 @@ Backspace shortens, Esc cancels (restores point), Enter keeps the match."
       ((not ed) (message-box "Focus an editor window first." (logior +mf-information+ +mf-ok-button+)))
       ((not rv) (message-box "No REPL open." (logior +mf-information+ +mf-ok-button+)))
       (t (let ((text (text-string ed)) (pkg (repl-package rv)))
-           ;; evaluate the buffer on the worker so the UI stays responsive
+           ;; evaluate the buffer on the worker so the UI stays responsive;
+           ;; in-package forms in the buffer take effect for the forms that follow
            (repl-call-on-worker rv
              (lambda ()
-               (let ((out (with-output-to-string (o)
-                            (let ((*standard-output* o) (*error-output* o) (*package* pkg))
-                              (handler-case
-                                  (with-input-from-string (in text)
-                                    (loop for f = (read in nil :eof) until (eq f :eof) do (eval f)))
-                                (error (e) (format o ";; ~a~%" e)))))))
+               (let* ((n 0)
+                      (out (with-output-to-string (o)
+                             (let ((*standard-output* o) (*error-output* o) (*package* pkg))
+                               (handler-case
+                                   (with-input-from-string (in text)
+                                     (loop for f = (read in nil :eof) until (eq f :eof)
+                                           do (eval f) (incf n)))
+                                 (error (e) (format o ";; ~a~%" e)))))))
                  (run-on-ui (lambda ()
                               (show-text-window "Load buffer"
-                                                (if (plusp (length out)) out "Loaded (no output)."))))))))))))
+                                (format nil "~@[~a~%~];; loaded ~d form~:p"
+                                        (and (plusp (length out)) out) n))))))))))))
 
 ;;; --- evaluate from an editor window ----------------------------------------
 
@@ -1582,9 +1612,10 @@ debugger support, exactly as if typed)."
     (if (not ew)
         (message-box "Focus an editor window first." (logior +mf-information+ +mf-ok-button+))
         (let* ((ed (editor-window-editor ew))
-               (form (%toplevel-form-at-offset (text-string ed) (%editor-offset ed))))
+               (text (text-string ed)) (off (%editor-offset ed))
+               (form (%toplevel-form-at-offset text off)))
           (if form
-              (%eval-in-repl app form)
+              (%eval-in-repl app (%with-buffer-package app (%buffer-in-package text off) form))
               (message-box "No top-level form at the cursor."
                            (logior +mf-information+ +mf-ok-button+)))))))
 
@@ -1593,9 +1624,11 @@ debugger support, exactly as if typed)."
   (let ((ew (current-editor-window app)))
     (if (not ew)
         (message-box "Focus an editor window first." (logior +mf-information+ +mf-ok-button+))
-        (let ((sel (selected-string (editor-window-editor ew))))
+        (let* ((ed (editor-window-editor ew))
+               (sel (selected-string ed)))
           (if (and sel (plusp (length (string-trim '(#\Space #\Tab #\Newline) sel))))
-              (%eval-in-repl app sel)
+              (%eval-in-repl app (%with-buffer-package
+                                  app (%buffer-in-package (text-string ed) (%editor-offset ed)) sel))
               (message-box "Select a region first." (logior +mf-information+ +mf-ok-button+)))))))
 
 ;;; --- session save/restore --------------------------------------------------
