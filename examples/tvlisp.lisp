@@ -43,6 +43,7 @@
 (defparameter +cm-replace+     348)
 (defparameter +cm-trace+       349)
 (defparameter +cm-untrace-all+ 350)
+(defparameter +cm-trace-pkg+   357)
 (defparameter +cm-goto-line+   351)
 (defparameter +cm-isearch+     352)
 (defparameter +cm-wrap+        353)
@@ -171,6 +172,7 @@
          (menu-item "~P~rofile..."       +cm-profile+)
          (menu-item "~D~eterministic profile..." +cm-profile-det+)
          (menu-item "Tra~c~e..."          +cm-trace+)
+         (menu-item "Trace pac~k~age..."  +cm-trace-pkg+)
          (menu-item "~U~ntrace all..."    +cm-untrace-all+)))
       (sub-menu "~B~rowse"
         (new-menu
@@ -1331,6 +1333,26 @@ appears in the REPL, indented by call depth (SBCL's default)."
               (tvision::repl-fresh-prompt rv) (draw-view rv))
           (error (e) (err-box e)))))))
 
+(defun do-trace-package (rv)
+  "TRACE every exported function of a package (macros/special-operators skipped)."
+  (when rv
+    (let ((p (prompt-line "Trace package" "Package (traces its exported functions):"
+                          (package-name (repl-package rv)))))
+      (when p
+        (handler-case
+            (let* ((pkg (or (find-package (string-trim " " p))
+                            (error "No such package: ~a" p)))
+                   (syms (let (acc)
+                           (do-external-symbols (s pkg acc)
+                             (when (and (fboundp s) (not (macro-function s))
+                                        (not (special-operator-p s)))
+                               (push s acc))))))
+              (dolist (s syms) (ignore-errors (eval `(trace ,s))))
+              (repl-print rv (format nil "~%; tracing ~d function~:p in ~a~%"
+                                     (length syms) (package-name pkg)))
+              (tvision::repl-fresh-prompt rv) (draw-view rv))
+          (error (e) (err-box e)))))))
+
 (defun do-untrace-all (rv)
   "Show the traced functions as a checklist (all checked); untrace the ones kept
 checked when you confirm."
@@ -1490,9 +1512,12 @@ seconds; ALL-THREADS samples every thread, not just this one."
 (defun do-profile (rv app)
   (let ((s (prompt-line "Profile" "Form to profile:")))
     (when (and rv s)
-      (let ((mode (choose-index "Profiler mode" '("CPU time" "Allocations") :start 0)))
+      (let ((mode (choose-index "Profiler mode"
+                                '("CPU time (this thread)" "CPU time (all threads)" "Allocations")
+                                :start 0)))
         (when mode
-          (let* ((alloc (= mode 1))
+          (let* ((alloc (= mode 2))
+                 (all-threads (= mode 1))
                  (ms (unless alloc (prompt-line "Profile" "Sample interval (ms):" "1.0")))
                  (interval (if ms (/ (or (ignore-errors (read-from-string ms)) 1.0) 1000.0) 0.001))
                  (form (read-in rv s)) (pkg (repl-package rv)))
@@ -1500,7 +1525,8 @@ seconds; ALL-THREADS samples every thread, not just this one."
             (repl-call-on-worker rv
               (lambda ()
                 (let ((data (run-profile form pkg :interval interval
-                                         :mode (if alloc :alloc :time))))
+                                         :mode (if alloc :alloc :time)
+                                         :all-threads all-threads)))
                   (run-on-ui (lambda ()
                                (if (getf data :rows)
                                    (show-profile-results app data)
@@ -2396,6 +2422,7 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-isearch+)     (do-isearch app) (clear-event event))
           ((= c +cm-wrap+)        (do-toggle-wrap app) (clear-event event))
           ((= c +cm-trace+)       (do-trace rv) (clear-event event))
+          ((= c +cm-trace-pkg+)   (do-trace-package rv) (clear-event event))
           ((= c +cm-untrace-all+) (do-untrace-all rv) (clear-event event))
           ((= c +cm-histsearch+)  (do-history-search rv) (clear-event event))
           ((= c +cm-new-file+)    (do-new-editor app) (clear-event event))
