@@ -92,6 +92,7 @@
    (find-case    :initform nil :accessor find-case)
    (find-word    :initform nil :accessor find-word)
    (find-back    :initform nil :accessor find-back)
+   (find-regex   :initform nil :accessor find-regex)
    (arglist-hint :initform nil :accessor arglist-hint)
    (auto-close   :initform nil :accessor auto-close)))
 
@@ -1286,7 +1287,7 @@ run a form, and show the call-count/time report."
 (defun %find-dialog (app title initial &key replace)
   "A Find (or Replace) dialog with options.  Returns
 (values ok find-text replace-text case-p word-p back-or-all-p)."
-  (let* ((w 52) (h (if replace 13 12))
+  (let* ((w 52) (h (if replace 14 13))
          (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
          (find-in (make-instance 'tinputline :data initial :maxlen 100
                                  :bounds (make-trect 12 2 (- w 3) 3)))
@@ -1295,10 +1296,11 @@ run a form, and show the call-count/time report."
                                    :bounds (make-trect 12 4 (- w 3) 5))))
          (opts (make-instance 'tcheck-boxes
                               :labels (if replace
-                                          '("~C~ase sensitive" "~W~hole word" "Replace ~a~ll (no prompt)")
-                                          '("~C~ase sensitive" "~W~hole word" "~B~ackward")))))
-    (set-bounds opts (make-trect 3 (if replace 6 4) (- w 3) (if replace 9 7)))
-    (setf (cluster-value opts) (logior (if (find-case app) 1 0) (if (find-word app) 2 0)))
+                                          '("~C~ase sensitive" "~W~hole word" "Rege~x~p" "Replace ~a~ll (no prompt)")
+                                          '("~C~ase sensitive" "~W~hole word" "Rege~x~p" "~B~ackward")))))
+    (set-bounds opts (make-trect 3 (if replace 6 4) (- w 3) (if replace 10 8)))
+    (setf (cluster-value opts) (logior (if (find-case app) 1 0) (if (find-word app) 2 0)
+                                       (if (find-regex app) 4 0)))
     (flet ((lbl (text y link)
              (let ((l (make-instance 'tlabel :text text :link link)))
                (set-bounds l (make-trect 3 y (+ 3 (length text)) (1+ y)))
@@ -1314,26 +1316,29 @@ run a form, and show the call-count/time report."
     (focus find-in)
     (if (= (exec-view (program-desktop app) d) +cm-ok+)
         (let ((v (cluster-value opts)))
+          ;; ok find replace case word regex back-or-all
           (values t (get-data find-in) (and repl-in (get-data repl-in))
-                  (logbitp 0 v) (logbitp 1 v) (logbitp 2 v)))
-        (values nil nil nil nil nil nil))))
+                  (logbitp 0 v) (logbitp 1 v) (logbitp 2 v) (logbitp 3 v)))
+        (values nil nil nil nil nil nil nil))))
 
 (defun %do-search (app)
   (let ((tv (%current-text-view app)) (s (find-last app)))
     (when (and tv (plusp (length s)))
-      (unless (text-find-and-select tv s :case-sensitive (find-case app)
-                                    :whole-word (find-word app)
-                                    :backward (find-back app) :wrap t)
+      (unless (if (find-regex app)
+                  (text-find-and-select-regex tv s :wrap t)
+                  (text-find-and-select tv s :case-sensitive (find-case app)
+                                        :whole-word (find-word app)
+                                        :backward (find-back app) :wrap t))
         (message-box "Not found." (logior +mf-information+ +mf-ok-button+)))
       (draw-view tv))))
 
 (defun do-find (app)
   (when (%current-text-view app)
-    (multiple-value-bind (ok text rep case word back) (%find-dialog app "Find" (find-last app))
+    (multiple-value-bind (ok text rep case word regex back) (%find-dialog app "Find" (find-last app))
       (declare (ignore rep))
       (when (and ok (plusp (length text)))
         (setf (find-last app) text (find-case app) case
-              (find-word app) word (find-back app) back)
+              (find-word app) word (find-regex app) regex (find-back app) back)
         (%do-search app)))))
 
 (defun do-find-next (app)
@@ -1359,23 +1364,47 @@ run a form, and show the call-count/time report."
     (message-box (format nil "~d replacement~:p made." count)
                  (logior +mf-information+ +mf-ok-button+))))
 
+(defun %query-replace-regex (app ed find repl)
+  "Step through regex matches, confirming each (Yes / No / Cancel)."
+  (let ((count 0))
+    (block done
+      (loop
+        (unless (text-find-and-select-regex ed find) (return))
+        (draw-view app) (when tvision:*screen* (flush-screen tvision:*screen*))
+        (case (message-box "Replace this occurrence?"
+                           (logior +mf-confirmation+ +mf-yes-button+ +mf-no-button+ +mf-cancel-button+))
+          (#.+cm-yes+ (text-replace-selection ed repl) (incf count))
+          (#.+cm-no+  (setf (text-anchor ed) nil))   ; cursor sits at match end -> search moves on
+          (t (return-from done)))))
+    (message-box (format nil "~d replacement~:p made." count)
+                 (logior +mf-information+ +mf-ok-button+))))
+
 (defun do-replace (app)
-  "Find/Replace across the focused editor: all-at-once or confirm each match."
+  "Find/Replace across the focused editor: all-at-once or confirm each match;
+literal or regular-expression."
   (let ((ew (current-editor-window app)))
     (if (not ew)
         (message-box "Replace works in an editor window." (logior +mf-information+ +mf-ok-button+))
-        (multiple-value-bind (ok find repl case word all)
+        (multiple-value-bind (ok find repl case word regex all)
             (%find-dialog app "Replace" (find-last app) :replace t)
           (when (and ok (plusp (length find)))
             (setf (find-last app) find (replace-last app) repl
-                  (find-case app) case (find-word app) word)
+                  (find-case app) case (find-word app) word (find-regex app) regex)
             (let ((ed (editor-window-editor ew)))
-              (if all
-                  (let ((n (text-replace-all ed find repl :case-sensitive case :whole-word word)))
-                    (draw-view ed)
-                    (message-box (format nil "~d replacement~:p made." n)
-                                 (logior +mf-information+ +mf-ok-button+)))
-                  (%query-replace app ed find repl))
+              (cond
+                (regex
+                 (if all
+                     (let ((n (text-replace-all-regex ed find repl)))
+                       (draw-view ed)
+                       (message-box (format nil "~d replacement~:p made." n)
+                                    (logior +mf-information+ +mf-ok-button+)))
+                     (%query-replace-regex app ed find repl)))
+                (all
+                 (let ((n (text-replace-all ed find repl :case-sensitive case :whole-word word)))
+                   (draw-view ed)
+                   (message-box (format nil "~d replacement~:p made." n)
+                                (logior +mf-information+ +mf-ok-button+))))
+                (t (%query-replace app ed find repl)))
               (draw-view ed)))))))
 
 (defun do-goto-line (app)
