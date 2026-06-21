@@ -128,7 +128,7 @@
       (menu-item "~P~aste"      +cm-paste+ :key-text "Ctrl-V")
       (menu-separator)
       (menu-item "~F~ind..."    +cm-find+      :key-text "Ctrl-F")
-      (menu-item "Find ~n~ext"  +cm-find-next+ :key-text "Ctrl-L")
+      (menu-item "Find ne~x~t"  +cm-find-next+ :key-text "Ctrl-L")
       (menu-item "~R~eplace..." +cm-replace+)
       (menu-item "~I~ncremental search" +cm-isearch+)
       (menu-item "~G~o to line..." +cm-goto-line+)
@@ -136,36 +136,43 @@
       (menu-item "~H~istory search" +cm-histsearch+ :key-text "Ctrl-R")
       (menu-separator)
       (menu-item "I~n~terrupt eval" +cm-interrupt+ :key-text "Ctrl-C")))
+   ;; grouped into submenus so every entry has a unique, unambiguous mnemonic
+   ;; (the flat menu had too many items -- Trace/Class shared Alt-C, etc.)
    (sub-menu "~L~isp"
      (new-menu
       (menu-item "~I~nspect *"        +cm-inspect+ :key-code +kb-f8+ :key-text "F8")
       (menu-item "Inspect ~e~xpr..."  +cm-inspect-expr+)
       (menu-separator)
-      (menu-item "~G~o to definition..." +cm-gotodef+ :key-text "Alt-.")
-      (menu-item "~F~unction browser..." +cm-funcbrowser+)
-      (menu-item "~W~ho calls..."        +cm-whocalls+)
-      (menu-item "Who ~r~eferences..."   +cm-whorefs+)
-      (menu-separator)
-      (menu-item "S~t~ep form..."     +cm-step+)
-      (menu-item "Profi~l~e..."       +cm-profile+)
-      (menu-item "Determi~n~istic profile..." +cm-profile-det+)
-      (menu-item "~M~acroexpand..."   +cm-macroexpand+)
-      (menu-item "~D~escribe..."      +cm-describe+)
-      (menu-item "Doc~u~mentation..." +cm-documentation+)
-      (menu-item "Dis~a~ssemble..."   +cm-disassemble+)
-      (menu-item "A~p~ropos..."       +cm-apropos+)
-      (menu-item "~H~yperSpec lookup..." +cm-hslookup+)
-      (menu-separator)
-      (menu-item "Tra~c~e..."          +cm-trace+)
-      (menu-item "~U~ntrace all..."    +cm-untrace-all+)
-      (menu-separator)
-      (menu-item "~C~lass browser..." +cm-classes+)
-      (menu-item "Pac~k~ages..."      +cm-packages+)
-      (menu-item "~S~ystems..."       +cm-systems+)
-      (menu-separator)
       (menu-item "E~v~al defun"       +cm-eval-defun+)
-      (menu-item "Eval regi~o~n"      +cm-eval-region+)
-      (menu-item "Load ~b~uffer"      +cm-load-buffer+)))
+      (menu-item "Eval ~r~egion"      +cm-eval-region+)
+      (menu-item "~L~oad buffer"      +cm-load-buffer+)
+      (menu-separator)
+      (sub-menu "~N~avigate"
+        (new-menu
+         (menu-item "~G~o to definition..." +cm-gotodef+ :key-text "Alt-.")
+         (menu-item "~F~unction browser..." +cm-funcbrowser+)
+         (menu-item "~W~ho calls..."        +cm-whocalls+)
+         (menu-item "Who ~r~eferences..."   +cm-whorefs+)))
+      (sub-menu "~D~ocument"
+        (new-menu
+         (menu-item "~D~escribe..."      +cm-describe+)
+         (menu-item "Doc~u~mentation..." +cm-documentation+)
+         (menu-item "~M~acroexpand..."   +cm-macroexpand+)
+         (menu-item "D~i~sassemble..."   +cm-disassemble+)
+         (menu-item "~A~propos..."       +cm-apropos+)
+         (menu-item "~H~yperSpec lookup..." +cm-hslookup+)))
+      (sub-menu "~P~rofile / trace"
+        (new-menu
+         (menu-item "S~t~ep form..."     +cm-step+)
+         (menu-item "~P~rofile..."       +cm-profile+)
+         (menu-item "~D~eterministic profile..." +cm-profile-det+)
+         (menu-item "Tra~c~e..."          +cm-trace+)
+         (menu-item "~U~ntrace all..."    +cm-untrace-all+)))
+      (sub-menu "~B~rowse"
+        (new-menu
+         (menu-item "~C~lasses..."  +cm-classes+)
+         (menu-item "~P~ackages..." +cm-packages+)
+         (menu-item "~S~ystems..."  +cm-systems+)))))
    (sub-menu "~O~ptions"
      (new-menu
       (menu-item "Desktop c~o~lor..." +cm-theme+)
