@@ -184,8 +184,9 @@ parked with its stack live:
   quoted/backquoted lists align under their first element, `loop` clauses align
   under the first clause (a `when`/`if` clause body indents two further), and
   user macros with a `&body` argument are indented like special forms (looked up
-  live in the image).  Tab re-indents the current line (or the
-  selected lines); **Alt-Q** re-indents the whole top-level form.  **Undo /
+  live in the image).  **Tab** re-indents the current line (or the
+  selected lines) — or, when the cursor follows a symbol, **completes** it (see
+  below); **Alt-Q** re-indents the whole top-level form.  **Undo /
   redo** (Ctrl-Z / Ctrl-Y).
 
 ![Lisp auto-indent and Alt-Q reflow in an editor window](media/auto-indent.gif)
@@ -193,6 +194,21 @@ parked with its stack live:
 ![Lisp syntax highlighting in an editor window](media/syntax-highlight.gif)
 - **Eval from an editor** — Lisp ▸ Eval defun (the top-level form at the cursor)
   and Eval region (the selection) submit into a REPL.
+- **Symbol completion in editor buffers** — **Tab** after a symbol prefix
+  completes it against the buffer's package (a popup picker for multiple
+  candidates), reusing the REPL's completion backend.
+
+  ![Tab completion and comment toggling in an editor buffer](media/editor-productivity.gif)
+
+- **Comment region** (Edit ▸ Comment region) toggles `;;` over the selected lines
+  or the current line.
+- **Structural editing** (Edit ▸ Structural) — wrap the form at the cursor in
+  `()`, splice (remove the enclosing parens), or raise (replace the enclosing
+  form with the one at point).
+- **Insert template** (Edit ▸ Insert template) — `defun` / `defclass` /
+  `defmethod` / `loop` / `handler-case` / … skeletons, indented to the cursor.
+- **Go-to-definition pop-back** — **Alt-.** jumps to a definition; **Alt-,** pops
+  back to where you came from (a navigation stack across jumps).
 - **Find / Find-next** (Ctrl-F / Ctrl-L) in the focused REPL transcript *or
   editor window*, with **case-sensitive / whole-word / backward** options, plus
   **Replace** — all-at-once or **query-replace** (confirm each match).
