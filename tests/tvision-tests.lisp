@@ -1121,6 +1121,63 @@ broadcasts and drawing); return the control."
     (ok "includes both frame labels" (and (search "0  FOO" txt) (search "1  BAR" txt)))
     (ok "includes a local and its value" (search "x = 10" txt))))
 
+;;; --- debugger frame ops ---------------------------------------------------
+
+(declaim (notinline %ut-frame-inner))
+(defun %ut-frame-inner ()
+  "Capture the live stack, then make THIS frame return the value of \"41\" via
+the return-from-frame op; if the op doesn't fire, fall through to 99."
+  (declare (optimize (debug 3) (speed 0)))
+  (multiple-value-bind (bt live) (tvision::repl-capture-stack)
+    (let ((idx (position-if (lambda (f)
+                              (let ((n (getf f :name)))
+                                (and (symbolp n) (string= (symbol-name n) "%UT-FRAME-INNER"))))
+                            bt)))
+      (when idx (tvision::%frame-return live idx "41"))
+      99)))
+
+(defun %ut-frame-outer ()
+  (declare (optimize (debug 3) (speed 0)))
+  (restart-case (1+ (%ut-frame-inner))
+    (tvision::repl-abort () :aborted)))
+
+(deftest debugger-frame-ops
+  ;; capture returns index-aligned snapshots + live frames
+  (multiple-value-bind (bt live) (tvision::repl-capture-stack)
+    (ok "capture returns frames" (consp bt))
+    (is= "snapshots and live frames are index-aligned" (length bt) (length live))
+    (ok "live entries are sb-di frames"
+        (every (lambda (f) (typep f 'sb-di:frame)) live))
+    (ok "snapshots carry the raw frame name" (getf (first bt) :name t)))
+  ;; return-from-frame actually unwinds and supplies the value:
+  ;; inner returns 41 (not 99), so outer's (1+ ...) is 42 (not :aborted)
+  (is= "return-from-frame unwinds with the given value" (%ut-frame-outer) 42)
+  ;; disassemble works from a name and degrades gracefully on a bad one
+  (let ((txt (tvision::%frame-disassemble-text 'car)))
+    (ok "disassembles a real function to text" (and (stringp txt) (plusp (length txt)))))
+  (let ((txt (tvision::%frame-disassemble-text '#:no-such-fn)))
+    (ok "bad disassembly target yields a note, not an error"
+        (and (stringp txt) (search "cannot disassemble" txt))))
+  ;; machinery classification: signalling/eval/worker-loop frames are internal,
+  ;; ordinary user functions are not
+  (ok "ERROR is machinery"   (tvision::%frame-internal-p 'error))
+  (ok "EVAL is machinery"    (tvision::%frame-internal-p 'eval))
+  (ok "(FLET BODY IN RUN) is machinery"
+      (tvision::%frame-internal-p (list 'flet 'body 'in (find-symbol "RUN" :tvision))))
+  (ok "a user function is not machinery" (not (tvision::%frame-internal-p '%ut-frame-inner)))
+  ;; snapshots carry :internal-p, and the default filter hides machinery
+  (multiple-value-bind (bt live) (tvision::repl-capture-stack)
+    (declare (ignore live))
+    (ok "every snapshot has an :internal-p flag"
+        (every (lambda (f) (member :internal-p f)) bt))
+    (let ((user (tvision::%frame-visible-indices bt nil))
+          (all  (tvision::%frame-visible-indices bt t)))
+      (ok "show-all reveals at least as many frames as the default view"
+          (>= (length all) (length user)))
+      (ok "the default view hides this capture's machinery (ERROR/EVAL/RUN)"
+          (< (length user) (length all)))
+      (ok "filtering never yields an empty frame list" (plusp (length user))))))
+
 (deftest repl-backend
   (let ((cands (repl-backend-completions "list-len" (find-package :cl))))
     (ok "completion finds list-length" (member "list-length" cands :test #'string=)))
