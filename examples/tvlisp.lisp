@@ -92,6 +92,7 @@
 (defparameter +cm-splice+      367)
 (defparameter +cm-raise+       368)
 (defparameter +cm-snippet+     369)
+(defparameter +cm-compile-defun+ 370) ; compile the form at point, list its notes
 
 (defparameter +hc-repl+ 1)
 ;; Computed at runtime (not load/build time) so they follow the running user's
@@ -173,6 +174,7 @@
       (menu-item "E~v~al defun"       +cm-eval-defun+)
       (menu-item "Eval ~r~egion"      +cm-eval-region+)
       (menu-item "~L~oad buffer"      +cm-load-buffer+)
+      (menu-item "Compile de~f~un"    +cm-compile-defun+)
       (menu-item "~C~ompile buffer"   +cm-compile-buffer+)
       (menu-separator)
       (sub-menu "~N~avigate"
@@ -2417,44 +2419,212 @@ Backspace shortens, Esc cancels (restores point), Enter keeps the match."
                            (logior +mf-error+ +mf-ok-button+))
               nil)))))))
 
-(defun do-compile-buffer (app)
-  "Compile the focused editor's buffer (without loading it) and show the
-compiler warnings/notes -- a quick check.  Runs on the listener's worker."
-  (let* ((win (group-current (program-desktop app)))
-         (ed (and (typep win 'teditor-window) (editor-window-editor win)))
+;;; --- compile-defun with navigable compiler notes (SLIME C-c C-c) ----------
+
+(defun %toplevel-form-span (str off)
+  "(values START END) of the outermost () form whose span contains OFF, or NIL."
+  (let ((len (length str)) (i 0) (depth 0) (start nil))
+    (loop while (< i len) do
+      (let ((c (char str i)))
+        (cond
+          ((char= c #\;) (loop while (and (< i len) (char/= (char str i) #\Newline)) do (incf i)))
+          ((char= c #\")
+           (incf i) (loop while (< i len) do
+             (let ((d (char str i))) (incf i)
+               (cond ((char= d #\\) (incf i)) ((char= d #\") (return))))))
+          ((and (char= c #\#) (< (1+ i) len) (char= (char str (1+ i)) #\\)) (incf i 3))
+          ((char= c #\() (when (zerop depth) (setf start i)) (incf depth) (incf i))
+          ((char= c #\))
+           (incf i) (when (plusp depth) (decf depth))
+           (when (zerop depth)
+             (when (and start (<= start off) (<= off i))
+               (return-from %toplevel-form-span (values start i)))
+             (setf start nil)))
+          (t (incf i)))))
+    nil))
+
+(defun %message-symbols (message)
+  "Symbol names referenced in a compiler MESSAGE: all-uppercase tokens (CL upcases
+symbol names), package qualifier stripped — used to pinpoint the offending form."
+  (let ((toks '()) (i 0) (n (length message)))
+    (flet ((symchar (ch) (or (alphanumericp ch) (find ch "*+/<>=!?%&._-:"))))
+      (loop while (< i n) do
+        (if (symchar (char message i))
+            (let ((j i))
+              (loop while (and (< j n) (symchar (char message j))) do (incf j))
+              (let ((tok (subseq message i j)))
+                (when (and (> (length tok) 1) (find-if #'upper-case-p tok)
+                           (not (find-if #'lower-case-p tok)))
+                  (push (%strip-package tok) toks)))
+              (setf i j))
+            (incf i))))
+    (nreverse toks)))
+
+(defun %note-refine-offset (text pos message)
+  "Refine a note at top-level-form offset POS to the offending symbol's position
+by searching TEXT (from POS, case-insensitively) for a symbol named in MESSAGE."
+  (let ((start (max 0 (min pos (length text)))) (low (string-downcase text)) (best nil))
+    (dolist (tok (%message-symbols message))
+      (let ((p (search (string-downcase tok) low :start2 start)))
+        (when (and p (or (null best) (< p best))) (setf best p))))
+    (or best start)))
+
+(defun %compile-text-notes (text pkg)
+  "Worker-side: compile TEXT (read in PKG) from a temp file, returning
+(values STATUS NOTES); STATUS is :ok or an error string and each note is
+(:severity KW :pos INT :message STR), POS being the offending top-level form's
+character offset in TEXT (via SBCL's compiler-error-context)."
+  (let ((src (format nil "/tmp/tvlisp-cd-~36r.lisp" (get-internal-real-time)))
+        (notes '())
+        (fec  (find-symbol "FIND-ERROR-CONTEXT" :sb-c))
+        (cefp (find-symbol "COMPILER-ERROR-CONTEXT-FILE-POSITION" :sb-c)))
+    (unwind-protect
+         (handler-case
+             (progn
+               (with-open-file (s src :direction :output :if-exists :supersede
+                                      :if-does-not-exist :create :external-format :utf-8)
+                 (write-string text s))
+               (flet ((grab (c sev)
+                        (let* ((ctx (and fec (ignore-errors (funcall fec nil))))
+                               (pos (or (and ctx cefp (ignore-errors (funcall cefp ctx))) 0)))
+                          (push (list :severity sev :pos (or pos 0) :message (princ-to-string c)) notes))
+                        (when (find-restart 'muffle-warning c) (muffle-warning c))))
+                 (handler-bind ((style-warning        (lambda (c) (grab c :style)))
+                                (sb-ext:compiler-note (lambda (c) (grab c :note)))
+                                (warning              (lambda (c) (grab c :warning))))
+                   (let ((*package* pkg)
+                         (*error-output* (make-broadcast-stream))
+                         (*standard-output* (make-broadcast-stream)))
+                     (with-compilation-unit (:override t)
+                       (compile-file src :verbose nil :print nil)))))
+               (values :ok (nreverse notes)))
+           (error (e) (values (princ-to-string e) (nreverse notes))))
+      (ignore-errors (delete-file src))
+      (ignore-errors (delete-file (compile-file-pathname src))))))
+
+(defclass tnotes-window (twindow)
+  ((src-win :initarg :src-win :initform nil :accessor notes-src-win)  ; the editor window
+   (rows    :initarg :rows    :initform nil :accessor notes-rows)
+   (lb      :initarg :lb      :initform nil :accessor notes-lb))
+  (:documentation "A navigable list of compiler notes; Enter jumps to the
+offending location in the source editor window."))
+
+(defun %notes-jump (w)
+  (let* ((rows (notes-rows w)) (lb (notes-lb w))
+         (row (and lb rows (nth (list-focused lb) rows)))
+         (sw (notes-src-win w)) (desk (and *application* (program-desktop *application*))))
+    (when (and row sw desk (member sw (desktop-windows desk)))
+      (let ((ed (editor-window-editor sw)))
+        (%macro-set-cursor ed (getf row :offset))
+        (draw-view ed)
+        (set-current desk sw :normal-select)))))
+
+(defmethod handle-event ((w tnotes-window) event)
+  (cond
+    ((and (= (event-type event) +ev-broadcast+)
+          (= (event-command event) +cm-list-item-selected+)
+          (notes-lb w))
+     (%notes-jump w) (clear-event event))
+    (t (call-next-method))))
+
+(defun show-compile-notes (app src-win rows title)
+  "Open a navigable compiler-notes window for ROWS (each (:severity :message
+:offset)); Enter jumps into SRC-WIN's editor."
+  (let* ((desk (program-desktop app))
+         (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+         (w (min 84 (- dw 2))) (h (min 12 (max 6 (+ 3 (length rows)))))
+         (items (mapcar (lambda (r)
+                          (format nil "~7a ~a"
+                                  (case (getf r :severity)
+                                    (:style "style") (:warning "warning")
+                                    (:note "note") (t "?"))
+                                  (getf r :message)))
+                        rows))
+         (lb (make-instance 'tlist-box :items items :command 0
+                            :bounds (make-trect 1 1 (1- w) (- h 2))))
+         (win (make-instance 'tnotes-window :src-win src-win :rows rows :lb lb
+                             :title title :bounds (make-trect 0 0 w h)))
+         (vsb (standard-scrollbar win t)))
+    (insert win lb) (attach-scrollbars lb :vscroll vsb)
+    (move-to win (max 0 (floor (- dw w) 2)) (max 1 (- dh h 1)))   ; bottom: editor stays visible
+    (insert desk win) (focus win)))
+
+(defun do-compile-defun (app)
+  "Compile the top-level form at the cursor and list its compiler notes; Enter on
+a note jumps to the offending form in the editor (SLIME's C-c C-c)."
+  (let* ((win (current-editor-window app))
+         (ed (and win (editor-window-editor win)))
          (rv (some-repl app)))
     (cond
       ((not ed) (message-box "Focus an editor window first." (logior +mf-information+ +mf-ok-button+)))
       ((not rv) (message-box "No REPL open." (logior +mf-information+ +mf-ok-button+)))
-      (t (let ((text (text-string ed)) (pkg (repl-package rv))
+      (t (let ((text (text-string ed)) (off (%editor-offset ed)))
+           (multiple-value-bind (base end) (%toplevel-form-span text off)
+             (if (null base)
+                 (message-box "No top-level form at the cursor."
+                              (logior +mf-information+ +mf-ok-button+))
+                 (let ((form-text (subseq text base end))
+                       (pkg (or (find-package (%buffer-in-package text off)) (repl-package rv))))
+                   (repl-print rv (format nil "~%; compiling top-level form ...~%"))
+                   (repl-call-on-worker rv
+                     (lambda ()
+                       (multiple-value-bind (status notes) (%compile-text-notes form-text pkg)
+                         (run-on-ui
+                          (lambda ()
+                            (tvision::repl-ensure-fresh-line rv)
+                            (let ((rows (loop for nt in notes collect
+                                              (list :severity (getf nt :severity)
+                                                    :message (getf nt :message)
+                                                    :offset (+ base (%note-refine-offset
+                                                                     form-text (getf nt :pos)
+                                                                     (getf nt :message)))))))
+                              (cond
+                                ((stringp status)
+                                 (repl-print rv (format nil "; compile error: ~a~%" status)))
+                                ((null rows)
+                                 (repl-print rv "; compiled cleanly (no notes)~%"))
+                                (t (repl-print rv (format nil "; ~d compiler note~:p~%" (length rows)))
+                                   (show-compile-notes app win rows
+                                     (format nil "Compiler notes (~d) — Enter: jump to source"
+                                             (length rows)))))
+                              (tvision::repl-fresh-prompt rv) (draw-view rv)
+                              (when tvision:*screen* (flush-screen tvision:*screen*))))))))))))))))
+
+(defun do-compile-buffer (app)
+  "Compile the focused editor's whole buffer (without loading it) and show its
+compiler notes in a navigable list -- Enter jumps to the offending form.  Runs on
+the listener's worker."
+  (let* ((win (current-editor-window app))
+         (ed (and win (editor-window-editor win)))
+         (rv (some-repl app)))
+    (cond
+      ((not ed) (message-box "Focus an editor window first." (logior +mf-information+ +mf-ok-button+)))
+      ((not rv) (message-box "No REPL open." (logior +mf-information+ +mf-ok-button+)))
+      (t (let ((text (text-string ed))
+               (pkg (or (find-package (%buffer-in-package (text-string ed) 0)) (repl-package rv)))
                (name (if (editor-filename ed) (file-namestring (editor-filename ed)) "buffer")))
            (repl-print rv (format nil "~%; compiling ~a ...~%" name))
            (repl-call-on-worker rv
              (lambda ()
-               (let* ((src (format nil "/tmp/tvlisp-compile-~36r.lisp" (get-universal-time)))
-                      (result
-                        (handler-case
-                            (progn
-                              (with-open-file (s src :direction :output :if-exists :supersede
-                                                     :if-does-not-exist :create :external-format :utf-8)
-                                (format s "(in-package ~s)~%~a~%" (package-name pkg) text))
-                              (cons :ok (nth-value 1 (call-collecting-notes
-                                                      (lambda ()
-                                                        (let ((*package* pkg))
-                                                          (compile-file src :verbose nil :print nil)))))))
-                          (error (e) (cons :error (format nil "~a" e))))))
-                 (ignore-errors (delete-file src))
-                 (ignore-errors (delete-file (compile-file-pathname src)))
+               (multiple-value-bind (status notes) (%compile-text-notes text pkg)
                  (run-on-ui
                   (lambda ()
                     (tvision::repl-ensure-fresh-line rv)
-                    (if (eq (car result) :error)
-                        (repl-print rv (format nil "; compile error: ~a~%" (cdr result)))
-                        (let ((notes (cdr result)))
-                          (repl-print rv (format nil "; compiled ~a  (~d warning~:p)~%" name (length notes)))
-                          (when notes (%show-load-notes name notes))))
-                    (tvision::repl-fresh-prompt rv) (draw-view rv)
-                    (when tvision:*screen* (flush-screen tvision:*screen*))))))))))))
+                    (let ((rows (loop for nt in notes collect
+                                      (list :severity (getf nt :severity)
+                                            :message (getf nt :message)
+                                            :offset (%note-refine-offset text (getf nt :pos)
+                                                                         (getf nt :message))))))
+                      (cond
+                        ((stringp status)
+                         (repl-print rv (format nil "; compile error: ~a~%" status)))
+                        ((null rows)
+                         (repl-print rv (format nil "; compiled ~a cleanly~%" name)))
+                        (t (repl-print rv (format nil "; compiled ~a  (~d note~:p)~%" name (length rows)))
+                           (show-compile-notes app win rows
+                             (format nil "~a — ~d note~:p — Enter: jump" name (length rows)))))
+                      (tvision::repl-fresh-prompt rv) (draw-view rv)
+                      (when tvision:*screen* (flush-screen tvision:*screen*)))))))))))))
 
 (defun do-save-editor (app)
   "Save the focused editor window (Save As if it has no filename yet), keeping a
@@ -3039,6 +3209,7 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-systems+)     (do-systems rv) (clear-event event))
           ((= c +cm-load-buffer+) (do-load-buffer app) (clear-event event))
           ((= c +cm-compile-buffer+) (do-compile-buffer app) (clear-event event))
+          ((= c +cm-compile-defun+)  (do-compile-defun app) (clear-event event))
           ((= c +cm-eval-defun+)  (do-eval-defun app) (clear-event event))
           ((= c +cm-eval-region+) (do-eval-region app) (clear-event event))
           ((= c +cm-nav-back+)    (do-nav-back app) (clear-event event))
