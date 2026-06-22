@@ -149,6 +149,8 @@ parked with its stack live:
 
   ![Interactive macro stepper: expand a macro at the cursor in place, Tab to the next, M to expand all](media/macroexpand-step.gif)
 
+  ![Expanding every macro in the form at once with `M` (macroexpand-all)](media/macroexpand-all.gif)
+
 - **Describe**, **Documentation**, **Disassemble** — into scrollable windows.
 - **Trace / Untrace** — toggle `trace` on a function (output streams into the
   REPL as it is called); Untrace-all lists and clears the traced set.
