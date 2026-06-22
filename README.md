@@ -82,6 +82,11 @@ TUI *is* the Lisp image being driven.
   operator's lambda list (via `sb-introspect`), e.g. `(mapcar function list
   &rest more-lists)`; otherwise it shows the current package, thread count and
   busy state.
+- **Presentations.** Every value the REPL prints is a live object, not just
+  text: **double-click a result** to open the inspector on the actual object and
+  drill into its structure (SLY-style).
+
+  ![Double-click a printed REPL result to inspect the live object](media/repl-presentations.gif)
 
 **The debugger (SLIME `sldb`-style, across the worker-thread boundary)**
 
@@ -194,6 +199,13 @@ parked with its stack live:
 ![Lisp syntax highlighting in an editor window](media/syntax-highlight.gif)
 - **Eval from an editor** — Lisp ▸ Eval defun (the top-level form at the cursor)
   and Eval region (the selection) submit into a REPL.
+- **Compile with navigable notes** (SLIME `C-c C-c`) — Lisp ▸ Compile defun (the
+  form at the cursor) or Compile buffer compiles *without loading* and lists the
+  compiler warnings/notes in a window; **Enter on a note jumps to the offending
+  source** (located precisely by matching the symbol named in the message).
+
+  ![Compile the form at point and jump to each compiler note](media/compile-defun-notes.gif)
+
 - **Symbol completion in editor buffers** — **Tab** after a symbol prefix
   completes it against the buffer's package (a popup picker for multiple
   candidates), reusing the REPL's completion backend.
