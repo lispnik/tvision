@@ -2460,12 +2460,27 @@ symbol names), package qualifier stripped — used to pinpoint the offending for
             (incf i))))
     (nreverse toks)))
 
+(defun %search-token (token text start)
+  "Offset of TOKEN in TEXT at/after START as a *whole* symbol token (not a
+substring of a larger symbol, so `nam' won't match inside `name'),
+case-insensitively, or NIL."
+  (let* ((tk (string-downcase token)) (low (string-downcase text))
+         (n (length text)) (tl (length token)) (i start))
+    (loop for p = (search tk low :start2 i)
+          while p do
+            (let ((before (and (> p 0) (char low (1- p))))
+                  (after (and (< (+ p tl) n) (char low (+ p tl)))))
+              (if (and (or (null before) (not (%hs-symchar-p before)))
+                       (or (null after) (not (%hs-symchar-p after))))
+                  (return p)
+                  (setf i (1+ p)))))))
+
 (defun %note-refine-offset (text pos message)
   "Refine a note at top-level-form offset POS to the offending symbol's position
-by searching TEXT (from POS, case-insensitively) for a symbol named in MESSAGE."
-  (let ((start (max 0 (min pos (length text)))) (low (string-downcase text)) (best nil))
+by searching TEXT (from POS) for a whole-token symbol named in MESSAGE."
+  (let ((start (max 0 (min pos (length text)))) (best nil))
     (dolist (tok (%message-symbols message))
-      (let ((p (search (string-downcase tok) low :start2 start)))
+      (let ((p (%search-token tok text start)))
         (when (and p (or (null best) (< p best))) (setf best p))))
     (or best start)))
 
