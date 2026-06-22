@@ -135,7 +135,10 @@ package errored new-hist)."
    (worker       :initform nil :accessor repl-worker)       ; sb-thread:thread
    (to-worker    :initform nil :accessor repl-to-worker)    ; mailbox of jobs
    (busy         :initform nil :accessor repl-busy)         ; eval in flight?
-   (last-file    :initform nil :accessor repl-last-file)))  ; last file LOADed (for reload)
+   (last-file    :initform nil :accessor repl-last-file)    ; last file LOADed (for reload)
+   ;; presentations: each printed result is (OBJECT START END) over the transcript,
+   ;; so it can be double-clicked to inspect the live object (SLY-style)
+   (presentations :initform '() :accessor repl-presentations)))
 
 (defmethod initialize-instance :after ((r trepl-view) &key)
   (unless (repl-package r) (setf (repl-package r) (ensure-repl-package)))
@@ -163,6 +166,7 @@ e.g. '*, '+, '/).  Reads listener-local storage, not the global CL specials."
 (defun repl-clear (r)
   "Clear the transcript and start a fresh banner + prompt."
   (set-text r "")
+  (setf (repl-presentations r) '())     ; transcript text is gone -> drop presentations
   (repl-print r (repl-banner r))
   (repl-fresh-prompt r))
 
@@ -1042,11 +1046,37 @@ and the value of each stepped form streamed to the transcript."
           (repl-hist-vars r) new-hist)          ; per-listener history vars
     (values output results errored)))
 
+(defun %text-end-offset (tv)
+  "Character offset just past the last character of TV's buffer."
+  (let ((n (line-count tv)) (o 0))
+    (dotimes (i n) (incf o (length (nth-line tv i))) (when (< (1+ i) n) (incf o 1)))
+    o))
+
+(defun %line-col->offset (tv line col)
+  "Absolute character offset of (LINE, COL) in TV's buffer."
+  (let ((o 0))
+    (dotimes (i (min line (line-count tv))) (incf o (1+ (length (nth-line tv i)))))
+    (+ o col)))
+
+(defun repl-presentation-at (r offset)
+  "The (OBJECT START END) presentation whose range contains OFFSET, or NIL."
+  (find-if (lambda (p) (and (<= (second p) offset) (< offset (third p))))
+           (repl-presentations r)))
+
+(defun repl-present (r object)
+  "Print OBJECT to the transcript and record it as a presentation so it can be
+double-clicked to inspect the live value."
+  (let ((start (%text-end-offset r))
+        (s (handler-case (prin1-to-string object) (error () "#<unprintable>"))))
+    (repl-print r s)
+    (push (list object start (%text-end-offset r)) (repl-presentations r))
+    (repl-print r (string #\Newline))))
+
 (defun repl-print-results (r results)
   (if results
       (dolist (vals results)
         (if vals
-            (dolist (v vals) (repl-print r (format nil "~s~%" v)))
+            (dolist (v vals) (repl-present r v))
             (repl-print r (format nil "; No values~%"))))
       (repl-print r (format nil "; No values~%"))))
 
@@ -1708,6 +1738,15 @@ ERROR still reaches the debugger; the sticky package follows any in-package."
       ((and (= (event-type event) +ev-key-down+) focused plain
             (= k +kb-down+) (repl-on-last-line-p r) (repl-hist-pos r))
        (repl-history-recall r :next) (clear-event event))
+      ;; double-click a printed result -> inspect the live object (presentation)
+      ((and (= (event-type event) +ev-mouse-down+) (event-double event)
+            (mouse-in-view-p r event)
+            (let* ((lp (make-local r (event-mouse-where event)))
+                   (off (%line-col->offset r (+ (text-top-line r) (point-y lp))
+                                           (+ (text-left-col r) (point-x lp))))
+                   (p (repl-presentation-at r off)))
+              (when p (repl-inspect (first p) (prin1-to-string (first p))) t)))
+       (clear-event event))
       (t (call-next-method)))))
 
 ;;; --- convenience window ----------------------------------------------------

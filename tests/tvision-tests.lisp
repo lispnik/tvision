@@ -1244,3 +1244,20 @@ the return-from-frame op; if the op doesn't fire, fall through to 99."
       (is= "eval result" (caar results) 5))
     (repl-eval r "(* 6 7)")
     (is= "per-listener * history" (repl-hvar r '*) 42)))
+
+(deftest repl-presentations
+  (let ((r (make-instance 'trepl-view :bounds (make-trect 0 0 40 10)))
+        (obj (list 1 2 3)))
+    (tvision::repl-present r obj)
+    (let ((ps (tvision::repl-presentations r)))
+      (is= "one presentation recorded" (length ps) 1)
+      (destructuring-bind (o start end) (first ps)
+        (ok "object retained by identity" (eq o obj))
+        (ok "presentation covers a non-empty range" (< start end))
+        (ok "presentation-at finds the object inside its range"
+            (eq obj (first (tvision::repl-presentation-at r start))))
+        (ok "presentation-at returns nil past the range"
+            (null (tvision::repl-presentation-at r end)))))
+    ;; a second result presents a distinct, non-overlapping region
+    (tvision::repl-present r :other)
+    (is= "two presentations now" (length (tvision::repl-presentations r)) 2)))
