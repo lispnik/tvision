@@ -188,6 +188,7 @@
    #:ttext-view #:text-lines #:text-string #:set-text #:append-text
    #:text-cur-line #:text-cur-col #:text-return #:text-read-only
    #:line-count #:nth-line #:current-line-string #:ensure-visible
+   #:set-line #:selection-range #:text-left-col #:text-top-line
    #:text-attach-scrollbars #:text-update-limit
    #:set-protect-boundary #:text-protect #:insert-string #:selected-string
    #:copy-selection #:cut-selection #:paste-clipboard #:*clipboard*

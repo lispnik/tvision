@@ -83,6 +83,15 @@
 (defparameter +cm-winlist+     345)
 (defparameter +cm-eval-defun+  346)
 (defparameter +cm-eval-region+ 347)
+(defparameter +cm-nav-back+    361)   ; pop the go-to-definition stack
+(defparameter +cm-complete+    362)   ; complete the symbol at point (editor)
+(defparameter +cm-comment+     363)   ; comment / uncomment the region
+(defparameter +cm-wrap-paren+  364)   ; structural editing
+(defparameter +cm-slurp+       365)
+(defparameter +cm-barf+        366)
+(defparameter +cm-splice+      367)
+(defparameter +cm-raise+       368)
+(defparameter +cm-snippet+     369)
 
 (defparameter +hc-repl+ 1)
 ;; Computed at runtime (not load/build time) so they follow the running user's
@@ -144,6 +153,15 @@
       (menu-item "~W~ord wrap"  +cm-wrap+)
       (menu-item "~H~istory search" +cm-histsearch+ :key-text "Ctrl-R")
       (menu-separator)
+      (menu-item "Comp~l~ete symbol" +cm-complete+ :key-text "Tab")
+      (menu-item "Co~m~ment region"  +cm-comment+)
+      (menu-item "Insert templ~a~te" +cm-snippet+)
+      (sub-menu "~S~tructural"
+        (new-menu
+         (menu-item "~W~rap in ()" +cm-wrap-paren+)
+         (menu-item "~S~plice"     +cm-splice+)
+         (menu-item "~R~aise"      +cm-raise+)))
+      (menu-separator)
       (menu-item "I~n~terrupt eval" +cm-interrupt+ :key-text "Ctrl-C")))
    ;; grouped into submenus so every entry has a unique, unambiguous mnemonic
    ;; (the flat menu had too many items -- Trace/Class shared Alt-C, etc.)
@@ -160,6 +178,7 @@
       (sub-menu "~N~avigate"
         (new-menu
          (menu-item "~G~o to definition..." +cm-gotodef+ :key-text "Alt-.")
+         (menu-item "Pop ~b~ack"            +cm-nav-back+ :key-text "Alt-,")
          (menu-item "~F~unction browser..." +cm-funcbrowser+)
          (menu-item "~W~ho calls..."        +cm-whocalls+)
          (menu-item "Who ~r~eferences..."   +cm-whorefs+)))
@@ -1448,11 +1467,47 @@ and cached; subsequent lookups are a binary search over its newline offsets)."
           (1+ lo))
         1)))
 
+;;; --- go-to-definition pop-back stack (SLIME's M-. / M-,) -------------------
+
+(defvar *nav-stack* '()
+  "Stack of (WINDOW LINE COL) locations pushed before each source jump, so
+`pop back' (Alt-,) can return to where you came from.")
+
+(defun %nav-push (app)
+  "Record the currently focused window (and its cursor, for editors) so a later
+pop-back can return there."
+  (let ((w (group-current (program-desktop app))))
+    (when (typep w 'twindow)
+      (push (list w
+                  (and (typep w 'teditor-window) (text-cur-line (editor-window-editor w)))
+                  (and (typep w 'teditor-window) (text-cur-col (editor-window-editor w))))
+            *nav-stack*))))
+
+(defun do-nav-back (app)
+  "Pop the navigation stack and return to the most recent still-open location."
+  (let ((desk (program-desktop app)))
+    (loop
+      (let ((e (pop *nav-stack*)))
+        (cond
+          ((null e)
+           (message-box "Nothing to go back to." (logior +mf-information+ +mf-ok-button+))
+           (return))
+          ((member (first e) (desktop-windows desk))    ; still open?
+           (destructuring-bind (w line col) e
+             (set-current desk w :normal-select)
+             (when (and line (typep w 'teditor-window))
+               (let ((ed (editor-window-editor w)))
+                 (setf (text-cur-line ed) (min line (1- (line-count ed)))
+                       (text-cur-col ed) (min col (length (nth-line ed (min line (1- (line-count ed)))))))
+                 (ensure-visible ed) (draw-view ed))))
+           (return)))))))      ; window was closed -> skip it, try the next entry
+
 (defun goto-source (app type path offset)
   (declare (ignore type))
   (if (and path (probe-file path))
       (let* ((desk (program-desktop app))
              (dw (point-x (view-size desk))) (dh (point-y (view-size desk))))
+        (%nav-push app)                       ; remember where we jumped from
         (multiple-value-bind (w ed)
             (make-edit-window (make-trect 2 1 (min (- dw 2) 84) (min (- dh 1) 26))
                               :title (file-namestring path) :filename path)
@@ -2516,6 +2571,176 @@ debugger support, exactly as if typed)."
                      (focus ew))
               (message-box "Select a region first." (logior +mf-information+ +mf-ok-button+)))))))
 
+;;; --- editor productivity: complete, comment, structural edits, snippets ----
+
+(defun %with-editor (app fn)
+  "Call FN with the focused editor's text view, or tell the user to focus one."
+  (let ((ew (current-editor-window app)))
+    (if ew (funcall fn (editor-window-editor ew))
+        (message-box "Focus an editor window first."
+                     (logior +mf-information+ +mf-ok-button+)))))
+
+(defun %editor-set-text (ed text offset)
+  "Replace ED's whole buffer with TEXT and place the cursor at character OFFSET."
+  (set-text ed text)
+  (%macro-set-cursor ed (max 0 (min offset (length text))))
+  (setf (text-modified ed) t)
+  (draw-view ed))
+
+(defun do-editor-complete (app)
+  "Complete the symbol before the cursor in the focused editor (TAB-style)."
+  (%with-editor app
+    (lambda (ed)
+      (let* ((line (current-line-string ed)) (col (min (text-cur-col ed) (length line)))
+             (start col))
+        (loop while (and (> start 0) (%hs-symchar-p (char line (1- start)))) do (decf start))
+        (let* ((token (subseq line start col))
+               (rv (some-repl app))
+               (pkg (or (find-package (%buffer-in-package (text-string ed) (%editor-offset ed)))
+                        (and rv (repl-package rv)) *package*))
+               (cands (and (plusp (length token)) (repl-backend-completions token pkg))))
+        (flet ((put (text)
+                 (set-line ed (text-cur-line ed)
+                           (concatenate 'string (subseq line 0 start) text (subseq line col)))
+                 (setf (text-cur-col ed) (+ start (length text)) (text-modified ed) t)
+                 (ensure-visible ed) (draw-view ed)))
+          (cond
+            ((zerop (length token))
+             (message-box "Put the cursor after a symbol prefix to complete."
+                          (logior +mf-information+ +mf-ok-button+)))
+            ((null cands)
+             (message-box "No completions." (logior +mf-information+ +mf-ok-button+)))
+            ((= 1 (length cands)) (put (first cands)))
+            (t (let* ((g (make-global ed (make-tpoint (- col (text-left-col ed))
+                                                      (1+ (- (text-cur-line ed) (text-top-line ed))))))
+                      (chosen (popup-list cands (point-x g) (point-y g) :title "Complete")))
+                 (when chosen (put chosen)))))))))))
+
+(defun %uncomment-line (line)
+  "Strip a leading `;'..`; ' comment marker (after indentation) from LINE."
+  (let ((k 0))
+    (loop while (and (< k (length line)) (member (char line k) '(#\Space #\Tab))) do (incf k))
+    (let ((j k))
+      (loop while (and (< j (length line)) (char= (char line j) #\;)) do (incf j))
+      (when (and (< j (length line)) (char= (char line j) #\Space)) (incf j))
+      (if (> j k) (concatenate 'string (subseq line 0 k) (subseq line j)) line))))
+
+(defun do-comment-region (app)
+  "Toggle `;; ' line comments over the selected lines (or the current line)."
+  (%with-editor app
+    (lambda (ed)
+      (multiple-value-bind (s e) (selection-range ed)
+        (let* ((l0 (if s (car s) (text-cur-line ed)))
+               (l1 (if e (if (and (zerop (cdr e)) (> (car e) l0)) (1- (car e)) (car e)) l0))
+               (l1 (max l0 (min l1 (1- (line-count ed)))))
+               (all-commented t))
+          (loop for li from l0 to l1
+                for tr = (string-left-trim '(#\Space #\Tab) (nth-line ed li))
+                when (and (plusp (length tr)) (char/= (char tr 0) #\;))
+                  do (setf all-commented nil))
+          (loop for li from l0 to l1 for line = (nth-line ed li) do
+            (set-line ed li (if all-commented (%uncomment-line line)
+                                (concatenate 'string ";; " line))))
+          (setf (text-modified ed) t) (text-update-limit ed) (draw-view ed))))))
+
+(defun %sexp-bounds (str off)
+  "(values START END) of the innermost () form containing OFF in STR, or NIL."
+  (let ((len (length str)) (stack '()) (best nil) (i 0))
+    (loop while (< i len) do
+      (let ((c (char str i)))
+        (cond
+          ((char= c #\;) (loop while (and (< i len) (char/= (char str i) #\Newline)) do (incf i)))
+          ((char= c #\")
+           (incf i) (loop while (< i len) do
+             (let ((d (char str i))) (incf i)
+               (cond ((char= d #\\) (incf i)) ((char= d #\") (return))))))
+          ((and (char= c #\#) (< (1+ i) len) (char= (char str (1+ i)) #\\)) (incf i 3))
+          ((char= c #\() (push i stack) (incf i))
+          ((char= c #\))
+           (when stack
+             (let ((start (pop stack)))
+               (when (and (<= start off) (<= off (1+ i))
+                          (or (null best) (> start (car best))))
+                 (setf best (cons start (1+ i))))))
+           (incf i))
+          (t (incf i)))))
+    (when best (values (car best) (cdr best)))))
+
+(defun %struct-edit (app transform)
+  "Apply TRANSFORM (text offset) -> (values new-text new-offset) to the focused
+editor's buffer, around the cursor.  TRANSFORM returns NIL to do nothing."
+  (%with-editor app
+    (lambda (ed)
+      (let ((text (text-string ed)) (off (%editor-offset ed)))
+        (multiple-value-bind (new new-off) (funcall transform text off)
+          (if new (%editor-set-text ed new (or new-off off))
+              (message-box "No enclosing form here." (logior +mf-information+ +mf-ok-button+))))))))
+
+(defun do-wrap-paren (app)
+  "Wrap the form at the cursor in a new pair of parentheses."
+  (%struct-edit app
+    (lambda (text off)
+      (multiple-value-bind (s e) (%sexp-bounds text off)
+        (when s
+          (values (concatenate 'string (subseq text 0 s) "(" (subseq text s e) ")"
+                               (subseq text e))
+                  (1+ s)))))))
+
+(defun do-splice (app)
+  "Remove the parentheses of the form enclosing the cursor (paredit splice)."
+  (%struct-edit app
+    (lambda (text off)
+      (multiple-value-bind (s e) (%sexp-bounds text off)
+        (when (and s (> e s))
+          (values (concatenate 'string (subseq text 0 s) (subseq text (1+ s) (1- e))
+                               (subseq text e))
+                  (max s (1- off))))))))
+
+(defun do-raise (app)
+  "Replace the form enclosing the cursor with the innermost form at the cursor."
+  (%struct-edit app
+    (lambda (text off)
+      (multiple-value-bind (is ie) (%sexp-bounds text off)
+        (when is
+          ;; the form to keep is the inner one at point; its parent is the form
+          ;; just outside it -- find the parent by probing one char before IS
+          (multiple-value-bind (ps pe) (%sexp-bounds text (max 0 (1- is)))
+            (when (and ps (< ps is) (>= pe ie))
+              (values (concatenate 'string (subseq text 0 ps) (subseq text is ie)
+                                   (subseq text pe))
+                      ps))))))))
+
+(defparameter *snippets*
+  '(("defun"        . "(defun name (args)~%  )")
+    ("defmacro"     . "(defmacro name (args)~%  )")
+    ("defclass"     . "(defclass name ()~%  ((slot :initarg :slot :accessor name-slot)))")
+    ("defmethod"    . "(defmethod name ((arg type))~%  )")
+    ("defgeneric"   . "(defgeneric name (args))")
+    ("defvar"       . "(defvar *name* value)")
+    ("let"          . "(let ((var value))~%  )")
+    ("loop collect" . "(loop for x in list~%      collect x)")
+    ("handler-case" . "(handler-case~%    (progn )~%  (error (e) ))")
+    ("dotimes"      . "(dotimes (i n)~%  )"))
+  "Code templates for Insert snippet.")
+
+(defun do-insert-snippet (app)
+  "Pick a code template and insert it at the cursor (continuation lines indented
+to the cursor's column)."
+  (%with-editor app
+    (lambda (ed)
+      (let ((chosen (choose-index "Insert snippet" (mapcar #'car *snippets*))))
+        (when chosen
+          (let* ((indent (make-string (text-cur-col ed) :initial-element #\Space))
+                 (body (format nil (cdr (nth chosen *snippets*))))
+                 (snippet (with-output-to-string (o)
+                            (loop for ch across body do
+                              (write-char ch o)
+                              (when (char= ch #\Newline) (write-string indent o)))))
+                 (text (text-string ed)) (off (%editor-offset ed)))
+            (%editor-set-text ed
+                              (concatenate 'string (subseq text 0 off) snippet (subseq text off))
+                              (+ off (length snippet)))))))))
+
 ;;; --- session save/restore --------------------------------------------------
 
 (defun %window-bounds-list (w)
@@ -2758,7 +2983,16 @@ string or comment (so it won't fight existing literals)."
          (let ((v (%current-text-view app)))
            (when (and v (match-paren-jump v)) (draw-view v) (clear-event event))))
         ((and (logtest (event-modifiers event) +md-alt+) (= (event-char-code event) 46)) ; M-.
-         (do-goto-definition (current-repl app) app) (clear-event event)))))
+         (do-goto-definition (current-repl app) app) (clear-event event))
+        ((and (logtest (event-modifiers event) +md-alt+) (= (event-char-code event) 44)) ; M-,
+         (do-nav-back app) (clear-event event))
+        ;; Tab in an editor: complete when the cursor follows a symbol, else indent
+        ((and (= k +kb-tab+) (current-editor-window app)
+              (let ((ed (editor-window-editor (current-editor-window app))))
+                (and (plusp (text-cur-col ed))
+                     (<= (text-cur-col ed) (length (current-line-string ed)))
+                     (%hs-symchar-p (char (current-line-string ed) (1- (text-cur-col ed)))))))
+         (do-editor-complete app) (clear-event event)))))
   ;; auto-close parens
   (maybe-auto-close app event)
   ;; right-click context menu
@@ -2807,6 +3041,13 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-compile-buffer+) (do-compile-buffer app) (clear-event event))
           ((= c +cm-eval-defun+)  (do-eval-defun app) (clear-event event))
           ((= c +cm-eval-region+) (do-eval-region app) (clear-event event))
+          ((= c +cm-nav-back+)    (do-nav-back app) (clear-event event))
+          ((= c +cm-complete+)    (do-editor-complete app) (clear-event event))
+          ((= c +cm-comment+)     (do-comment-region app) (clear-event event))
+          ((= c +cm-snippet+)     (do-insert-snippet app) (clear-event event))
+          ((= c +cm-wrap-paren+)  (do-wrap-paren app) (clear-event event))
+          ((= c +cm-splice+)      (do-splice app) (clear-event event))
+          ((= c +cm-raise+)       (do-raise app) (clear-event event))
           ((= c +cm-find+)        (do-find app) (clear-event event))
           ((= c +cm-find-next+)   (do-find-next app) (clear-event event))
           ((= c +cm-replace+)     (do-replace app) (clear-event event))
