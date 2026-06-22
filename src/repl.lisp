@@ -44,6 +44,50 @@ concurrent listeners never clobber one another's `*'/`+'/`/'.")
   (and (<= (length prefix) (length string))
        (string= prefix string :end2 (length prefix))))
 
+(defun %flexp (sub string)
+  "True when SUB occurs in STRING as a subsequence (its characters appear in
+order, not necessarily contiguous) — the basis of flex/fuzzy completion, so
+\"mvb\" matches \"multiple-value-bind\".  SUB and STRING are compared as given."
+  (let ((i 0) (n (length sub)))
+    (and (plusp n)
+         (progn (loop for ch across string
+                      while (< i n)
+                      when (char= ch (char sub i)) do (incf i))
+                (= i n)))))
+
+(defun %flex-score (sub str)
+  "If SUB is a subsequence of STR *and its first matched character begins a word*
+(string start or just after a separator), return a score where word-initial
+matches count more (so \"mvb\" ranks Multiple-Value-Bind above mid-word hits);
+otherwise NIL."
+  (let ((i 0) (n (length sub)) (score 0) (sep t) (first t))
+    (when (plusp n)
+      (loop for ch across str do
+        (cond ((and (< i n) (char= ch (char sub i)))
+               (when (and first (not sep)) (return-from %flex-score nil))  ; must start a word
+               (incf score (if sep 10 1))
+               (incf i) (setf first nil sep nil))
+              (t (setf sep (not (alphanumericp ch))))))
+      (when (= i n) score))))
+
+(defun %flex-completions (token package)
+  "Ranked flex/fuzzy completions of TOKEN in PACKAGE: word-boundary matches
+first, then shorter, then alphabetical; capped so a loose token can't flood the
+popup."
+  (let ((scored '()))
+    (do-symbols (s package)
+      (let* ((n (string-downcase (symbol-name s)))
+             (sc (and (not (string= n token)) (%flex-score token n))))
+        (when sc (push (cons n sc) scored))))
+    (setf scored (delete-duplicates scored :key #'car :test #'string=))
+    (setf scored (sort scored
+                       (lambda (a b)
+                         (cond ((/= (cdr a) (cdr b)) (> (cdr a) (cdr b)))
+                               ((/= (length (car a)) (length (car b)))
+                                (< (length (car a)) (length (car b))))
+                               (t (string< (car a) (car b)))))))
+    (mapcar #'car (subseq scored 0 (min 40 (length scored))))))
+
 (defun longest-common-prefix (strings)
   (if (null strings) ""
       (let ((p (first strings)))
@@ -79,7 +123,16 @@ completions).  Handles `pkg:name' / `pkg::name' qualified tokens."
           (let ((lc (string-downcase token)))
             (do-symbols (s package)
               (let ((n (string-downcase (symbol-name s))))
-                (when (%prefixp lc n) (collect s n)))))))
+                (when (%prefixp lc n) (collect s n))))
+            ;; flex/fuzzy fallback when prefix completion can't extend the token
+            ;; (NB: the token may already be interned -- e.g. by the live arglist
+            ;; echo -- so it prefix-matches itself; treat "only the token" as no
+            ;; useful prefix completion).  Return the ranked matches directly,
+            ;; bypassing the alphabetical sort, so "mvb" -> multiple-value-bind.
+            (when (and (>= (length lc) 2)
+                       (notany (lambda (n) (> (length n) (length lc))) out))
+              (let ((flex (%flex-completions lc package)))
+                (when flex (return-from repl-backend-completions flex)))))))
     (sort (remove-duplicates out :test #'string=) #'string<)))
 
 (defmacro with-repl-history ((hist new-hist) &body body)
@@ -1501,7 +1554,8 @@ PATH is the chain of ancestor objects; an OBJ already on it is rendered as a
    ;; NB: slot names must NOT be `current'/`history' -- those collide with
    ;; TGROUP's own `current' slot (CLOS merges same-named slots).
    (inspect-current :initform nil :accessor inspector-current)   ; (obj . label) shown now
-   (inspect-history :initform nil :accessor inspector-history))  ; back-stack of (obj . label)
+   (inspect-history :initform nil :accessor inspector-history)   ; back-stack of (obj . label)
+   (inspect-future  :initform nil :accessor inspector-future))   ; forward-stack (after Back)
   (:documentation "An Inspector window whose tree can be drilled into: Enter /
 double-click / `i' re-roots the view on the focused value (in place); Backspace
 goes back to the previous object; `g' jumps to its definition.  The window title
@@ -1520,8 +1574,8 @@ shows the breadcrumb path."))
                    (concatenate 'string "..." (subseq path (- (length path) 43)))
                    path)))
     (setf (window-title w)
-          (format nil "Inspector: ~a  (Enter/i:in~:[~; Bksp:back~] e:edit /:find g:src)"
-                  path (inspector-history w)))))
+          (format nil "Inspector: ~a  (Enter/i:in~:[~; Bksp:back~]~:[~; f:fwd~] e:edit /:find g:src)"
+                  path (inspector-history w) (inspector-future w)))))
 
 (defun %inspector-show (w obj label)
   "Re-root the inspector window W on (OBJ . LABEL), in place."
@@ -1535,16 +1589,27 @@ shows the breadcrumb path."))
     (draw-view w)))
 
 (defun %inspector-drill (w node)
-  "Drill into NODE's value, remembering the current view so Backspace returns."
+  "Drill into NODE's value, remembering the current view so Backspace returns.
+Drilling is a new branch, so it discards any forward history."
   (when node
     (push (inspector-current w) (inspector-history w))
+    (setf (inspector-future w) nil)
     (%inspector-show w (outline-node-data node) (%node-label node))))
 
 (defun %inspector-back (w)
-  "Return to the previous object on the history stack, if any."
+  "Return to the previous object on the history stack, if any (the current view
+becomes the forward step)."
   (when (inspector-history w)
+    (push (inspector-current w) (inspector-future w))
     (let ((prev (pop (inspector-history w))))
       (%inspector-show w (car prev) (cdr prev)))))
+
+(defun %inspector-forward (w)
+  "Re-visit the object Back stepped away from, if any."
+  (when (inspector-future w)
+    (push (inspector-current w) (inspector-history w))
+    (let ((next (pop (inspector-future w))))
+      (%inspector-show w (car next) (cdr next)))))
 
 (defun %inspector-edit (w)
   "Edit the focused node's value in place, if it sits at a settable place."
@@ -1593,9 +1658,11 @@ shows the breadcrumb path."))
          ;; `i' drills into the focused node (works on parents too)
          ((or (= ch (char-code #\i)) (= ch (char-code #\I)))
           (%inspector-drill w (outline-current (inspector-outline w))) (clear-event event))
-         ;; Backspace -> back to the previous object
+         ;; Backspace -> back to the previous object; `f' -> forward again
          ((= k +kb-back+)
           (%inspector-back w) (clear-event event))
+         ((or (= ch (char-code #\f)) (= ch (char-code #\F)))
+          (%inspector-forward w) (clear-event event))
          ;; `e' edits the focused value (where it's a settable place)
          ((or (= ch (char-code #\e)) (= ch (char-code #\E)))
           (%inspector-edit w) (clear-event event))

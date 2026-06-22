@@ -1245,6 +1245,20 @@ the return-from-frame op; if the op doesn't fire, fall through to 99."
     (repl-eval r "(* 6 7)")
     (is= "per-listener * history" (repl-hvar r '*) 42)))
 
+(deftest repl-fuzzy-completion
+  ;; prefix completion still works (and stays prefix-only when it matches)
+  (let ((p (repl-backend-completions "list-len" (find-package :cl))))
+    (ok "prefix: list-len -> list-length" (member "list-length" p :test #'string=))
+    (ok "prefix result has no non-prefix noise"
+        (every (lambda (s) (eql 0 (search "list-len" s))) p)))
+  ;; flex fallback kicks in only when nothing prefix-matched
+  (let ((f (repl-backend-completions "mvb" (find-package :cl))))
+    (ok "flex: mvb -> multiple-value-bind" (member "multiple-value-bind" f :test #'string=)))
+  ;; %flexp basics
+  (ok "flexp subsequence" (tvision::%flexp "mvb" "multiple-value-bind"))
+  (ok "flexp respects order" (not (tvision::%flexp "bvm" "multiple-value-bind")))
+  (ok "flexp rejects missing char" (not (tvision::%flexp "mvbx" "multiple-value-bind"))))
+
 (deftest repl-presentations
   (let ((r (make-instance 'trepl-view :bounds (make-trect 0 0 40 10)))
         (obj (list 1 2 3)))
