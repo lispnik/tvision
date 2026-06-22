@@ -326,16 +326,59 @@ bare NAME when args are unavailable."
   "S truncated to N chars with a trailing ellipsis when over-long."
   (if (> (length s) n) (concatenate 'string (subseq s 0 (- n 1)) "…") s))
 
+(defun %offset->line (path offset cache)
+  "1-based line number at character OFFSET in PATH; CACHE (an equal hash-table)
+memoizes each file's text so a whole backtrace reads each source file once."
+  (let ((text (or (gethash path cache)
+                  (setf (gethash path cache)
+                        (or (ignore-errors
+                             (with-open-file (s path :if-does-not-exist nil)
+                               (when s
+                                 (let ((str (make-string (file-length s))))
+                                   (subseq str 0 (read-sequence str s))))))
+                            "")))))
+    (when (and (plusp (length text)) (<= 0 offset (length text)))
+      (1+ (count #\Newline text :end offset)))))
+
+(defun %frame-source (live-frame cache)
+  "A short \"file:line\" (or \"file\") locator for LIVE-FRAME, or NIL.  Prefers
+sb-introspect's definition source of the frame's function (file + line); falls
+back to the frame's debug-source file.  Resolved through FIND-SYMBOL so the
+framework needs no sb-introspect at build time (the app provides it)."
+  (let* ((fdef  (find-symbol "FIND-DEFINITION-SOURCE" :sb-introspect))
+         (dpath (find-symbol "DEFINITION-SOURCE-PATHNAME" :sb-introspect))
+         (doff  (find-symbol "DEFINITION-SOURCE-CHARACTER-OFFSET" :sb-introspect))
+         (dsns  (find-symbol "DEBUG-SOURCE-NAMESTRING" :sb-di))
+         (clds  (find-symbol "CODE-LOCATION-DEBUG-SOURCE" :sb-di))
+         (fn (and live-frame
+                  (ignore-errors (sb-di:debug-fun-fun (sb-di:frame-debug-fun live-frame))))))
+    (or (and fn (fboundp fdef) (fboundp dpath)
+             (ignore-errors
+              (let* ((src (funcall fdef fn))
+                     (path (and src (funcall dpath src)))
+                     (off (and src (fboundp doff) (funcall doff src)))
+                     (line (and path off (%offset->line path off cache))))
+                (when path
+                  (if line (format nil "~a:~d" (file-namestring path) line)
+                      (file-namestring path))))))
+        (and live-frame (fboundp dsns) (fboundp clds)
+             (ignore-errors
+              (let* ((loc (sb-di:frame-code-location live-frame))
+                     (ds  (and loc (funcall clds loc)))
+                     (ns  (and ds (funcall dsns ds))))
+                (and ns (file-namestring ns))))))))
+
 (defun repl-capture-stack (&key (count 50))
   "Walk the live stack ONCE, returning (values SNAPSHOTS LIVE-FRAMES) that are
 index-aligned.  SNAPSHOTS is a list of plists (:label STRING :name NAME
-:internal-p BOOL :locals ((name display-string value) ...)) — plain data, safe
-to browse on another thread; the label is the call form with its arguments.
+:internal-p BOOL :source \"file:line\" :locals ((name display-string value) ...))
+— plain data, safe to browse on another thread; the label is the call form with
+its arguments.
 LIVE-FRAMES is the parallel list of live SB-DI:FRAME objects; they stay valid
 only while the erroring thread's dynamic extent is alive (e.g. while the worker
 is blocked in the debugger), and are what frame ops (return-from-frame,
 disassemble) act on."
-  (let ((frames '()) (lives '()))
+  (let ((frames '()) (lives '()) (cache (make-hash-table :test 'equal)))
     (ignore-errors
      (let ((i 0))
        (do ((f (sb-di:top-frame) (sb-di:frame-down f)))
@@ -343,10 +386,12 @@ disassemble) act on."
          (let* ((df (sb-di:frame-debug-fun f))
                 (name (handler-case (sb-di:debug-fun-name df) (error () "?")))
                 (loc (handler-case (sb-di:frame-code-location f) (error () nil)))
+                (internal (%frame-internal-p name))
                 (call (handler-case (%frame-call-string f name)
-                        (error () (princ-to-string name)))))
-           (push (list :label (format nil "~2d  ~a" i (%ellipsize call 70))
-                       :name name :internal-p (%frame-internal-p name)
+                        (error () (princ-to-string name))))
+                (source (unless internal (ignore-errors (%frame-source f cache)))))
+           (push (list :label (format nil "~2d  ~a" i (%ellipsize call 56))
+                       :name name :internal-p internal :source source
                        :locals (%frame-vars f df loc))
                  frames)
            (push f lives))
@@ -493,6 +538,27 @@ gracefully if the symbol is ever absent."
               (funcall unwind frame (lambda () (values-list vals)))))
         (funcall abort))))
 
+(defun %frame-restart (live-frames index)
+  "Frame op (restart-frame): unwind to the live frame at INDEX and re-invoke its
+function with the same arguments (SBCL's unwind-to-frame-and-call + frame-call).
+Re-running the call is inherently best-effort -- arguments may be optimized away
+-- so it is fully guarded and falls back to REPL-ABORT."
+  (let ((frame  (and live-frames (nth index live-frames)))
+        (unwind (find-symbol "UNWIND-TO-FRAME-AND-CALL" :sb-debug))
+        (has-tag (find-symbol "FRAME-HAS-DEBUG-TAG-P" :sb-debug))
+        (fcall  (find-symbol "FRAME-CALL" :sb-debug))
+        (abort  (lambda () (invoke-restart (find-restart 'repl-abort)))))
+    (if (and frame (fboundp unwind) (fboundp fcall)
+             (or (not (fboundp has-tag)) (ignore-errors (funcall has-tag frame))))
+        (let ((fn (ignore-errors (sb-di:debug-fun-fun (sb-di:frame-debug-fun frame)))))
+          (multiple-value-bind (name args) (ignore-errors (funcall fcall frame))
+            (let ((callee (or fn (and name (fboundp name) (fdefinition name)))))
+              (if (and callee (listp args))
+                  (handler-case (funcall unwind frame (lambda () (apply callee args)))
+                    (error () (funcall abort)))
+                  (funcall abort)))))
+        (funcall abort))))
+
 (defclass tframe-dialog (tdialog)
   ((frames    :initarg :frames  :initform nil :accessor frame-dialog-frames)
    (package   :initarg :package :initform nil :accessor frame-dialog-package)
@@ -500,15 +566,19 @@ gracefully if the symbol is ever absent."
    (live      :initarg :live    :initform nil :accessor frame-dialog-live)  ; live frames, or NIL
    (op        :initform nil :accessor frame-dialog-op)                      ; chosen frame op
    (show-all  :initform nil :accessor frame-dialog-show-all)                ; hide machinery?
-   (index-map :initform #()  :accessor frame-dialog-index-map))             ; row -> frame index
+   (expanded  :initform '() :accessor frame-dialog-expanded)                ; frames shown w/ locals
+   (find-str  :initform nil :accessor frame-dialog-find-str)                ; last `/' query
+   (index-map :initform #()  :accessor frame-dialog-index-map))             ; row -> descriptor
   (:documentation "The backtrace browser.  By default it hides debugger/runtime
-machinery frames and focuses the frame that signalled the error; `a' toggles all
-frames.  Enter opens a frame's locals browser (inspect/drill a value), `v' jumps
-to its source, `d' disassembles its function, and -- when live frames are
-available (LIVE) -- `r' returns a value from it.  Because rows can be filtered,
-INDEX-MAP translates the focused row to its index in FRAMES/LIVE.  A chosen frame
-op is stored in OP and ends the dialog so it propagates back to the thread owning
-the error's dynamic extent."))
+machinery frames, marks and focuses the frame that signalled the error, and shows
+each frame as a call form with arguments and a file:line locator; `a' toggles all
+frames.  Enter expands a frame's locals inline (Enter on a local inspects/drills
+it); `v' jumps to source, `d' disassembles, `x' evals a form in the frame, `/'
+and `n' search, and -- when live frames are available -- `r' returns a value from
+the frame and `c' re-calls (restarts) it.  Rows are filtered/expandable, so
+INDEX-MAP holds a descriptor per row: (:frame FI) or (:local FI LI).  A chosen
+frame op is stored in OP and ends the dialog so it propagates back to the thread
+owning the error's dynamic extent."))
 
 (defun %frame-visible-indices (frames show-all)
   "Indices into FRAMES that should be shown: all of them when SHOW-ALL, otherwise
@@ -518,28 +588,81 @@ so the list is never empty."
             when (or show-all (not (getf f :internal-p))) collect i)
       (loop for i below (length frames) collect i)))
 
-(defun %frame-rebuild (d)
-  "Recompute the visible rows of backtrace browser D (honoring show-all) and push
-them into its list box, refreshing INDEX-MAP."
-  (let* ((frames (frame-dialog-frames d))
-         (idxs (%frame-visible-indices frames (frame-dialog-show-all d)))
-         (items (mapcar (lambda (i) (getf (nth i frames) :label)) idxs)))
-    (setf (frame-dialog-index-map d) (coerce idxs 'vector))
-    (when (frame-dialog-lb d) (list-set-items (frame-dialog-lb d) items))
-    idxs))
+(defun %frame-error-index (frames)
+  "Index of the frame that signalled the error: the first non-machinery frame
+(falling back to 0)."
+  (or (position-if-not (lambda (f) (getf f :internal-p)) frames) 0))
 
-(defun %frame-current-index (d)
-  "The index into FRAMES/LIVE of the focused row, or NIL."
+(defun %frame-rebuild (d)
+  "Recompute the visible rows of backtrace browser D — filtered frames, each
+optionally followed by its inline locals — and push them into the list box,
+refreshing INDEX-MAP (one descriptor per row)."
+  (let* ((frames (frame-dialog-frames d))
+         (erri (%frame-error-index frames))
+         (rows '()) (items '()))
+    (dolist (fi (%frame-visible-indices frames (frame-dialog-show-all d)))
+      (let* ((f (nth fi frames))
+             (locals (getf f :locals))
+             (open (and (member fi (frame-dialog-expanded d)) t))
+             (mark (if (= fi erri) "►" " "))
+             (exp  (cond ((null locals) " ") (open "▾") (t "▸")))
+             (src  (getf f :source)))
+        (push (list :frame fi) rows)
+        (push (format nil "~a~a ~a~@[   ~a~]" mark exp (getf f :label) src) items)
+        (when open
+          (if locals
+              (loop for l in locals for li from 0 do
+                (push (list :local fi li) rows)
+                (push (format nil "         ~a = ~a" (first l) (second l)) items))
+              (progn (push (list :local fi -1) rows)
+                     (push "         (no locals)" items))))))
+    (setf (frame-dialog-index-map d) (coerce (nreverse rows) 'vector))
+    (when (frame-dialog-lb d) (list-set-items (frame-dialog-lb d) (nreverse items)))))
+
+(defun %frame-current-row (d)
+  "The descriptor ((:frame FI) / (:local FI LI)) of the focused row, or NIL."
   (let ((map (frame-dialog-index-map d)) (lb (frame-dialog-lb d)))
     (when (and lb (plusp (length map)))
       (let ((pos (list-focused lb)))
         (when (< pos (length map)) (aref map pos))))))
 
+(defun %frame-current-index (d)
+  "The index into FRAMES/LIVE of the focused row's frame, or NIL (works whether a
+frame row or one of its inline local rows is focused)."
+  (let ((row (%frame-current-row d)))
+    (and row (second row))))
+
+(defun %frame-focus-frame (d fi)
+  "Move the list cursor to the row of frame FI, if present."
+  (let ((pos (position-if (lambda (r) (and (eq (first r) :frame) (eql (second r) fi)))
+                          (frame-dialog-index-map d))))
+    (when pos (list-focus-item (frame-dialog-lb d) pos))))
+
+(defun %frame-toggle-expand (d fi)
+  "Show/hide frame FI's inline locals, keeping the cursor on that frame."
+  (setf (frame-dialog-expanded d)
+        (if (member fi (frame-dialog-expanded d))
+            (remove fi (frame-dialog-expanded d))
+            (cons fi (frame-dialog-expanded d))))
+  (%frame-rebuild d)
+  (%frame-focus-frame d fi)
+  (draw-view d))
+
+(defun %frame-find (d query from)
+  "Focus the next row at/after FROM whose text contains QUERY (case-insensitive,
+wrapping).  Returns T on a hit."
+  (let* ((lb (frame-dialog-lb d)) (n (list-count lb)) (q (string-downcase query)))
+    (when (plusp n)
+      (loop for k from 1 to n
+            for i = (mod (+ from k) n)
+            when (search q (string-downcase (list-item lb i)))
+              do (list-focus-item lb i) (draw-view d) (return t)))))
+
 (defun %backtrace-text (frames)
   "A full-backtrace string: each frame's label followed by its locals."
   (with-output-to-string (s)
     (dolist (f frames)
-      (format s "~a~%" (getf f :label))
+      (format s "~a~@[   ~a~]~%" (getf f :label) (getf f :source))
       (dolist (lv (getf f :locals))
         (format s "        ~a = ~a~%" (first lv) (second lv)))
       (terpri s))))
@@ -548,23 +671,41 @@ them into its list box, refreshing INDEX-MAP."
   (flet ((key (c) (and (= (event-type event) +ev-key-down+)
                        (plusp (event-char-code event))
                        (char-equal (code-char (event-char-code event)) c)))
-         (cur () (%frame-current-index d)))
+         (cur () (%frame-current-index d))
+         (frame-at (i) (and i (nth i (frame-dialog-frames d)))))
    (cond
+    ;; Enter: on a frame row expand/collapse its locals; on a local row inspect it
     ((and (message-event-p event)
           (= (event-command event) +cm-list-item-selected+)
           (frame-dialog-lb d))
-     (let* ((i (cur)) (frame (and i (nth i (frame-dialog-frames d)))))
-       (when frame (show-locals-dialog frame (frame-dialog-package d))))
+     (let ((row (%frame-current-row d)))
+       (cond
+         ((null row))
+         ((eq (first row) :frame) (%frame-toggle-expand d (second row)))
+         ((eq (first row) :local)
+          (let* ((fi (second row)) (li (third row))
+                 (l (and (>= li 0) (nth li (getf (frame-at fi) :locals)))))
+            (when l (inspect-modal (third l) (first l)))))))
      (clear-event event))
     ;; `a' toggles between user frames only and the full machinery stack
     ((key #\a)
-     (let ((cur (cur)))                                  ; keep focus on this frame
+     (let ((keep (cur)))                                  ; keep focus on this frame
        (setf (frame-dialog-show-all d) (not (frame-dialog-show-all d)))
        (%frame-rebuild d)
-       (when cur
-         (let ((pos (position cur (frame-dialog-index-map d))))
-           (when pos (list-focus-item (frame-dialog-lb d) pos))))
+       (when keep (%frame-focus-frame d keep))
        (draw-view d))
+     (clear-event event))
+    ;; `/' search the backtrace; `n' repeats it
+    ((key #\/)
+     (multiple-value-bind (cmd s) (input-box "Find in backtrace" "Substring:" "" 80)
+       (when (and (= cmd +cm-ok+) (plusp (length (string-trim '(#\Space #\Tab) s))))
+         (setf (frame-dialog-find-str d) s)
+         (unless (%frame-find d s (list-focused (frame-dialog-lb d)))
+           (message-box "Not found." (logior +mf-information+ +mf-ok-button+)))))
+     (clear-event event))
+    ((key #\n)
+     (when (frame-dialog-find-str d)
+       (%frame-find d (frame-dialog-find-str d) (list-focused (frame-dialog-lb d))))
      (clear-event event))
     ;; `e' exports the whole backtrace (frames + locals) to a scrollable window
     ((key #\e)
@@ -572,18 +713,29 @@ them into its list box, refreshing INDEX-MAP."
      (clear-event event))
     ;; `v' jumps to the focused frame's source, abandoning the computation
     ((and (key #\v) *inspect-goto-hook*)
-     (let* ((i (cur)) (f (and i (nth i (frame-dialog-frames d)))))
+     (let ((f (frame-at (cur))))
        (when (and f (symbolp (getf f :name)) (getf f :name))
          (setf (frame-dialog-op d) (list :frame-goto (getf f :name)))
          (end-modal d +cm-ok+)))
      (clear-event event))
     ;; `d' disassembles the focused frame (its live function when available)
     ((key #\d)
-     (let* ((i (cur)) (f (and i (nth i (frame-dialog-frames d))))
-            (live (and i (nth i (frame-dialog-live d)))))
+     (let* ((i (cur)) (f (frame-at i)) (live (and i (nth i (frame-dialog-live d)))))
        (when f
          (show-text-dialog (format nil "Disassemble: ~a" (string-trim " " (getf f :label)))
                            (%frame-disassemble-text (getf f :name) live) :height 24)))
+     (clear-event event))
+    ;; `x' evaluates a form with the focused frame's locals bound (snapshot)
+    ((key #\x)
+     (let* ((i (cur)) (f (frame-at i)))
+       (when f
+         (multiple-value-bind (cmd s)
+             (input-box "Eval in frame" "Form (uses the frame's locals):" "" 200)
+           (when (and (= cmd +cm-ok+) (plusp (length (string-trim '(#\Space #\Tab) s))))
+             (show-text-dialog "Eval in frame"
+                               (format nil "~a~%~%=> ~a" s
+                                       (frame-eval-with-locals
+                                        (getf f :locals) (frame-dialog-package d) s)))))))
      (clear-event event))
     ;; `r' returns a value from the focused frame (needs live frames)
     ((and (key #\r) (frame-dialog-live d))
@@ -604,32 +756,53 @@ them into its list box, refreshing INDEX-MAP."
                (t (message-box "That isn't a readable Lisp form -- try again."
                                (logior +mf-error+ +mf-ok-button+))))))))
      (clear-event event))
+    ;; `c' re-calls (restarts) the focused frame (needs live frames)
+    ((and (key #\c) (frame-dialog-live d))
+     (let ((idx (cur)))
+       (when (and idx
+                  (= +cm-yes+ (message-box
+                               (format nil "Restart frame ~d, re-running it with the same arguments?"
+                                       idx)
+                               (logior +mf-confirmation+ +mf-yes-button+ +mf-no-button+))))
+         (setf (frame-dialog-op d) (list :frame-restart idx))
+         (end-modal d +cm-ok+)))
+     (clear-event event))
     (t (call-next-method)))))
 
-(defun show-frames-dialog (frames &optional package live)
+(defun show-frames-dialog (frames &optional package live condition)
   "Modal backtrace browser.  Machinery frames are hidden by default (toggle with
-`a') and the cursor starts on the frame that signalled the error.  Enter inspects
-a frame's locals, `v' jumps to its source, `d' disassembles it, and -- when LIVE
-frames are supplied -- `r' returns a value from it.  Returns the chosen frame op
-(e.g. (:frame-return INDEX FORM) / (:frame-goto NAME)) or NIL."
+`a'); the cursor starts on -- and a ► marks -- the frame that signalled
+CONDITION; each row shows the call with its arguments and a file:line locator.
+Enter expands a frame's locals inline (Enter on a local inspects it), `v' jumps
+to source, `d' disassembles, `x' evals in the frame, `/'/`n' search, and -- with
+LIVE frames -- `r' returns a value and `c' restarts the frame.  Returns the
+chosen frame op (e.g. (:frame-return I FORM) / (:frame-goto NAME) /
+(:frame-restart I)) or NIL."
   (when *application*
     (if (null frames)
         (progn (show-text-dialog "Backtrace" "(no backtrace available)") nil)
         (let* ((desk (program-desktop *application*))
                (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
                (w (min 78 (max 30 (- dw 2)))) (h (min 22 (max 10 (- dh 2))))
+               (top (if condition 3 1))    ; reserve a header line for the condition
                (lb (make-instance 'tlist-box :items #() :command 0
-                                  :bounds (make-trect 1 1 (1- w) (- h 4))))
+                                  :bounds (make-trect 1 top (1- w) (- h 4))))
                (d (make-instance 'tframe-dialog :frames frames :lb lb :package package
                                  :live live
                                  :title (if live
-                                            "Backtrace — Enter:locals V:src D:disasm R:return A:all"
-                                            "Backtrace — Enter:locals V:src D:disasm A:all")
+                                            "Backtrace — ↵:locals /:find V:src D:dis R:ret C:call X:eval A:all"
+                                            "Backtrace — ↵:locals /:find V:src D:dis X:eval A:all")
                                  :bounds (make-trect 0 0 w h)))
                (vsb (standard-scrollbar d t)))
+          (when condition
+            (insert d (make-instance 'tstatic-text
+                                     :text (%ellipsize (format nil "~(~a~): ~a"
+                                                               (type-of condition) condition)
+                                                       (- w 4))
+                                     :bounds (make-trect 2 1 (- w 2) 2))))
           (insert d lb) (attach-scrollbars lb :vscroll vsb)
           ;; OK is NOT the default button: a default button would steal Enter
-          ;; from the list (where Enter must open the focused frame's locals).
+          ;; from the list (where Enter must expand the focused frame).
           (insert d (make-button (make-trect (floor (- w 10) 2) (- h 3)
                                              (+ (floor (- w 10) 2) 10) (- h 1)) "O~K~" +cm-ok+))
           (move-to d (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
@@ -647,6 +820,7 @@ frames are supplied -- `r' returns a value from it.  Returns the chosen frame op
   ((backtrace :initarg :backtrace :initform nil :accessor restart-dialog-backtrace)
    (package   :initarg :package   :initform nil :accessor restart-dialog-package)
    (live      :initarg :live      :initform nil :accessor restart-dialog-live)  ; live frames
+   (condition :initarg :condition :initform nil :accessor restart-dialog-condition)
    (op        :initform nil :accessor restart-dialog-op))                       ; chosen frame op
   (:documentation "The debugger dialog; its Backtrace button opens the frame
 browser (frames + locals) without dismissing the restart list.  If the frame
@@ -657,7 +831,7 @@ restart dialog ends so the op propagates to the erroring thread."))
   (when (and (= (event-type event) +ev-command+)
              (= (event-command event) +cm-repl-backtrace+))
     (let ((op (show-frames-dialog (restart-dialog-backtrace d) (restart-dialog-package d)
-                                  (restart-dialog-live d))))
+                                  (restart-dialog-live d) (restart-dialog-condition d))))
       (when op
         (setf (restart-dialog-op d) op)
         (end-modal d +cm-ok+)))
@@ -697,7 +871,7 @@ Safe to call while a worker thread is blocked waiting."
            (w 64) (h 17)
            (d (make-instance 'trestart-dialog :title "Error — pick a restart"
                              :backtrace backtrace :package package :live live
-                             :bounds (make-trect 0 0 w h)))
+                             :condition condition :bounds (make-trect 0 0 w h)))
            (st (make-instance 'tstatic-text
                               :text (format nil "~(~a~):~%~a" (type-of condition) condition)
                               :bounds (make-trect 2 1 (- w 2) 5)))
@@ -745,6 +919,8 @@ against LIVE frames.  Aborts when nothing was chosen or a value form fails."
     (return-from repl-invoke-restart (%frame-return live (second idx) (third idx))))
   (when (and (consp idx) (eq (car idx) :frame-goto))
     (return-from repl-invoke-restart (%frame-goto (second idx))))
+  (when (and (consp idx) (eq (car idx) :frame-restart))
+    (return-from repl-invoke-restart (%frame-restart live (second idx))))
   (let ((rs (and idx (nth idx restarts))))
     (cond
       ((null rs) (invoke-restart (find-restart 'repl-abort)))

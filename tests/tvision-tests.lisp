@@ -1178,6 +1178,62 @@ the return-from-frame op; if the op doesn't fire, fall through to 99."
           (< (length user) (length all)))
       (ok "filtering never yields an empty frame list" (plusp (length user))))))
 
+;;; --- backtrace browser: error frame, source, row model, restart-frame ------
+
+(defvar *ut-restart-count* 0)
+(declaim (notinline %ut-restart-fn))
+(defun %ut-restart-fn ()
+  "On its first call, restart its own live frame; the second call returns."
+  (declare (optimize (debug 3) (speed 0)))
+  (incf *ut-restart-count*)
+  (if (< *ut-restart-count* 2)
+      (multiple-value-bind (bt live) (tvision::repl-capture-stack)
+        (let ((idx (position-if (lambda (f)
+                                  (let ((n (getf f :name)))
+                                    (and (symbolp n) (string= (symbol-name n) "%UT-RESTART-FN"))))
+                                bt)))
+          (when idx (tvision::%frame-restart live idx))
+          :no-restart))                       ; reached only if restart-frame failed
+      :second-call))
+
+(deftest debugger-backtrace-browser
+  ;; error frame = first non-machinery frame
+  (let ((frames (list (list :label "0 A" :internal-p t   :locals nil)
+                      (list :label "1 B" :internal-p nil :locals '(("x" "1" 1)))
+                      (list :label "2 C" :internal-p nil :locals nil))))
+    (is= "error frame is the first user frame" (tvision::%frame-error-index frames) 1)
+    ;; row model: filtered frames, with inline locals when a frame is expanded
+    (let ((d (make-instance 'tvision::tframe-dialog :frames frames :lb nil)))
+      (tvision::%frame-rebuild d)
+      (is= "default rows are the two user frames"
+           (coerce (tvision::frame-dialog-index-map d) 'list) '((:frame 1) (:frame 2)))
+      (setf (tvision::frame-dialog-expanded d) '(1))
+      (tvision::%frame-rebuild d)
+      (is= "expanding frame 1 inlines its local row"
+           (coerce (tvision::frame-dialog-index-map d) 'list)
+           '((:frame 1) (:local 1 0) (:frame 2)))
+      (setf (tvision::frame-dialog-show-all d) t)
+      (tvision::%frame-rebuild d)
+      (ok "show-all reveals the machinery frame too"
+          (member '(:frame 0) (coerce (tvision::frame-dialog-index-map d) 'list)
+                  :test #'equal))))
+  ;; source line lookup from a character offset
+  (uiop:with-temporary-file (:stream s :pathname p :type "lisp")
+    (write-string "(defun a () 1)" s)        ; line 1
+    (terpri s) (terpri s)
+    (write-string "(defun b () 2)" s)        ; line 3
+    (finish-output s)
+    (let ((cache (make-hash-table :test 'equal)))
+      (is= "offset on line 1 -> line 1" (tvision::%offset->line p 3 cache) 1)
+      (is= "offset after two newlines -> line 3" (tvision::%offset->line p 17 cache) 3)))
+  ;; restart-frame actually re-runs the frame's function
+  (let ((*ut-restart-count* 0))
+    (is= "restart-frame re-runs the frame"
+         (restart-case (%ut-restart-fn) (tvision::repl-abort () :aborted)) :second-call)
+    (is= "the frame ran exactly twice" *ut-restart-count* 2))
+  (is= "restart-frame with no live frame aborts gracefully"
+       (restart-case (tvision::%frame-restart nil 0) (tvision::repl-abort () :ok)) :ok))
+
 (deftest repl-backend
   (let ((cands (repl-backend-completions "list-len" (find-package :cl))))
     (ok "completion finds list-length" (member "list-length" cands :test #'string=)))

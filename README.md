@@ -91,26 +91,34 @@ parked with its stack live:
 - Pick a restart to invoke it on the worker's own stack; **`USE-VALUE` /
   `STORE-VALUE`** prompt for a Lisp form so the computation can *resume* past the
   error, not just unwind.  Abort returns to a fresh prompt.
-- **Backtrace** opens a frame browser.  By default it **hides debugger/runtime
-  machinery** (the signalling chain, the evaluator, the worker loop) and starts
-  the cursor on the frame that *signalled* the error; **`a`** toggles the full
-  stack.  Each row is rendered as a **call form with its arguments** — e.g.
-  `(parse "oops")` — via `sb-debug`'s `frame-call`.  Selecting a frame shows its
-  **local variables** (captured live via `sb-di`); selecting a local opens the
-  **object inspector** on its value, which you can **drill into** (a `TOutline`
-  tree — slots, conses, vectors, hash-table entries, arbitrarily deep).
+- **Backtrace** opens a frame browser built for reading.  It **hides
+  debugger/runtime machinery** by default (the signalling chain, the evaluator,
+  the worker loop), shows the **condition** in its header, and **marks (►) and
+  focuses** the frame that *signalled* the error; **`a`** toggles the full stack.
+  Each row is a **call form with its arguments** — e.g. `(parse "oops")`, via
+  `sb-debug`'s `frame-call` — followed by a **`file:line`** locator.  **`/`** and
+  **`n`** search the stack.
 
-  ![Readable backtrace: machinery hidden, calls shown with arguments, `a` reveals the full stack, `d` disassembles](media/backtrace-readable.gif)
+  ![Readable backtrace: machinery hidden, condition header, calls with arguments and file:line, `a` reveals the full stack](media/backtrace-readable.gif)
+
+- **Inline locals.** Press Enter on a frame to expand its **local variables**
+  (captured live via `sb-di`) right under it; Enter on a local opens the **object
+  inspector** on its value, which you can **drill into** (a `TOutline` tree —
+  slots, conses, vectors, hash-table entries, arbitrarily deep).
+
+  ![Expanding a frame's locals inline; eval a form in the frame with `x`](media/backtrace-locals.gif)
 
 - **Frame ops** in the backtrace browser:
   - **`r`** *returns from the frame* — unwind the worker's live stack to that
     frame and make it return a value you type (`sb-debug`'s
     `unwind-to-frame-and-call`), so you can step past a bad call without
     restarting the computation.
+  - **`c`** *restarts the frame* — unwind to it and re-run it with the same
+    arguments (best-effort; arguments can be optimized away).
   - **`v`** *views the source* — jump to the frame's definition in an editor.
   - **`d`** *disassembles* the frame's own (live) function — works for methods,
     closures and anonymous code, not just named functions.
-  - **Eval** (in the locals view) evaluates a form with the frame's locals bound.
+  - **`x`** *evaluates a form in the frame* — with the frame's locals bound.
 
   ![Returning a value from a frame: the computation resumes past the error](media/debugger-frame-ops.gif)
 
