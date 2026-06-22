@@ -69,6 +69,8 @@ TUI *is* the Lisp image being driven.
   (Edit ▸ Interrupt eval).  Set `*repl-async*` to nil to force inline evaluation.
 - **Tab completion** against the current package; multiple candidates pop up in a
   list, a common prefix is filled in, and `pkg:`/`pkg::` tokens are supported.
+  When nothing prefix-matches it falls back to **fuzzy (flex) completion** —
+  `mvb` → `multiple-value-bind` — ranked by word-boundary alignment.
 - **Per-listener history variables & sticky package.** `*`/`**`/`***`,
   `/`/`//`/`///`, `+`/`++`/`+++` follow standard CL REPL semantics and are kept
   per window (bound with `progv` around evaluation, so concurrent REPLs never
@@ -134,7 +136,8 @@ parked with its stack live:
 **Code-intelligence tools (Lisp menu)**
 
 - **Inspect `*`** (F8) or **Inspect expr…** — a `TOutline` tree of any value;
-  Enter (or `i`) on a node drills into that value in a fresh inspector, and `g`
+  Enter (or `i`) on a node drills into that value (re-rooting in place, with a
+  breadcrumb), **Backspace** goes back and **`f`** goes forward again, and `g`
   jumps to its definition (for symbols, classes and named functions).
 
   ![Inspecting a value and drilling into a nested element](media/inspector-drill.gif)
