@@ -122,6 +122,8 @@ parked with its stack live:
 
   ![Returning a value from a frame: the computation resumes past the error](media/debugger-frame-ops.gif)
 
+  ![Restarting a frame: a transient failure succeeds when the frame is re-run](media/backtrace-restart-frame.gif)
+
   ![Jump to a frame's source with `v`](media/backtrace-goto-source.gif)
 
 **Code-intelligence tools (Lisp menu)**
@@ -137,8 +139,17 @@ parked with its stack live:
   documentation — each cell drillable:
 
   ![Inspecting a symbol: value, plist and documentation as a drillable tree](media/inspect-symbol.gif)
-- **Macroexpand**, **Describe**, **Documentation**, **Disassemble** — into
-  scrollable windows.
+- **Macroexpand** — an interactive macro stepper (Emacs `macrostep` /
+  SLIME-style).  The form is navigable: put the cursor on **any** subform and
+  expand *just that macro, in place* (`e`), so the surrounding code stays put and
+  reads as ordinary source.  `Tab` jumps to the next expandable position, `m`
+  fully expands the subform, `M` expands every macro in the form
+  (`sb-cltl2:macroexpand-all`), `u` undoes and `0` resets, and `o`/`c` send the
+  result to an editor / the clipboard.
+
+  ![Interactive macro stepper: expand a macro at the cursor in place, Tab to the next, M to expand all](media/macroexpand-step.gif)
+
+- **Describe**, **Documentation**, **Disassemble** — into scrollable windows.
 - **Trace / Untrace** — toggle `trace` on a function (output streams into the
   REPL as it is called); Untrace-all lists and clears the traced set.
 - **Apropos** — type a substring, pick from a type-ahead list, describe it.

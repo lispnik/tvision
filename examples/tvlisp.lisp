@@ -15,7 +15,8 @@
 ;; so the SB-INTROSPECT package exists when this file is read.
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (require :sb-introspect)
-  (require :sb-sprof))
+  (require :sb-sprof)
+  (require :sb-cltl2))                   ; macroexpand-all for the macro stepper
 
 ;;; --- commands --------------------------------------------------------------
 
@@ -832,40 +833,224 @@ in its file's package, and the listener follows -- like compiling a file)."
         (format nil "(in-package ~s)~%~a" pkg form-text)
         form-text)))
 
-;;; Interactive macroexpand window: shows macroexpand-1 of a form, and `e' (or
-;;; Enter) expands the displayed result one more step until it's no longer a
-;;; macro form.
+;;; Interactive macro stepper (macrostep / SLIME C-c C-m style): the rendered
+;;; form is navigable, and you expand the macro call *at the cursor* in place,
+;;; with undo.  The expansion preserves the surrounding code so you read the
+;;; result as ordinary source.
+;;;
+;;;   e / Enter  expand the macro at the cursor one step, in place
+;;;   m          fully expand the macro at the cursor (MACROEXPAND)
+;;;   M          expand every macro in the whole form (MACROEXPAND-ALL)
+;;;   Tab        jump to the next expandable (macro-call) position
+;;;   u          undo the last expansion        0  reset to the original form
+;;;   o          open the expansion in an editor c  copy it to the clipboard
+
 (defclass tmacro-window (twindow)
-  ((form :initarg :form :accessor macro-form)    ; current (expanded) form object
-   (pkg  :initarg :pkg  :accessor macro-pkg)
-   (view :initform nil  :accessor macro-view)
-   (steps :initform 1   :accessor macro-steps)))
+  ((form    :initarg :form :accessor macro-form)     ; current form object
+   (orig    :initarg :orig :accessor macro-orig)      ; original, for reset
+   (pkg     :initarg :pkg  :accessor macro-pkg)
+   (view    :initform nil  :accessor macro-view)
+   (spans   :initform '()  :accessor macro-spans)     ; (start end . cons) per cons
+   (history :initform '()  :accessor macro-history)   ; previous forms (undo)
+   (steps   :initform 0    :accessor macro-steps)))
 
-(defun %macro-render (w)
-  (let ((*print-pretty* t) (*package* (macro-pkg w)))
-    (set-text (macro-view w) (prin1-to-string (macro-form w)))
-    (setf (window-title w) (format nil "Macroexpand — ~d step~:p  (e: expand again)" (macro-steps w)))
-    (draw-view w)))
+;;; --- a span-tracking pretty-printer: text + a char-range for every cons -----
 
-(defun %macro-step (w)
-  (let ((*package* (macro-pkg w)))
-    (multiple-value-bind (exp expanded) (macroexpand-1 (macro-form w))
-      (if expanded
-          (progn (setf (macro-form w) exp) (incf (macro-steps w)) (%macro-render w))
-          (message-box "Fully expanded (the form is not a macro call)."
-                       (logior +mf-information+ +mf-ok-button+))))))
+(defun %pp-spans (form pkg &key (width 72))
+  "Render FORM (read in PKG) to a readable, indented string; return
+(values STRING SPANS) where SPANS is a list of (start end . cons) giving the
+character range each cons occupies — used to map the cursor to a subform."
+  (let ((out (make-string-output-stream)) (pos 0) (col 0) (spans '()))
+    (labels
+        ((emit (s)
+           (write-string s out) (incf pos (length s))
+           (let ((nl (position #\Newline s :from-end t)))
+             (if nl (setf col (- (length s) nl 1)) (incf col (length s)))))
+         (atom-str (x)
+           (let ((*package* pkg) (*print-pretty* nil) (*print-readably* nil)
+                 (*print-length* 64) (*print-level* 8))
+             (handler-case (prin1-to-string x) (error () "#<?>"))))
+         (oneline-len (x)
+           (length (atom-str x)))
+         (sugar (x)                       ; quote/function reader sugar
+           (when (and (consp x) (consp (cdr x)) (null (cddr x)))
+             (case (car x)
+               (quote (values "'" (cadr x)))
+               (function (values "#'" (cadr x))))))
+         (pr (x indent depth)
+           (cond
+             ((> depth 100) (emit (atom-str x)))     ; runaway / circular guard
+             ((consp x)
+              (multiple-value-bind (pfx sub) (sugar x)
+                (if pfx
+                    (let ((start pos))
+                      (emit pfx) (pr sub (+ indent (length pfx)) (1+ depth))
+                      (push (list* start pos x) spans))
+                    (pr-list x indent depth))))
+             (t (emit (atom-str x)))))
+         (pr-list (x indent depth)
+           (let ((start pos)
+                 (inline (<= (+ col (oneline-len x)) width)))
+             (emit "(")
+             (loop with body = (+ indent 2)
+                   for cell on x for first = t then nil do
+                     (cond (first (pr (car cell) (1+ indent) (1+ depth)))
+                           (inline (emit " ") (pr (car cell) (1+ indent) (1+ depth)))
+                           (t (emit (format nil "~%~a" (make-string body :initial-element #\Space)))
+                              (pr (car cell) body (1+ depth))))
+                     (when (and (cdr cell) (not (consp (cdr cell))))   ; dotted tail
+                       (emit " . ") (pr (cdr cell) (1+ indent) (1+ depth)) (return)))
+             (emit ")")
+             (push (list* start pos x) spans))))
+      (pr form 0 0)
+      (values (get-output-stream-string out) (nreverse spans)))))
+
+(defun %span-at (spans offset)
+  "Innermost span (start end . cons) whose range contains OFFSET, or NIL."
+  (let (best)
+    (dolist (s spans best)
+      (when (and (<= (car s) offset) (< offset (cadr s))
+                 (or (null best) (< (- (cadr s) (car s)) (- (cadr best) (car best)))))
+        (setf best s)))))
+
+(defun %subst-eq (new old tree)
+  "Copy TREE, replacing the sub-tree EQ to OLD with NEW (structure sharing kept
+where nothing changed)."
+  (cond ((eq tree old) new)
+        ((consp tree)
+         (let ((a (%subst-eq new old (car tree))) (d (%subst-eq new old (cdr tree))))
+           (if (and (eq a (car tree)) (eq d (cdr tree))) tree (cons a d))))
+        (t tree)))
+
+(defun %macro-call-p (x)
+  "True when X is a macro call (its head names a macro)."
+  (and (consp x) (symbolp (car x)) (macro-function (car x)) t))
+
+(defun %macro-set-cursor (tv off)
+  "Place TV's cursor at character offset OFF and scroll it into view."
+  (let ((line 0) (o off) (n (line-count tv)))
+    (loop (let ((len (length (nth-line tv line))))
+            (when (or (<= o len) (>= (1+ line) n))
+              (setf (text-cur-line tv) line (text-cur-col tv) (max 0 (min o len)))
+              (return))
+            (decf o (1+ len)) (incf line)))
+    (ensure-visible tv)))
+
+(defun %macro-render (w &optional keep-offset)
+  "Re-render the current form, refreshing the span table and the title; when
+KEEP-OFFSET is given, restore the cursor there."
+  (let* ((tv (macro-view w))
+         (width (max 20 (- (point-x (view-size tv)) 1))))
+    (multiple-value-bind (text spans) (%pp-spans (macro-form w) (macro-pkg w) :width width)
+      (setf (macro-spans w) spans)
+      (set-text tv text)
+      (when keep-offset (%macro-set-cursor tv (min keep-offset (length text))))
+      (let ((n (count-if (lambda (s) (%macro-call-p (cddr s))) spans)))
+        (setf (window-title w)
+              (format nil "Macroexpand — ~d step~:p, ~d expandable  (e:step Tab:next M:all u:undo)"
+                      (macro-steps w) n)))
+      (draw-view w))))
+
+(defun %macro-expand-at (w &key full)
+  "Expand the macro call at the cursor (one step, or FULL via MACROEXPAND) in
+place, recording the previous form for undo."
+  (let* ((tv (macro-view w))
+         (span (%span-at (macro-spans w) (%editor-offset tv)))
+         (target (and span (cddr span))))
+    (cond
+      ((not (consp target))
+       (message-box "Put the cursor on a form to expand."
+                    (logior +mf-information+ +mf-ok-button+)))
+      (t (let ((*package* (macro-pkg w)))
+           (multiple-value-bind (exp expanded)
+               (handler-case (if full (macroexpand target) (macroexpand-1 target))
+                 (error (e) (err-box e) (values target nil)))
+             (if (not expanded)
+                 (message-box "Not a macro call (nothing to expand here)."
+                              (logior +mf-information+ +mf-ok-button+))
+                 (progn
+                   (push (macro-form w) (macro-history w))
+                   (setf (macro-form w) (%subst-eq exp target (macro-form w)))
+                   (incf (macro-steps w))
+                   (%macro-render w (car span))))))))))
+
+(defun %macro-expand-all (w)
+  "Expand every macro in the whole form (sb-cltl2:macroexpand-all)."
+  (let ((fn (find-symbol "MACROEXPAND-ALL" :sb-cltl2)))
+    (if (and fn (fboundp fn))
+        (let ((*package* (macro-pkg w)))
+          (handler-case
+              (let ((all (funcall fn (macro-form w))))
+                (push (macro-form w) (macro-history w))
+                (setf (macro-form w) all)
+                (incf (macro-steps w))
+                (%macro-render w 0))
+            (error (e) (err-box e))))
+        (message-box "macroexpand-all is unavailable."
+                     (logior +mf-information+ +mf-ok-button+)))))
+
+(defun %macro-undo (w)
+  (if (macro-history w)
+      (progn (setf (macro-form w) (pop (macro-history w)))
+             (when (plusp (macro-steps w)) (decf (macro-steps w)))
+             (%macro-render w 0))
+      (message-box "Nothing to undo." (logior +mf-information+ +mf-ok-button+))))
+
+(defun %macro-reset (w)
+  (setf (macro-form w) (macro-orig w) (macro-steps w) 0 (macro-history w) '())
+  (%macro-render w 0))
+
+(defun %macro-next-expandable (w)
+  "Move the cursor to the next macro-call position (wrapping)."
+  (let* ((tv (macro-view w)) (off (%editor-offset tv))
+         (cands (sort (loop for s in (macro-spans w)
+                            when (%macro-call-p (cddr s)) collect s)
+                      #'< :key #'car)))
+    (when cands
+      (%macro-set-cursor tv (car (or (find-if (lambda (s) (> (car s) off)) cands)
+                                     (first cands))))
+      (draw-view tv))))
+
+(defun %macro-copy (w)
+  (setf *clipboard* (text-string (macro-view w)))
+  (message-box "Expansion copied to the clipboard."
+               (logior +mf-information+ +mf-ok-button+)))
+
+(defun %macro-to-editor (w)
+  "Open the current expansion in a fresh editor window."
+  (when *application*
+    (let* ((desk (program-desktop *application*))
+           (dw (point-x (view-size desk))) (dh (point-y (view-size desk))))
+      (multiple-value-bind (win ed)
+          (make-edit-window (make-trect 2 1 (min (- dw 2) 78) (min (- dh 1) 22))
+                            :title "Expansion")
+        (set-text ed (text-string (macro-view w)))
+        (insert desk win) (focus win)))))
 
 (defmethod handle-event ((w tmacro-window) event)
-  (when (and (= (event-type event) +ev-key-down+)
-             (macro-view w)
-             (member (event-char-code event) (list (char-code #\e) (char-code #\E))))
-    (%macro-step w) (clear-event event))
+  (when (and (macro-view w) (= (event-type event) +ev-key-down+))
+    (let ((ch (event-char-code event)) (k (event-key-code event)) (handled t))
+      (cond
+        ((or (= k +kb-enter+) (= k +kb-tab+))
+         (if (= k +kb-tab+) (%macro-next-expandable w) (%macro-expand-at w)))
+        ((plusp ch)
+         (let ((raw (code-char ch)))
+           (case (char-downcase raw)
+             (#\e (%macro-expand-at w))
+             (#\m (if (char= raw #\M) (%macro-expand-all w) (%macro-expand-at w :full t)))
+             (#\u (%macro-undo w))
+             (#\0 (%macro-reset w))
+             (#\c (%macro-copy w))
+             (#\o (%macro-to-editor w))
+             (t (setf handled nil)))))
+        (t (setf handled nil)))
+      (when handled (clear-event event))))
   (call-next-method))
 
 (defun do-macroexpand (app)
-  "Macroexpand a form, step by step.  When an editor window is focused, the
-prompt defaults to the form at the cursor; the result window's `e' key expands
-one more level."
+  "Open the interactive macro stepper on a form.  When an editor window is
+focused the prompt defaults to the form at the cursor; in the stepper, navigate
+with the arrows and expand the macro call under the cursor with `e'."
   (let* ((rv (some-repl app))
          (ew (current-editor-window app))
          (default (when ew
@@ -875,14 +1060,15 @@ one more level."
     (when s
       (handler-case
           (let* ((pkg (if rv (repl-package rv) *package*))
-                 (form (let ((*package* pkg)) (macroexpand-1 (read-from-string s))))
+                 (form (let ((*package* pkg)) (read-from-string s)))
                  (desk (program-desktop app))
                  (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
                  (w (min 78 (- dw 2))) (h (min 20 (- dh 2)))
-                 (win (make-instance 'tmacro-window :form form :pkg pkg
+                 (win (make-instance 'tmacro-window :form form :orig form :pkg pkg
                                      :bounds (make-trect 0 0 w h)))
                  (vsb (standard-scrollbar win t))
-                 (tv (make-instance 'ttext-view :read-only t :bounds (make-trect 1 1 (1- w) (1- h)))))
+                 (tv (make-instance 'ttext-view :read-only t :highlight t
+                                    :bounds (make-trect 1 1 (1- w) (1- h)))))
             (insert win tv) (text-attach-scrollbars tv :vscroll vsb)
             (setf (macro-view win) tv)
             (%macro-render win)
