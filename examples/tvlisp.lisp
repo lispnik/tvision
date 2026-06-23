@@ -67,6 +67,9 @@
 (defparameter +cm-funcbrowser+ 332)
 (defparameter +cm-whocalls+    333)
 (defparameter +cm-whorefs+     334)
+(defparameter +cm-whobinds+    373)
+(defparameter +cm-whosets+     374)
+(defparameter +cm-whomacro+    375)
 (defparameter +cm-step+        335)
 (defparameter +cm-new-file+    336)
 (defparameter +cm-save+        337)
@@ -187,7 +190,10 @@
          (menu-item "Pop ~b~ack"            +cm-nav-back+ :key-text "Alt-,")
          (menu-item "~F~unction browser..." +cm-funcbrowser+)
          (menu-item "~W~ho calls..."        +cm-whocalls+)
-         (menu-item "Who ~r~eferences..."   +cm-whorefs+)))
+         (menu-item "Who ~r~eferences..."   +cm-whorefs+)
+         (menu-item "Who b~i~nds..."        +cm-whobinds+)
+         (menu-item "Who ~s~ets..."         +cm-whosets+)
+         (menu-item "Who ~m~acroexpands..." +cm-whomacro+)))
       (sub-menu "~D~ocument"
         (new-menu
          (menu-item "~D~escribe..."      +cm-describe+)
@@ -1619,7 +1625,10 @@ still shown (entries without a source location simply aren't navigable)."
                  (*package* (repl-package rv))   ; print caller names as the listener sees them
                  (entries (ecase kind
                             (:calls (sb-introspect:who-calls sym))
-                            (:references (sb-introspect:who-references sym))))
+                            (:references (sb-introspect:who-references sym))
+                            (:binds (sb-introspect:who-binds sym))
+                            (:sets (sb-introspect:who-sets sym))
+                            (:macroexpands (sb-introspect:who-macroexpands sym))))
                  (rows (%xref-rows kind entries)))
             (if (null rows)
                 (message-box (format nil "Nothing ~(~a~) ~a." kind s)
@@ -3433,6 +3442,9 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-profile-det+) (do-profile-deterministic rv) (clear-event event))
           ((= c +cm-whocalls+)    (do-xref rv app :calls) (clear-event event))
           ((= c +cm-whorefs+)     (do-xref rv app :references) (clear-event event))
+          ((= c +cm-whobinds+)    (do-xref rv app :binds) (clear-event event))
+          ((= c +cm-whosets+)     (do-xref rv app :sets) (clear-event event))
+          ((= c +cm-whomacro+)    (do-xref rv app :macroexpands) (clear-event event))
           ((= c +cm-packages+)    (do-packages rv) (clear-event event))
           ((= c +cm-systems+)     (do-systems rv) (clear-event event))
           ((= c +cm-load-buffer+) (do-load-buffer app) (clear-event event))
