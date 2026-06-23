@@ -249,7 +249,10 @@ parked with its stack live:
 - **Insert template** (Edit ▸ Insert template) — `defun` / `defclass` /
   `defmethod` / `loop` / `handler-case` / … skeletons, indented to the cursor.
 - **Go-to-definition pop-back** — **Alt-.** jumps to a definition; **Alt-,** pops
-  back to where you came from (a navigation stack across jumps).
+  back to where you came from (a navigation stack across jumps).  Source paths
+  are resolved even when the binary has been moved away from its sources.
+
+  ![Go to definition jumps to the symbol's source file](media/jump-to-source.gif)
 - **Find / Find-next** (Ctrl-F / Ctrl-L) in the focused REPL transcript *or
   editor window*, with **case-sensitive / whole-word / backward** options, plus
   **Replace** — all-at-once or **query-replace** (confirm each match).
