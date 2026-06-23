@@ -163,7 +163,9 @@
         (new-menu
          (menu-item "~W~rap in ()" +cm-wrap-paren+)
          (menu-item "~S~plice"     +cm-splice+)
-         (menu-item "~R~aise"      +cm-raise+)))
+         (menu-item "~R~aise"      +cm-raise+)
+         (menu-item "Sl~u~rp fwd"  +cm-slurp+)
+         (menu-item "~B~arf fwd"   +cm-barf+)))
       (menu-separator)
       (menu-item "I~n~terrupt eval" +cm-interrupt+ :key-text "Ctrl-C")))
    ;; grouped into submenus so every entry has a unique, unambiguous mnemonic
@@ -3035,6 +3037,77 @@ editor's buffer, around the cursor.  TRANSFORM returns NIL to do nothing."
                                    (subseq text pe))
                       ps))))))))
 
+(defun %sexp-span-at (str from)
+  "From FROM, skip whitespace and line comments, then return (values START END)
+of the one sexp beginning there — an atom, string, or balanced () list, with
+leading reader prefixes (' ` , ,@) — or NIL when none remains."
+  (let ((len (length str)) (i from))
+    (loop while (< i len) do
+      (let ((c (char str i)))
+        (cond ((member c '(#\Space #\Tab #\Newline #\Return #\Page)) (incf i))
+              ((char= c #\;) (loop while (and (< i len) (char/= (char str i) #\Newline)) do (incf i)))
+              (t (return)))))
+    (when (< i len)
+      (let ((start i))
+        (loop while (and (< i len) (member (char str i) '(#\' #\` #\,))) do
+          (incf i) (when (and (< i len) (char= (char str i) #\@)) (incf i)))
+        (when (< i len)
+          (let ((c (char str i)))
+            (cond
+              ((char= c #\()
+               (let ((depth 0))
+                 (loop while (< i len) do
+                   (let ((d (char str i)))
+                     (cond ((char= d #\;) (loop while (and (< i len) (char/= (char str i) #\Newline)) do (incf i)))
+                           ((char= d #\")
+                            (incf i) (loop while (< i len) do
+                              (let ((e (char str i))) (incf i)
+                                (cond ((char= e #\\) (incf i)) ((char= e #\") (return))))))
+                           ((and (char= d #\#) (< (1+ i) len) (char= (char str (1+ i)) #\\)) (incf i 3))
+                           ((char= d #\() (incf depth) (incf i))
+                           ((char= d #\)) (incf i) (decf depth) (when (zerop depth) (return)))
+                           (t (incf i)))))))
+              ((char= c #\")
+               (incf i) (loop while (< i len) do
+                 (let ((e (char str i))) (incf i)
+                   (cond ((char= e #\\) (incf i)) ((char= e #\") (return))))))
+              (t (loop while (and (< i len)
+                                  (not (member (char str i)
+                                               '(#\Space #\Tab #\Newline #\Return #\Page #\( #\) #\" #\;))))
+                       do (incf i))))))
+        (values start i)))))
+
+(defun do-slurp (app)
+  "Slurp-forward: extend the form at the cursor to absorb the next sexp after it."
+  (%struct-edit app
+    (lambda (text off)
+      (multiple-value-bind (s e) (%sexp-bounds text off)
+        (when (and s (> e s))
+          (let ((cp (1- e)))                                  ; the close paren
+            (multiple-value-bind (n0 n1) (%sexp-span-at text e)
+              (declare (ignore n0))
+              (when n1
+                (values (concatenate 'string (subseq text 0 cp) (subseq text (1+ cp) n1)
+                                     ")" (subseq text n1))
+                        off)))))))))
+
+(defun do-barf (app)
+  "Barf-forward: expel the last sexp of the form at the cursor out past its `)'."
+  (%struct-edit app
+    (lambda (text off)
+      (multiple-value-bind (s e) (%sexp-bounds text off)
+        (when (and s (> (- e s) 2))
+          (let ((cp (1- e)) (last nil) (i (1+ s)))
+            (loop (multiple-value-bind (a b) (%sexp-span-at text i)
+                    (if (and a (< a cp)) (progn (setf last (cons a b) i b)) (return))))
+            (when last
+              (let* ((l0 (car last)) (l1 (min (cdr last) cp))
+                     (trimmed (string-right-trim '(#\Space #\Tab #\Newline #\Return)
+                                                 (subseq text (1+ s) l0))))
+                (values (concatenate 'string (subseq text 0 (1+ s)) trimmed ") "
+                                     (subseq text l0 l1) (subseq text (1+ cp)))
+                        off)))))))))
+
 (defparameter *snippets*
   '(("defun"        . "(defun name (args)~%  )")
     ("defmacro"     . "(defmacro name (args)~%  )")
@@ -3376,6 +3449,8 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-wrap-paren+)  (do-wrap-paren app) (clear-event event))
           ((= c +cm-splice+)      (do-splice app) (clear-event event))
           ((= c +cm-raise+)       (do-raise app) (clear-event event))
+          ((= c +cm-slurp+)       (do-slurp app) (clear-event event))
+          ((= c +cm-barf+)        (do-barf app) (clear-event event))
           ((= c +cm-find+)        (do-find app) (clear-event event))
           ((= c +cm-find-next+)   (do-find-next app) (clear-event event))
           ((= c +cm-replace+)     (do-replace app) (clear-event event))
