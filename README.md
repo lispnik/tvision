@@ -166,12 +166,20 @@ parked with its stack live:
   (`sb-int:encapsulate`) so every call/return is recorded with its **live** args
   and result, shown as a depth-indented tree; each row is a presentation (Enter
   inspects the arguments or the result).
+
+  ![Watching a function records a navigable, depth-indented call tree](media/call-tree.gif)
+
 - **Break on entry** (Lisp ▸ Profile/trace) — arm a function so its next call
   stops in the cross-thread debugger (navigable backtrace + frame ops; CONTINUE
   resumes).  `(break)`, `cerror` and `invoke-debugger` route there too.
+
+  ![Break on entry: the next call stops in the debugger; CONTINUE resumes](media/break-on-entry.gif)
+
 - **Cross-reference** (Lisp ▸ Navigate) — who **calls / references / binds / sets
   / macroexpands** a symbol, in one navigable results window (Enter jumps to the
   site); plus go-to-definition with an **Alt-,** pop-back stack.
+
+  ![Who-sets: find every place a variable is assigned, jump to the source](media/xref-who-sets.gif)
 - **Apropos** — type a substring, pick from a type-ahead list, describe it.
 - **Class browser** — a type-ahead list of every class; OK / Enter jumps to the
   selected class's definition, Inspect opens it in the object inspector.
@@ -231,8 +239,13 @@ parked with its stack live:
   the cursor in `()`, **splice** (remove the enclosing parens), **raise** (replace
   the enclosing form with the one at point), and **slurp / barf forward** (the
   form absorbs the next sexp / expels its last one).
+
+  ![Slurp pulls the next form in; barf pushes the last form out](media/paredit-slurp-barf.gif)
+
 - **Rename symbol** (Edit ▸ Rename symbol) — whole-token rename across every open
   editor buffer, with a preview of the occurrences and a confirm before applying.
+
+  ![Rename a symbol across the buffer with a preview and confirm](media/rename-symbol.gif)
 - **Insert template** (Edit ▸ Insert template) — `defun` / `defclass` /
   `defmethod` / `loop` / `handler-case` / … skeletons, indented to the cursor.
 - **Go-to-definition pop-back** — **Alt-.** jumps to a definition; **Alt-,** pops
