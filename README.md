@@ -162,6 +162,16 @@ parked with its stack live:
 - **Describe**, **Documentation**, **Disassemble** — into scrollable windows.
 - **Trace / Untrace** — toggle `trace` on a function (output streams into the
   REPL as it is called); Untrace-all lists and clears the traced set.
+- **Call tree** (Lisp ▸ Profile/trace ▸ Call tree) — *watch* functions
+  (`sb-int:encapsulate`) so every call/return is recorded with its **live** args
+  and result, shown as a depth-indented tree; each row is a presentation (Enter
+  inspects the arguments or the result).
+- **Break on entry** (Lisp ▸ Profile/trace) — arm a function so its next call
+  stops in the cross-thread debugger (navigable backtrace + frame ops; CONTINUE
+  resumes).  `(break)`, `cerror` and `invoke-debugger` route there too.
+- **Cross-reference** (Lisp ▸ Navigate) — who **calls / references / binds / sets
+  / macroexpands** a symbol, in one navigable results window (Enter jumps to the
+  site); plus go-to-definition with an **Alt-,** pop-back stack.
 - **Apropos** — type a substring, pick from a type-ahead list, describe it.
 - **Class browser** — a type-ahead list of every class; OK / Enter jumps to the
   selected class's definition, Inspect opens it in the object inspector.
@@ -217,9 +227,12 @@ parked with its stack live:
 
 - **Comment region** (Edit ▸ Comment region) toggles `;;` over the selected lines
   or the current line.
-- **Structural editing** (Edit ▸ Structural) — wrap the form at the cursor in
-  `()`, splice (remove the enclosing parens), or raise (replace the enclosing
-  form with the one at point).
+- **Structural editing** (Edit ▸ Structural) — paredit-style **wrap** the form at
+  the cursor in `()`, **splice** (remove the enclosing parens), **raise** (replace
+  the enclosing form with the one at point), and **slurp / barf forward** (the
+  form absorbs the next sexp / expels its last one).
+- **Rename symbol** (Edit ▸ Rename symbol) — whole-token rename across every open
+  editor buffer, with a preview of the occurrences and a confirm before applying.
 - **Insert template** (Edit ▸ Insert template) — `defun` / `defclass` /
   `defmethod` / `loop` / `handler-case` / … skeletons, indented to the cursor.
 - **Go-to-definition pop-back** — **Alt-.** jumps to a definition; **Alt-,** pops
