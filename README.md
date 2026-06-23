@@ -60,6 +60,31 @@ in-process, micros-style backend (the same operation set Lem gets from micros,
 but built directly on SBCL built-ins with zero external deps), so the running
 TUI *is* the Lisp image being driven.
 
+At a glance — the tools it ships (each detailed below):
+
+- **REPL** — threaded per-listener evaluation, **completion** (prefix +
+  **fuzzy**), CL history variables, sticky package, arglist echo, persistent
+  history / transcript / session, and **presentations** (double-click a printed
+  result to inspect the live object).
+- **Debugger** (SLIME `sldb`-style, across the worker thread) — restart menu, a
+  **readable backtrace** (machinery hidden, calls with arguments, `file:line`,
+  condition header, inline locals, search), and **frame ops**: return-from /
+  restart / disassemble / eval-in / view-source.  **Break on entry** stops a
+  function's next call here; `break`/`cerror`/`invoke-debugger` route here too.
+- **Navigate** — **go-to-definition** with an **Alt-,** pop-back stack,
+  **cross-reference** (who calls / references / binds / sets / macroexpands),
+  and class / package / ASDF-system / function browsers.
+- **Understand** — a drillable **object inspector** (back *and* forward history),
+  an **interactive macro stepper** (expand any subform in place), describe /
+  documentation / disassemble, a **call tree** (watch functions; live
+  args/results as a navigable tree), statistical + deterministic **profilers**,
+  a **thread monitor**, and HyperSpec lookup/browsing.
+- **Edit** — Lisp syntax highlighting + `cl-indent` auto-indent, **eval** and
+  **compile** the defun/region (compile with **navigable compiler notes**),
+  in-buffer **symbol completion**, **comment region**, **paredit** structural
+  edits (wrap / splice / raise / slurp / barf), **rename symbol**, templates,
+  and find / replace / incremental-search.
+
 **REPL core**
 
 - **Threaded evaluation (one worker thread per listener).** Each REPL window
