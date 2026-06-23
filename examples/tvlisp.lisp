@@ -1518,19 +1518,58 @@ pop-back can return there."
                  (ensure-visible ed) (draw-view ed))))
            (return)))))))      ; window was closed -> skip it, try the next entry
 
+(defvar *source-root* nil
+  "Optional directory to search for source files whose recorded (build-time)
+path no longer exists -- so a relocated binary can still jump to its sources.")
+
+(defun %source-roots ()
+  "Candidate directories to look for relocated sources under (most specific
+first): the user's *SOURCE-ROOT*, the executable's directory, the current
+directory, and -- when developing from source -- the tvision system directory."
+  (remove-duplicates
+   (remove nil
+           (list (and *source-root* (ignore-errors (uiop:ensure-directory-pathname *source-root*)))
+                 (ignore-errors (uiop:pathname-directory-pathname sb-ext:*core-pathname*))
+                 (ignore-errors (uiop:getcwd))
+                 (ignore-errors (asdf:system-source-directory :tvision))))
+   :test #'equal))
+
+(defun %path-suffixes (path)
+  "Relative pathnames built from progressively longer trailing directory
+components of PATH (shortest first): file.lisp, dir/file.lisp, ..."
+  (let* ((p (pathname path)) (dirs (rest (pathname-directory p))))
+    (loop for k from 0 to (length dirs)
+          for tail = (last dirs k)
+          collect (make-pathname :directory (and tail (cons :relative tail))
+                                 :name (pathname-name p) :type (pathname-type p)))))
+
+(defun %resolve-source-path (path)
+  "A probeable pathname for PATH: itself when it exists, else the first match for
+a trailing portion of it under the known source roots (relocation), or NIL."
+  (when path
+    (let ((p (pathname path)))
+      (if (probe-file p) p
+          (loop for rel in (%path-suffixes p)
+                thereis (loop for root in (%source-roots)
+                              for cand = (ignore-errors (merge-pathnames rel root))
+                              when (and cand (probe-file cand)) return cand))))))
+
 (defun goto-source (app type path offset)
   (declare (ignore type))
-  (if (and path (probe-file path))
-      (let* ((desk (program-desktop app))
-             (dw (point-x (view-size desk))) (dh (point-y (view-size desk))))
-        (%nav-push app)                       ; remember where we jumped from
-        (multiple-value-bind (w ed)
-            (make-edit-window (make-trect 2 1 (min (- dw 2) 84) (min (- dh 1) 26))
-                              :title (file-namestring path) :filename path)
-          (insert desk w)
-          (when offset (text-goto ed (%offset-to-line path offset) 0))
-          (focus w)))
-      (message-box (format nil "No source file:~%~a" path) (logior +mf-error+ +mf-ok-button+))))
+  (let ((resolved (%resolve-source-path path)))
+    (if resolved
+        (let* ((desk (program-desktop app))
+               (dw (point-x (view-size desk))) (dh (point-y (view-size desk))))
+          (%nav-push app)                       ; remember where we jumped from
+          (multiple-value-bind (w ed)
+              (make-edit-window (make-trect 2 1 (min (- dw 2) 84) (min (- dh 1) 26))
+                                :title (file-namestring resolved) :filename resolved)
+            (insert desk w)
+            (when offset (text-goto ed (%offset-to-line resolved offset) 0))
+            (focus w)))
+        (message-box (format nil "No source file:~%~a~@[~%~%Set *source-root* to locate relocated sources.~]"
+                             path (and path (not (probe-file (pathname path)))))
+                     (logior +mf-error+ +mf-ok-button+)))))
 
 ;;; A shared cross-reference / definitions results window: a sortable table of
 ;;; (kind, where, file, line) source hits.  Enter on a row jumps to that

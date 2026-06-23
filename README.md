@@ -335,6 +335,12 @@ sbcl --eval '(asdf:make :tvision/examples/tvlisp)' --quit     # -> ./tvlisp
 `asdf:make` uses the `program-op`/`build-pathname`/`entry-point` settings in
 `tvision.asd` to dump a self-contained binary.
 
+Jump-to-source (go-to-definition, xref, compiler notes) uses the absolute
+pathnames SBCL recorded at build time.  If you move the binary away from its
+sources, those features still find the files by searching for the trailing path
+under the executable's directory, the current directory, and
+`tvision-tvlisp::*source-root*` (set it to your source tree to override).
+
 The mouse works throughout: click/drag a scroll bar, double-click a list item,
 drag a title bar, drag the bottom-right corner to resize, click `[×]`/`[↑]`, and
 the wheel scrolls.  **F10** opens the menu bar (or **Alt+letter**), **Alt-1..9**
