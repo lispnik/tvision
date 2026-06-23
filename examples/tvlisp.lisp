@@ -70,6 +70,7 @@
 (defparameter +cm-whobinds+    373)
 (defparameter +cm-whosets+     374)
 (defparameter +cm-whomacro+    375)
+(defparameter +cm-rename+      376)   ; rename a symbol across open buffers
 (defparameter +cm-step+        335)
 (defparameter +cm-new-file+    336)
 (defparameter +cm-save+        337)
@@ -162,6 +163,7 @@
       (menu-item "Comp~l~ete symbol" +cm-complete+ :key-text "Tab")
       (menu-item "Co~m~ment region"  +cm-comment+)
       (menu-item "Insert templ~a~te" +cm-snippet+)
+      (menu-item "Rename s~y~mbol..." +cm-rename+)
       (sub-menu "~S~tructural"
         (new-menu
          (menu-item "~W~rap in ()" +cm-wrap-paren+)
@@ -3148,6 +3150,78 @@ to the cursor's column)."
                               (concatenate 'string (subseq text 0 off) snippet (subseq text off))
                               (+ off (length snippet)))))))))
 
+;;; --- rename a symbol across open editor buffers (preview + confirm) ---------
+
+(defun %rename-occurrences (text old)
+  "Offsets of OLD as a whole symbol token in TEXT (case-insensitive)."
+  (let ((offs '()) (i 0))
+    (loop for p = (%search-token old text i)
+          while p do (push p offs) (setf i (+ p (length old))))
+    (nreverse offs)))
+
+(defun %rename-in-text (text old new)
+  "Replace every whole-token OLD with NEW in TEXT; (values NEW-TEXT COUNT)."
+  (let ((offs (%rename-occurrences text old)) (n (length old)))
+    (if (null offs) (values text 0)
+        (let ((out (make-string-output-stream)) (i 0))
+          (dolist (p offs)
+            (write-string (subseq text i p) out) (write-string new out) (setf i (+ p n)))
+          (write-string (subseq text i) out)
+          (values (get-output-stream-string out) (length offs))))))
+
+(defun %line-around (text off)
+  "(values LINE-NUMBER TRIMMED-LINE-TEXT) for character offset OFF in TEXT."
+  (let* ((off (min off (length text)))
+         (ls (let ((p (position #\Newline text :end off :from-end t))) (if p (1+ p) 0)))
+         (le (or (position #\Newline text :start off) (length text))))
+    (values (1+ (count #\Newline text :end ls))
+            (string-trim '(#\Space #\Tab) (subseq text ls le)))))
+
+(defun do-rename (app)
+  "Rename a symbol across all open editor buffers: gather whole-token
+occurrences, show a preview, and on confirm replace them all.  (Textual, so
+occurrences in strings/comments are included — the preview shows what changes.)"
+  (let ((old (prompt-line "Rename" "Symbol to rename:" (%point-symbol))))
+    (when (and old (plusp (length (string-trim " " old))))
+      (setf old (string-trim " " old))
+      (let ((new (prompt-line "Rename" (format nil "Rename ~a to:" old) old)))
+        (when (and new (plusp (length (string-trim " " new))))
+          (setf new (string-trim " " new))
+          (let* ((desk (program-desktop app))
+                 (editors (remove-if-not (lambda (w) (typep w 'teditor-window)) (desktop-windows desk)))
+                 (hits (loop for w in editors
+                             for ed = (editor-window-editor w)
+                             for offs = (%rename-occurrences (text-string ed) old)
+                             when offs collect (list w ed offs)))
+                 (total (reduce #'+ hits :key (lambda (h) (length (third h))) :initial-value 0)))
+            (if (zerop total)
+                (message-box (format nil "No occurrences of ~a in open editors." old)
+                             (logior +mf-information+ +mf-ok-button+))
+                (let* ((samples '()) (shown 0))
+                  (block gather
+                    (dolist (h hits)
+                      (let* ((w (first h)) (ed (second h)) (text (text-string ed))
+                             (name (or (and (editor-filename ed) (file-namestring (editor-filename ed)))
+                                       (window-title w))))
+                        (dolist (o (third h))
+                          (multiple-value-bind (ln lt) (%line-around text o)
+                            (push (format nil "~a:~d: ~a" name ln (tvision::%ellipsize lt 48)) samples))
+                          (when (>= (incf shown) 8) (return-from gather))))))
+                  (let ((preview (format nil "Rename ~d occurrence~:p of  ~a  ->  ~a  in ~d buffer~:p:~%~%~{  ~a~%~}~a~%Proceed?"
+                                         total old new (length hits) (nreverse samples)
+                                         (if (> total shown) (format nil "  ...and ~d more~%" (- total shown)) ""))))
+                    (when (= +cm-yes+ (message-box preview
+                                                   (logior +mf-confirmation+ +mf-yes-button+ +mf-no-button+)))
+                      (dolist (h hits)
+                        (let* ((w (first h)) (ed (second h)) (off (%editor-offset ed)))
+                          (multiple-value-bind (nt cnt) (%rename-in-text (text-string ed) old new)
+                            (declare (ignore cnt))
+                            (set-text ed nt) (setf (text-modified ed) t)
+                            (%macro-set-cursor ed (min off (length nt)))
+                            (draw-view w))))
+                      (message-box (format nil "Renamed ~d occurrence~:p." total)
+                                   (logior +mf-information+ +mf-ok-button+))))))))))))
+
 ;;; --- session save/restore --------------------------------------------------
 
 (defun %window-bounds-list (w)
@@ -3458,6 +3532,7 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-complete+)    (do-editor-complete app) (clear-event event))
           ((= c +cm-comment+)     (do-comment-region app) (clear-event event))
           ((= c +cm-snippet+)     (do-insert-snippet app) (clear-event event))
+          ((= c +cm-rename+)      (do-rename app) (clear-event event))
           ((= c +cm-wrap-paren+)  (do-wrap-paren app) (clear-event event))
           ((= c +cm-splice+)      (do-splice app) (clear-event event))
           ((= c +cm-raise+)       (do-raise app) (clear-event event))
