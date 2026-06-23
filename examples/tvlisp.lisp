@@ -93,6 +93,7 @@
 (defparameter +cm-raise+       368)
 (defparameter +cm-snippet+     369)
 (defparameter +cm-compile-defun+ 370) ; compile the form at point, list its notes
+(defparameter +cm-calltree+    371)   ; call-tree (watch) window
 
 (defparameter +hc-repl+ 1)
 ;; Computed at runtime (not load/build time) so they follow the running user's
@@ -200,6 +201,7 @@
          (menu-item "Tra~c~e..."          +cm-trace+)
          (menu-item "Trace pac~k~age..."  +cm-trace-pkg+)
          (menu-item "Trace ~s~napshots..." +cm-trace-snap+)
+         (menu-item "Ca~l~l tree..."      +cm-calltree+)
          (menu-item "~U~ntrace all..."    +cm-untrace-all+)))
       (sub-menu "~B~rowse"
         (new-menu
@@ -1742,6 +1744,129 @@ checked when you confirm."
               (repl-print rv (format nil "~%; untraced ~d function~:p~%" (length picked)))
               (tvision::repl-fresh-prompt rv) (draw-view rv)))))))
 
+;;; --- call-tree tracing: watch functions and record a navigable call tree ---
+;;; Distinct from cl:trace (which dumps indented text to the REPL): watched
+;;; functions are encapsulated so every call/return is recorded with the live
+;;; argument and result objects, shown as a tree whose rows are presentations
+;;; (Enter inspects the args / result).
+
+(defvar *ct-log* '())                       ; rows, most-recent first
+(defvar *ct-count* 0)
+(defvar *ct-depth* 0)                        ; dynamic call depth (per thread)
+(defvar *ct-watched* '())                    ; watched symbols
+(defparameter *ct-limit* 4000)
+(defvar *ct-lock* (sb-thread:make-mutex :name "tvlisp-calltree"))
+
+(defun %ct-record (row)
+  (sb-thread:with-mutex (*ct-lock*)
+    (push row *ct-log*) (incf *ct-count*)
+    (when (> *ct-count* (* 2 *ct-limit*))    ; trim rarely (amortized O(1))
+      (setf *ct-log* (subseq *ct-log* 0 *ct-limit*) *ct-count* *ct-limit*))))
+
+(defun %ct-snapshot () (sb-thread:with-mutex (*ct-lock*) (reverse *ct-log*)))
+(defun %ct-clear () (sb-thread:with-mutex (*ct-lock*) (setf *ct-log* '() *ct-count* 0)))
+
+(defun %ct-watch (sym)
+  "Encapsulate SYM so its calls/returns are recorded into the call-tree log."
+  (unless (member sym *ct-watched*)
+    (sb-int:encapsulate
+     sym 'tvlisp-calltree
+     (lambda (fn &rest args)
+       (let ((d *ct-depth*))
+         (%ct-record (list :call d sym (copy-list args)))
+         (let ((*ct-depth* (1+ d)))
+           (handler-case
+               (let ((vals (multiple-value-list (apply fn args))))
+                 (%ct-record (list :return d sym vals))
+                 (values-list vals))
+             (serious-condition (c) (%ct-record (list :error d sym c)) (error c)))))))
+    (push sym *ct-watched*)))
+
+(defun %ct-unwatch (sym)
+  (when (member sym *ct-watched*)
+    (ignore-errors (sb-int:unencapsulate sym 'tvlisp-calltree))
+    (setf *ct-watched* (remove sym *ct-watched*))))
+
+(defun %ct-row-label (row)
+  (destructuring-bind (kind depth name payload) row
+    (let ((ind (make-string (* 2 (min depth 24)) :initial-element #\Space))
+          (*print-length* 4) (*print-level* 2) (*print-pretty* nil) (*print-readably* nil))
+      (flet ((pr (x) (handler-case (prin1-to-string x) (error () "#<?>"))))
+        (case kind
+          (:call   (format nil "~a› (~(~a~)~{ ~a~})" ind name (mapcar #'pr payload)))
+          (:return (format nil "~a‹ ~(~a~) ⇒ ~{~a~^, ~}" ind name
+                           (or (mapcar #'pr payload) '("; no values"))))
+          (:error  (format nil "~a✗ ~(~a~) signalled ~a" ind name (pr payload))))))))
+
+(defclass tcalltree-window (twindow)
+  ((app  :initarg :app :initform nil :accessor ct-app)
+   (rows :initform nil :accessor ct-rows)
+   (lb   :initarg :lb  :initform nil :accessor ct-lb))
+  (:documentation "A navigable call tree from watched functions; Enter inspects a
+row's arguments or result; `a' adds a watch, `u' removes one, `c' clears, `r'
+refreshes."))
+
+(defun %ct-refresh (w)
+  (setf (ct-rows w) (%ct-snapshot))
+  (when (ct-lb w)
+    (list-set-items (ct-lb w) (or (mapcar #'%ct-row-label (ct-rows w))
+                                  (list "(no calls yet -- `a' to watch a function)"))))
+  (setf (window-title w)
+        (format nil "Call tree — ~d watched, ~d call~:p  (Enter:inspect a:watch u:unwatch c:clear r:refresh)"
+                (length *ct-watched*) (length (ct-rows w))))
+  (draw-view w))
+
+(defun %ct-inspect-row (w)
+  (let* ((rows (ct-rows w)) (lb (ct-lb w))
+         (row (and lb rows (nth (list-focused lb) rows))))
+    (when row
+      (destructuring-bind (kind depth name payload) row
+        (declare (ignore depth))
+        (case kind
+          (:call   (repl-inspect payload (format nil "args of ~(~a~)" name)))
+          (:return (repl-inspect (if (= 1 (length payload)) (first payload) payload)
+                                 (format nil "result of ~(~a~)" name)))
+          (:error  (repl-inspect payload (format nil "error in ~(~a~)" name))))))))
+
+(defmethod handle-event ((w tcalltree-window) event)
+  (cond
+    ((and (= (event-type event) +ev-broadcast+)
+          (= (event-command event) +cm-list-item-selected+) (ct-lb w))
+     (%ct-inspect-row w) (clear-event event))
+    ((and (= (event-type event) +ev-key-down+) (plusp (event-char-code event)))
+     (case (char-downcase (code-char (event-char-code event)))
+       (#\a (let ((s (and (ct-app w)
+                          (prompt-line "Watch function" "Function to add to the call tree:"
+                                       (%point-symbol)))))
+              (when (and s (plusp (length (string-trim " " s))))
+                (handler-case (progn (%ct-watch (read-in (some-repl (ct-app w)) s)) (%ct-refresh w))
+                  (error (e) (err-box e)))))
+            (clear-event event))
+       (#\u (let ((picked (and *ct-watched*
+                               (choose-checklist "Unwatch functions"
+                                                 (mapcar (lambda (s) (format nil "~s" s)) *ct-watched*)))))
+              (dolist (i picked) (%ct-unwatch (nth i *ct-watched*)))
+              (%ct-refresh w))
+            (clear-event event))
+       (#\c (%ct-clear) (%ct-refresh w) (clear-event event))
+       (#\r (%ct-refresh w) (clear-event event))
+       (t (call-next-method))))
+    (t (call-next-method))))
+
+(defun do-call-tree (app)
+  "Open the call-tree window (encapsulation-based watch tracing)."
+  (let* ((desk (program-desktop app))
+         (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+         (w (min 84 (- dw 2))) (h (min 22 (- dh 2)))
+         (lb (make-instance 'tlist-box :items #() :command 0
+                            :bounds (make-trect 1 1 (1- w) (- h 2))))
+         (win (make-instance 'tcalltree-window :app app :lb lb :bounds (make-trect 0 0 w h)))
+         (vsb (standard-scrollbar win t)))
+    (insert win lb) (attach-scrollbars lb :vscroll vsb)
+    (%ct-refresh win)
+    (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+    (insert desk win) (focus win)))
+
 (defun method-label (m)
   (string-trim " "
     (format nil "~{~(~a~)~^ ~} (~{~a~^ ~})"
@@ -3225,6 +3350,7 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-load-buffer+) (do-load-buffer app) (clear-event event))
           ((= c +cm-compile-buffer+) (do-compile-buffer app) (clear-event event))
           ((= c +cm-compile-defun+)  (do-compile-defun app) (clear-event event))
+          ((= c +cm-calltree+)       (do-call-tree app) (clear-event event))
           ((= c +cm-eval-defun+)  (do-eval-defun app) (clear-event event))
           ((= c +cm-eval-region+) (do-eval-region app) (clear-event event))
           ((= c +cm-nav-back+)    (do-nav-back app) (clear-event event))
