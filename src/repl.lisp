@@ -1316,6 +1316,15 @@ under SBCL's single-stepper.  Posts the final results back to the UI thread."
         (start (get-internal-real-time)))
     (let ((*standard-output* out) (*error-output* out) (*trace-output* out)
           (*package* (repl-package r))
+          ;; route non-error debugger entries (BREAK, trace :break, explicit
+          ;; INVOKE-DEBUGGER) into our restart dialog -- they bypass the ERROR
+          ;; handler-bind below, and the raw SBCL debugger has no TUI stdin.
+          ;; BREAK binds CL:*DEBUGGER-HOOK* to NIL, so use SBCL's lower-level
+          ;; hook, which INVOKE-DEBUGGER always honours.
+          (sb-ext:*invoke-debugger-hook*
+           (lambda (condition hook)
+             (declare (ignore hook))
+             (repl-worker-debug r condition)))
           (sb-ext:*stepper-hook* (if step (make-step-hook r) sb-ext:*stepper-hook*)))
       (unwind-protect
            (with-repl-history ((repl-hist-vars r) new-hist)

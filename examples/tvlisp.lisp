@@ -94,6 +94,7 @@
 (defparameter +cm-snippet+     369)
 (defparameter +cm-compile-defun+ 370) ; compile the form at point, list its notes
 (defparameter +cm-calltree+    371)   ; call-tree (watch) window
+(defparameter +cm-break-entry+ 372)   ; break on a function's next call
 
 (defparameter +hc-repl+ 1)
 ;; Computed at runtime (not load/build time) so they follow the running user's
@@ -202,6 +203,7 @@
          (menu-item "Trace pac~k~age..."  +cm-trace-pkg+)
          (menu-item "Trace ~s~napshots..." +cm-trace-snap+)
          (menu-item "Ca~l~l tree..."      +cm-calltree+)
+         (menu-item "~B~reak on entry..." +cm-break-entry+)
          (menu-item "~U~ntrace all..."    +cm-untrace-all+)))
       (sub-menu "~B~rowse"
         (new-menu
@@ -1674,6 +1676,19 @@ appears in the REPL, indented by call depth (SBCL's default)."
                                   (setf note " (conditional)")))))
                      (when note
                        (repl-print rv (format nil "~%; tracing ~s~a~%" sym note)))))))
+              (tvision::repl-fresh-prompt rv) (draw-view rv))
+          (error (e) (err-box e)))))))
+
+(defun do-break-on-entry (rv)
+  "Set a breakpoint: TRACE a function with :break so its next call stops in the
+debugger (with the navigable backtrace and frame ops); untrace it to clear."
+  (when rv
+    (let ((s (prompt-line "Break on entry" "Function (its next call breaks):" (%point-symbol))))
+      (when s
+        (handler-case
+            (let ((sym (read-in rv s)))
+              (eval `(trace ,sym :break t))
+              (repl-print rv (format nil "~%; break-on-entry armed on ~s (untrace to clear)~%" sym))
               (tvision::repl-fresh-prompt rv) (draw-view rv))
           (error (e) (err-box e)))))))
 
@@ -3351,6 +3366,7 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-compile-buffer+) (do-compile-buffer app) (clear-event event))
           ((= c +cm-compile-defun+)  (do-compile-defun app) (clear-event event))
           ((= c +cm-calltree+)       (do-call-tree app) (clear-event event))
+          ((= c +cm-break-entry+)    (do-break-on-entry rv) (clear-event event))
           ((= c +cm-eval-defun+)  (do-eval-defun app) (clear-event event))
           ((= c +cm-eval-region+) (do-eval-region app) (clear-event event))
           ((= c +cm-nav-back+)    (do-nav-back app) (clear-event event))
