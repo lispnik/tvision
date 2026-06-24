@@ -240,7 +240,8 @@ parked with its stack live:
   live in the image).  **Tab** re-indents the current line (or the
   selected lines) — or, when the cursor follows a symbol, **completes** it (see
   below); **Alt-Q** re-indents the whole top-level form.  **Undo /
-  redo** (Ctrl-Z / Ctrl-Y).
+  redo** (Ctrl-Z / Ctrl-Y, also on the Edit menu and the right-click context
+  menu).
 
 ![Lisp auto-indent and Alt-Q reflow in an editor window](media/auto-indent.gif)
 

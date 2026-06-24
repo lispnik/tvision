@@ -109,6 +109,8 @@
 (defparameter +cm-eclman+      384)   ; open the ECL manual in the HTML browser
 (defparameter +cm-cclman+      385)   ; open the CCL manual in the HTML browser
 (defparameter +cm-linenums+    386)   ; toggle editor line numbers
+(defparameter +cm-undo+        387)   ; undo the last edit in the focused view
+(defparameter +cm-redo+        388)   ; redo the last undone edit
 
 (defparameter +hc-repl+ 1)
 ;; Computed at runtime (not load/build time) so they follow the running user's
@@ -159,6 +161,9 @@
       (menu-item "E~x~it"            +cm-quit+     :key-code +kb-alt-x+ :key-text "Alt-X")))
    (sub-menu "~E~dit"
      (new-menu
+      (menu-item "~U~ndo"       +cm-undo+  :key-text "Ctrl-Z")
+      (menu-item "~R~edo"       +cm-redo+  :key-text "Ctrl-Y")
+      (menu-separator)
       (menu-item "Cu~t~"        +cm-cut+   :key-text "Ctrl-X")
       (menu-item "~C~opy"       +cm-copy+  :key-text "Ctrl-C")
       (menu-item "~P~aste"      +cm-paste+ :key-text "Ctrl-V")
@@ -4328,6 +4333,9 @@ string or comment (so it won't fight existing literals)."
 
 (defun repl-context-menu ()
   (new-menu
+   (menu-item "~U~ndo"      +cm-undo+     :key-text "Ctrl-Z")
+   (menu-item "~R~edo"      +cm-redo+     :key-text "Ctrl-Y")
+   (menu-separator)
    (menu-item "Cu~t~"       +cm-cut+      :key-text "Ctrl-X")
    (menu-item "~C~opy"      +cm-copy+     :key-text "Ctrl-C")
    (menu-item "~P~aste"     +cm-paste+    :key-text "Ctrl-V")
@@ -4410,6 +4418,14 @@ string or comment (so it won't fight existing literals)."
         (cond
           ((= c +cm-new-repl+) (open-repl-window app) (clear-event event))
           ((= c +cm-clear+)    (with-repl #'repl-clear) (clear-event event))
+          ((= c +cm-undo+)     (let ((v (%current-text-view app)))
+                                 (when (and v (not (text-read-only v)))
+                                   (text-undo! v) (draw-view v)))
+                               (clear-event event))
+          ((= c +cm-redo+)     (let ((v (%current-text-view app)))
+                                 (when (and v (not (text-read-only v)))
+                                   (text-redo! v) (draw-view v)))
+                               (clear-event event))
           ((= c +cm-cut+)      (with-repl #'cut-selection) (clear-event event))
           ((= c +cm-copy+)     (with-repl #'copy-selection) (clear-event event))
           ((= c +cm-paste+)    (with-repl #'paste-clipboard) (clear-event event))
