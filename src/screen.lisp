@@ -109,8 +109,9 @@ LINES/COLUMNS environment variables and finally to a sane 24x80 default."
     (%emit s (ctl "?1006l"))
     (%emit s (ctl "?1002l"))
     (%emit s (ctl "?1000l"))
+    (%emit s (ctl "0 q"))         ; restore the terminal's default cursor shape
     (%emit s (ctl "?25h"))        ; show cursor
-    (%emit s "\e[0m")             ; reset attributes
+    (%emit s (ctl "0m"))          ; reset attributes
     (%emit s (ctl "?1049l"))      ; leave alternate screen
     (%flush-out s)
     (when (screen-saved-stty s)
