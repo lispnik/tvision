@@ -482,10 +482,14 @@ any #fragment so the browser can scroll to an anchor."
 (defclass thtml-window (twindow)
   ((view   :initform nil :accessor hw-view)
    (base   :initform "" :accessor hw-base)
-   (back   :initform '() :accessor hw-back-stack)   ; pages behind the current one
-   (fwd    :initform '() :accessor hw-fwd-stack)    ; pages ahead (after going Back)
+   (back   :initform '() :accessor hw-back-stack)   ; entries behind the current one
+   (fwd    :initform '() :accessor hw-fwd-stack)    ; entries ahead (after going Back)
    (titles :initform '() :accessor hw-titles)        ; (location . <title>) seen so far
-   (times  :initform '() :accessor hw-times)))        ; (location . universal-time) last visit
+   (times  :initform '() :accessor hw-times)))         ; (location . universal-time) last visit
+;; Each Back/Forward stack entry is (LOCATION SCROLL FOCUS): the page, the
+;; scroll position (DX . DY), and the focused-link index the view had when we
+;; navigated away from it, so returning to the entry restores that exact spot
+;; and link cursor — even for #anchor jumps within one page.
 
 (defun hw-label (w loc)
   "How LOC should appear in the history: its <title> if we have one, else the URL."
@@ -516,10 +520,22 @@ local files are always read fresh."
     (setf (window-title w)
           (format nil "~a  [^B/Bksp back  ^F fwd  ^R reload]" title))))
 
-(defun hw-go (w loc &key (record t))
+(defun hw-scroll-pos (w)
+  "The view's current scroll position as (DX . DY)."
+  (let ((d (scroller-delta (hw-view w))))
+    (cons (point-x d) (point-y d))))
+
+(defun hw-here (w)
+  "The current page as a history entry: (LOCATION SCROLL FOCUSED-LINK)."
+  (list (hw-base w) (hw-scroll-pos w) (html-focused-link (hw-view w))))
+
+(defun hw-go (w loc &key (record t) restore focus)
   "Load LOC (optionally with a #fragment) into the window.  When RECORD, treat it
-as fresh navigation: push the current page onto the Back stack and drop Forward.
-Scrolls to the #fragment's anchor when present.  Return T on a successful load."
+as fresh navigation: push the current page (with its scroll and link cursor) onto
+the Back stack and drop Forward.  RESTORE, when given, is a (DX . DY) scroll
+position to return to and FOCUS the focused-link index to re-select — used by
+Back / Forward / reload / history; otherwise a #fragment anchor (or the top) is
+used.  Return T on a successful load."
   (let* ((hash (position #\# loc))
          (base (if hash (subseq loc 0 hash) loc))
          (frag (and hash (plusp (length (subseq loc (1+ hash)))) (subseq loc (1+ hash))))
@@ -527,7 +543,8 @@ Scrolls to the #fragment's anchor when present.  Return T on a successful load."
     (cond
       (content
        (when (and record (plusp (length (hw-base w))))
-         (push (hw-base w) (hw-back-stack w))
+         ;; leaving the current page: remember it and where we were on it
+         (push (hw-here w) (hw-back-stack w))
          (setf (hw-fwd-stack w) '()))
        (setf (hw-base w) base)
        ;; remember when this page was last visited (for the history list)
@@ -542,8 +559,16 @@ Scrolls to the #fragment's anchor when present.  Return T on a successful load."
          ;; also log to the persistent cross-session visited-pages history
          (record-browse base title))
        (hw-set-title w)
-       (set-html (hw-view w) content)
-       (when frag (html-goto-anchor (hw-view w) frag))
+       (set-html (hw-view w) content)   ; resets scroll to the top and clears the link cursor
+       ;; restore the focused-link cursor without scrolling it into view (that is
+       ;; what html-focus-link would do); the saved scroll position wins
+       (when (and focus (< focus (html-link-count (hw-view w))))
+         (setf (html-focused-link (hw-view w)) focus))
+       (cond
+         ;; Back / Forward / reload / history: return to where we left off
+         (restore (scroll-to (hw-view w) (car restore) (cdr restore)))
+         ;; a fresh visit to a #fragment jumps to its anchor
+         (frag (html-goto-anchor (hw-view w) frag)))
        (focus (hw-view w))
        (draw-view w)
        t)
@@ -551,29 +576,43 @@ Scrolls to the #fragment's anchor when present.  Return T on a successful load."
                       (logior +mf-error+ +mf-ok-button+))
          nil))))
 
+(defun hw-go-entry (w entry &rest args)
+  "Navigate to history ENTRY (LOCATION SCROLL FOCUS), restoring its scroll and
+link cursor.  Extra ARGS are passed through to HW-GO."
+  (apply #'hw-go w (first entry)
+         :record nil :restore (second entry) :focus (third entry) args))
+
 (defun hw-back (w)
-  "Go to the previous page, remembering the current one for Forward."
+  "Go to the previous page, restoring its scroll and link cursor and remembering
+the current one for Forward."
   (when (hw-back-stack w)
-    (let ((target (pop (hw-back-stack w))) (cur (hw-base w)))
-      (when (hw-go w target :record nil)
-        (push cur (hw-fwd-stack w))))))
+    (let ((entry (pop (hw-back-stack w))) (here (hw-here w)))
+      (if (hw-go-entry w entry)
+          (push here (hw-fwd-stack w))
+          (push entry (hw-back-stack w))))))
 
 (defun hw-forward (w)
-  "Go to the next page (undo a Back), remembering the current one for Back."
+  "Go to the next page (undo a Back), restoring its scroll and link cursor and
+remembering the current one for Back."
   (when (hw-fwd-stack w)
-    (let ((target (pop (hw-fwd-stack w))) (cur (hw-base w)))
-      (when (hw-go w target :record nil)
-        (push cur (hw-back-stack w))))))
+    (let ((entry (pop (hw-fwd-stack w))) (here (hw-here w)))
+      (if (hw-go-entry w entry)
+          (push here (hw-back-stack w))
+          (push entry (hw-fwd-stack w))))))
 
 (defun hw-reload (w)
   (when (plusp (length (hw-base w)))
-    ;; drop the cached copy so reload really refetches
+    ;; drop the cached copy so reload really refetches, but keep our place
     (setf *page-cache* (remove (hw-base w) *page-cache* :key #'car :test #'string=))
-    (hw-go w (hw-base w) :record nil)))
+    (hw-go-entry w (hw-here w))))
+
+(defun hw-history-entries (w)
+  "All visited entries (LOCATION . scroll) oldest-first, current page in place."
+  (append (reverse (hw-back-stack w)) (list (hw-here w)) (hw-fwd-stack w)))
 
 (defun hw-history-list (w)
-  "The full visit history in chronological order (oldest first)."
-  (append (reverse (hw-back-stack w)) (list (hw-base w)) (hw-fwd-stack w)))
+  "The full visit history (locations) in chronological order (oldest first)."
+  (mapcar #'car (hw-history-entries w)))
 
 (defun hw-history-index (w)
   "Position of the current page within (HW-HISTORY-LIST W)."
@@ -581,12 +620,13 @@ Scrolls to the #fragment's anchor when present.  Return T on a successful load."
 
 (defun hw-goto-index (w i)
   "Jump to chronological history entry I, rebuilding the Back/Forward stacks
-around it."
-  (let ((items (hw-history-list w)))
-    (when (and (>= i 0) (< i (length items)) (/= i (hw-history-index w)))
-      (setf (hw-back-stack w) (reverse (subseq items 0 i))
-            (hw-fwd-stack w)  (subseq items (1+ i)))
-      (hw-go w (nth i items) :record nil))))
+around it and restoring that entry's scroll position."
+  (let ((entries (hw-history-entries w)))
+    (when (and (>= i 0) (< i (length entries)) (/= i (hw-history-index w)))
+      (let ((entry (nth i entries)))
+        (setf (hw-back-stack w) (reverse (subseq entries 0 i))
+              (hw-fwd-stack w)  (subseq entries (1+ i)))
+        (hw-go-entry w entry)))))
 
 (defmethod handle-event ((w thtml-window) event)
   (cond

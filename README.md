@@ -318,7 +318,10 @@ parked with its stack live:
   Common Lisp HyperSpec.  Tab / Shift-Tab move between links, Enter (or a click)
   follows one, and a Back / Forward history is kept — Ctrl-B (or Backspace) goes
   Back, Ctrl-F goes Forward, Ctrl-R reloads (Alt-←/→ work too where the terminal
-  sends them).  `/` searches the page (find-in-page) with `n` / `N` to jump
+  sends them).  Back / Forward (and the history list) restore the scroll position
+  you had on each page, so returning to a long document lands where you left off
+  — even for `#anchor` jumps within a single page.  `/` searches the page
+  (find-in-page) with `n` / `N` to jump
   between highlighted hits.  Help ▸ Browser history pops up the
   visited-page list (current marked) so you can jump straight to any of them.
   Remote pages are fetched with `curl` (no in-image TLS needed); local files
@@ -344,6 +347,8 @@ Alt-N jumps to the filename field and Alt-F to the browser.
 ![Help ▸ SBCL manual opens the SBCL User Manual in the browser](media/sbcl-manual.gif)
 
 ![Back / Forward through the browser history](media/browser-history.gif)
+
+![Back / Forward restore your scroll position in a long document](media/browser-back-scroll.gif)
 
 ![The Browser history window — jump straight to any visited page](media/browser-history-window.gif)
 
