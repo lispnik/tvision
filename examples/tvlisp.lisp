@@ -111,6 +111,8 @@
 (defparameter +cm-linenums+    386)   ; toggle editor line numbers
 (defparameter +cm-undo+        387)   ; undo the last edit in the focused view
 (defparameter +cm-redo+        388)   ; redo the last undone edit
+(defparameter +cm-clipboard+   389)   ; open the object clipboard tool window
+(defparameter +cm-clip-star+   390)   ; clip the REPL's last value (*)
 
 (defparameter +hc-repl+ 1)
 ;; Computed at runtime (not load/build time) so they follow the running user's
@@ -200,6 +202,7 @@
      (new-menu
       (menu-item "~I~nspect *"        +cm-inspect+ :key-code +kb-f8+ :key-text "F8")
       (menu-item "Inspect ~e~xpr..."  +cm-inspect-expr+)
+      (menu-item "Clip * to clip~b~oard" +cm-clip-star+)
       (menu-separator)
       (menu-item "E~v~al defun"       +cm-eval-defun+)
       (menu-item "Eval ~r~egion"      +cm-eval-region+)
@@ -260,7 +263,8 @@
       (menu-item "C~a~scade" +cm-cascade+)
       (menu-item "Cl~o~se"   +cm-close+)
       (menu-separator)
-      (menu-item "T~h~reads..." +cm-threads+ :key-code +kb-f9+ :key-text "F9")))
+      (menu-item "T~h~reads..." +cm-threads+ :key-code +kb-f9+ :key-text "F9")
+      (menu-item "Object clip~b~oard" +cm-clipboard+)))
    (sub-menu "~H~elp"
      (new-menu
       (menu-item "Hyper~S~pec / browse..." +cm-browse+)
@@ -3169,6 +3173,139 @@ git-sign column, or nothing when neither has something to show."
                 (:deleted (values #\▁ 12)))   ; red underline (deletion below)
             (db-fill db ch (make-attr fg bg) (1- gw) 1)))))))
 
+;;; --- object clipboard (LispWorks-style) ------------------------------------
+;;; A place to park *live* Lisp objects (not text) and move them between tools.
+;;; Clip a value, then from the clipboard window inspect it, remove it, or paste
+;;; it back into the REPL as a live reference.  Entries hold strong references,
+;;; so a clipped object is retained (and pinned against GC) until removed.
+
+(defvar *object-clipboard* '()
+  "Clipped objects, newest first; each entry is (ID OBJECT . NAME).")
+(defvar *clip-counter* 0 "Source of stable clip ids (used by the (clip ID) paste).")
+
+;;; the clipboard tool window: a modeless list of the clipped objects
+(defclass tclipboard-window (twindow)
+  ((app :initarg :app :accessor cb-app)
+   (lb  :initform nil :accessor cb-lb)))
+
+(defun %clip-name (obj)
+  "A LispWorks-style label: the object's type plus a short printed value."
+  (let ((v (handler-case (prin1-to-string obj) (error () "#<unprintable>"))))
+    (when (> (length v) 56) (setf v (concatenate 'string (subseq v 0 53) "...")))
+    (format nil "~(~a~)  ~a" (type-of obj) v)))
+
+(defun refresh-clipboard-windows ()
+  "Repaint any open object-clipboard window to match *OBJECT-CLIPBOARD*."
+  (let ((app *application*))
+    (when app
+      (let ((w (first-that (program-desktop app)
+                           (lambda (v) (typep v 'tclipboard-window)))))
+        (when w (%cb-refresh w))))))
+
+(defun clipboard-add (obj)
+  "Clip OBJ onto the object clipboard; return its id."
+  (let ((id (incf *clip-counter*)))
+    (push (list* id obj (%clip-name obj)) *object-clipboard*)
+    (refresh-clipboard-windows)
+    id))
+
+(defun clipboard-object (id)
+  "The clipped object with ID, or NIL — also the function the REPL's (clip ID)
+paste resolves to."
+  (let ((e (assoc id *object-clipboard*))) (and e (cadr e))))
+
+(defun clipboard-remove (id)
+  (setf *object-clipboard* (remove id *object-clipboard* :key #'car))
+  (refresh-clipboard-windows))
+
+(defun %ensure-clip-fn (pkg)
+  "Intern CLIP in PKG bound to CLIPBOARD-OBJECT, so an evaluated (clip ID)
+returns the live clipped object."
+  (let ((sym (intern "CLIP" pkg)))
+    (setf (symbol-function sym) #'clipboard-object)
+    sym))
+
+(defun clipboard-paste (id app)
+  "Paste a live reference to clipped object ID into a REPL as (clip ID).  Uses
+SOME-REPL because the clipboard window — not a REPL — is the focused one here."
+  (let ((rv (some-repl app)))
+    (if rv
+        (progn
+          (%ensure-clip-fn (repl-package rv))
+          (insert-string rv (format nil "(clip ~d)" id))
+          (focus rv) (draw-view rv))
+        (message-box "No REPL to paste into." (logior +mf-information+ +mf-ok-button+)))))
+
+(defun %cb-entry (w)
+  "The clipboard entry under the focus in window W, or NIL."
+  (let ((lb (cb-lb w)))
+    (and lb (plusp (list-count lb)) (nth (list-focused lb) *object-clipboard*))))
+
+(defun %cb-refresh (w)
+  (list-set-items (cb-lb w) (mapcar #'cddr *object-clipboard*))
+  (setf (window-title w)
+        (format nil "Clipboard (~d)  Enter:inspect p:paste d:remove"
+                (length *object-clipboard*)))
+  (draw-view w))
+
+(defmethod handle-event ((w tclipboard-window) event)
+  (cond
+    ((and (= (event-type event) +ev-broadcast+)
+          (= (event-command event) +cm-list-item-selected+) (cb-lb w))
+     (let ((e (%cb-entry w))) (when e (repl-inspect (cadr e) (cddr e))))
+     (clear-event event))
+    ((= (event-type event) +ev-key-down+)
+     (let ((k (event-key-code event)) (ch (event-char-code event)) (e (%cb-entry w)))
+       (cond
+         ((or (eql ch (char-code #\i)) (eql ch (char-code #\I)))
+          (when e (repl-inspect (cadr e) (cddr e))) (clear-event event))
+         ((or (eql ch (char-code #\p)) (eql ch (char-code #\P)))
+          (when e (clipboard-paste (car e) (cb-app w))) (clear-event event))
+         ((or (eql ch (char-code #\d)) (eql ch (char-code #\D)) (= k +kb-del+))
+          (when e (clipboard-remove (car e))) (clear-event event))
+         ((or (eql ch (char-code #\r)) (eql ch (char-code #\R)))
+          (%cb-refresh w) (clear-event event))
+         (t (call-next-method)))))
+    (t (call-next-method))))
+
+(defun do-object-clipboard (app)
+  "Open (or focus) the object clipboard tool window."
+  (let* ((desk (program-desktop app))
+         (existing (first-that desk (lambda (v) (typep v 'tclipboard-window)))))
+    (if existing
+        (progn (focus existing) (%cb-refresh existing))
+        (let* ((dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+               (w (min 66 (- dw 2))) (h (min 16 (- dh 2)))
+               (win (make-instance 'tclipboard-window :app app :title "Object Clipboard"
+                                   :bounds (make-trect 0 0 w h)))
+               (vsb (standard-scrollbar win t))
+               (lb (make-instance 'tlist-box :items #() :command 0
+                                  :bounds (make-trect 1 1 (1- w) (1- h)))))
+          (insert win lb) (attach-scrollbars lb :vscroll vsb)
+          (setf (cb-lb win) lb)
+          (%cb-refresh win)
+          (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+          (insert desk win) (focus lb)))))
+
+(defun do-clip-star (app)
+  "Clip the REPL's last value (*) and show the clipboard."
+  (let ((rv (some-repl app)))
+    (if rv
+        (progn (clipboard-add (repl-hvar rv '*)) (do-object-clipboard app))
+        (message-box "No REPL to clip from." (logior +mf-information+ +mf-ok-button+)))))
+
+;; Clip the object under inspection: press `c' in an Inspector window.  Drill in
+;; first (`i') to clip a nested value.
+(defmethod handle-event :around ((w tinspector-window) event)
+  (if (and (= (event-type event) +ev-key-down+)
+           (let ((ch (event-char-code event)))
+             (or (eql ch (char-code #\c)) (eql ch (char-code #\C))))
+           (tvision::inspector-current w))
+      (progn (clipboard-add (car (tvision::inspector-current w)))
+             (do-object-clipboard *application*)
+             (clear-event event))
+      (call-next-method)))
+
 (defun %write-session-script (rv path)
   "Write RV's input forms (chronological, :help meta-commands dropped) to PATH as
 a loadable Lisp script.  Return the number of forms written."
@@ -4341,6 +4478,7 @@ string or comment (so it won't fight existing literals)."
    (menu-item "~P~aste"     +cm-paste+    :key-text "Ctrl-V")
    (menu-separator)
    (menu-item "~I~nspect *" +cm-inspect+  :key-text "F8")
+   (menu-item "C~l~ip * (object clipboard)" +cm-clip-star+)
    (menu-item "~M~acroexpand..." +cm-macroexpand+)
    (menu-item "~D~escribe..."    +cm-describe+)
    (menu-separator)
@@ -4426,6 +4564,8 @@ string or comment (so it won't fight existing literals)."
                                  (when (and v (not (text-read-only v)))
                                    (text-redo! v) (draw-view v)))
                                (clear-event event))
+          ((= c +cm-clipboard+) (do-object-clipboard app) (clear-event event))
+          ((= c +cm-clip-star+) (do-clip-star app) (clear-event event))
           ((= c +cm-cut+)      (with-repl #'cut-selection) (clear-event event))
           ((= c +cm-copy+)     (with-repl #'copy-selection) (clear-event event))
           ((= c +cm-paste+)    (with-repl #'paste-clipboard) (clear-event event))
