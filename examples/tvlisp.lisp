@@ -99,6 +99,7 @@
 (defparameter +cm-compile-defun+ 370) ; compile the form at point, list its notes
 (defparameter +cm-calltree+    371)   ; call-tree (watch) window
 (defparameter +cm-break-entry+ 372)   ; break on a function's next call
+(defparameter +cm-sbclman+     383)   ; open the SBCL manual in the HTML browser
 
 (defparameter +hc-repl+ 1)
 ;; Computed at runtime (not load/build time) so they follow the running user's
@@ -242,6 +243,7 @@
    (sub-menu "~H~elp"
      (new-menu
       (menu-item "Hyper~S~pec / browse..." +cm-browse+)
+      (menu-item "SBCL ~m~anual"           +cm-sbclman+)
       (menu-item "~B~rowser history..."    +cm-bhistory+)
       (menu-separator)
       (menu-item "~H~elp" +cm-help+ :key-code +kb-f1+ :key-text "F1")))))
@@ -628,6 +630,11 @@ around it."
 (defun do-browse (app)
   (let ((loc (prompt-line "HyperSpec / browse" "URL or file:" +hyperspec-default+)))
     (when loc (open-html-window app (string-trim " " loc)))))
+
+(defparameter +sbcl-manual-default+ "http://www.sbcl.org/manual/index.html")
+
+(defun do-sbcl-manual (app)
+  (open-html-window app +sbcl-manual-default+))
 
 (defun %hhmm (universal-time)
   "HH:MM for UNIVERSAL-TIME."
@@ -3548,6 +3555,7 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-gotodef+)     (do-goto-definition rv app) (clear-event event))
           ((= c +cm-funcbrowser+) (do-function-browser rv app) (clear-event event))
           ((= c +cm-browse+)      (do-browse app) (clear-event event))
+          ((= c +cm-sbclman+)     (do-sbcl-manual app) (clear-event event))
           ((= c +cm-bhistory+)    (do-browser-history app) (clear-event event))
           ((= c +cm-hslookup+)    (do-hyperspec-lookup app) (clear-event event))
           ((= c +cm-step+)        (do-step rv) (clear-event event))
