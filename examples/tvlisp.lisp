@@ -108,6 +108,7 @@
 (defparameter +cm-sbclman+     383)   ; open the SBCL manual in the HTML browser
 (defparameter +cm-eclman+      384)   ; open the ECL manual in the HTML browser
 (defparameter +cm-cclman+      385)   ; open the CCL manual in the HTML browser
+(defparameter +cm-linenums+    386)   ; toggle editor line numbers
 
 (defparameter +hc-repl+ 1)
 ;; Computed at runtime (not load/build time) so they follow the running user's
@@ -242,7 +243,8 @@
       (menu-item "Color ~d~emo"        +cm-color-demo+)
       (menu-item "~P~retty-print"      +cm-pprint+)
       (menu-item "Eval t~i~ming"       +cm-timing+)
-      (menu-item "~A~uto-close parens" +cm-autoclose+)))
+      (menu-item "~A~uto-close parens" +cm-autoclose+)
+      (menu-item "~L~ine numbers"      +cm-linenums+)))
    (sub-menu "~W~indow"
      (new-menu
       (menu-item "~L~ist..." +cm-winlist+ :key-text "Alt-0")
@@ -3026,13 +3028,15 @@ PATH~ backup of the previous contents."
                                       (logior +mf-error+ +mf-ok-button+))))
             (do-saveas-editor app))))))
 
-;;; --- git gutter ------------------------------------------------------------
-;;; A left margin on file editors marking each line added / changed / deleted
-;;; relative to git HEAD.  Signs are recomputed when a file is loaded or saved
-;;; (via :after methods on text-load-file / text-save-file) and, while an editor
-;;; is focused, refreshed on idle so external git operations show up too.
+;;; --- editor gutter: line numbers + git signs -------------------------------
+;;; A left margin on file editors showing (optional) line numbers and marking
+;;; each line added / changed / deleted relative to git HEAD.  Signs are
+;;; recomputed when a file is loaded or saved (via :after methods on
+;;; text-load-file / text-save-file) and, while an editor is focused, refreshed
+;;; on idle so external git operations show up too.
 
-(defparameter +git-gutter-width+ 2)
+(defvar *line-numbers* t
+  "When true, file editors show line numbers in the gutter (Options menu).")
 
 (defvar *git-signs* (make-hash-table :test 'eq)
   "Maps a TFILE-EDITOR to a hash of 0-based line index -> :added / :changed /
@@ -3111,34 +3115,54 @@ marked entirely added.  Returns the line -> sign hash (possibly empty)."
       (when (and redraw (not (and old (%signs-equal old new))))
         (draw-view ed)))))
 
-(defun git-gutter-enable (ed)
-  "Turn on the git gutter for file editor ED and compute its initial signs."
-  (when (typep ed 'tfile-editor)
-    (setf (text-gutter-width ed) +git-gutter-width+)
-    (refresh-git-signs ed)))
-
 ;; Recompute whenever a file editor loads or saves a file — this covers every
 ;; place that opens an editor (Open, jump-to-source, project tree, …) and Save.
 (defmethod text-load-file :after ((ed tfile-editor) path)
   (declare (ignore path))
-  (git-gutter-enable ed))
+  (refresh-git-signs ed))
 
 (defmethod text-save-file :after ((ed tfile-editor) path)
   ;; a freshly-saved untitled buffer gets its name here (the caller sets the
-  ;; same value just after); then the gutter turns on and recomputes
+  ;; same value just after); then the signs recompute against the new file
   (unless (editor-filename ed) (setf (editor-filename ed) path))
-  (git-gutter-enable ed))
+  (refresh-git-signs ed))
+
+(defun %linenum-width (ed)
+  "Digits needed for ED's largest line number (minimum 3)."
+  (max 3 (length (princ-to-string (line-count ed)))))
+
+(defun editor-gutter-width (ed)
+  "How wide ED's gutter should be: a line-number field (when enabled) plus a
+git-sign column, or nothing when neither has something to show."
+  (let ((signs (gethash ed *git-signs*)))
+    (cond
+      (*line-numbers* (+ (%linenum-width ed) 2))         ; digits + space + sign bar
+      ((and signs (plusp (hash-table-count signs))) 2)   ; just the git sign + space
+      (t 0))))
+
+;; Size the gutter from the current line count / toggle just before each repaint,
+;; so the framework's layout (which reads TEXT-GUTTER-WIDTH) stays in step.
+(defmethod draw :before ((ed tfile-editor))
+  (setf (text-gutter-width ed) (editor-gutter-width ed)))
 
 (defmethod draw-gutter ((ed tfile-editor) db li c)
-  (let* ((signs (gethash ed *git-signs*))
-         (sign (and signs (gethash li signs))))
-    (when sign
-      (multiple-value-bind (ch fg)
-          (ecase sign
-            (:added   (values #\▌ 10))    ; bright green bar
-            (:changed (values #\▌ 14))    ; bright yellow bar
-            (:deleted (values #\▁ 12)))   ; red underline (deletion below)
-        (db-fill db ch (make-attr fg (attr-bg c)) 0 1)))))
+  (let ((gw (text-gutter-width ed))
+        (bg (attr-bg c)))
+    (when (plusp gw)
+      ;; right-aligned line number; brighter on the current line
+      (when *line-numbers*
+        (let ((numw (%linenum-width ed)))
+          (db-move-str db 0 (format nil "~v@a" numw (1+ li))
+                       (make-attr (if (= li (text-cur-line ed)) 15 8) bg))))
+      ;; git sign bar in the last gutter column, hugging the text
+      (let ((sign (gethash li (gethash ed *git-signs* (load-time-value (make-hash-table))))))
+        (when sign
+          (multiple-value-bind (ch fg)
+              (ecase sign
+                (:added   (values #\▌ 10))    ; bright green bar
+                (:changed (values #\▌ 14))    ; bright yellow bar
+                (:deleted (values #\▁ 12)))   ; red underline (deletion below)
+            (db-fill db ch (make-attr fg bg) (1- gw) 1)))))))
 
 (defun %write-session-script (rv path)
   "Write RV's input forms (chronological, :help meta-commands dropped) to PATH as
@@ -4467,6 +4491,9 @@ string or comment (so it won't fight existing literals)."
                                   (toggle-msg "Eval timing" *repl-time*) (clear-event event))
           ((= c +cm-autoclose+)   (setf (auto-close app) (not (auto-close app)))
                                   (toggle-msg "Auto-close parens" (auto-close app)) (clear-event event))
+          ((= c +cm-linenums+)    (setf *line-numbers* (not *line-numbers*))
+                                  (when *screen* (screen-invalidate *screen*) (flush-screen *screen*))
+                                  (toggle-msg "Line numbers" *line-numbers*) (clear-event event))
           ((= c +cm-help+)        (open-help +hc-repl+ "tvlisp Help") (clear-event event))
           ((= c +cm-load+)
            (let ((path (file-open-dialog :title "Load Lisp file")))

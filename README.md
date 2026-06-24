@@ -305,15 +305,17 @@ parked with its stack live:
   **open a file in an editor window** (a `TEditWindow`) via a
   reusable `TFileDialog` — type a path or browse: Enter on a directory descends
   into it, Enter on `..` goes back up, Enter on a file opens it.
-- **Git gutter** — file editor windows carry a left margin marking each line
-  added (green bar), changed (yellow bar), or deleted (red mark) relative to git
-  `HEAD`.  Signs recompute when the file is loaded or saved, and refresh on idle
-  so external git operations (commit, checkout, stage) show up too.  Files
-  outside a repository simply show no gutter.
+- **Editor gutter** — file editor windows carry a left margin with optional
+  **line numbers** (Options ▸ Line numbers; the current line is highlighted) and
+  a **git diff** mark on each line added (green bar), changed (yellow bar), or
+  deleted (red mark) relative to git `HEAD`.  Signs recompute when the file is
+  loaded or saved, and refresh on idle so external git operations (commit,
+  checkout, stage) show up too.  Files outside a repository show just the line
+  numbers.
 
-  ![Git gutter: added / changed / deleted marks beside each line](media/git-gutter.gif)
+  ![Editor gutter: line numbers plus added / changed / deleted git marks](media/git-gutter.gif)
 - **Options:** theme picker (`TColorDialog`), pretty-print toggle, eval-timing
-  toggle (`; N ms`), auto-close parens.
+  toggle (`; N ms`), auto-close parens, **line numbers**.
 - **Thread monitor** (F9, Window ▸ Threads) lists the worker threads with
   Refresh / Kill; new REPL (F2), Clear (F3), Tile (F4), Cascade (F5), Next (F6),
   Close (Window ▸ Close), Help (F1).
