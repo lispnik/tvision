@@ -100,6 +100,8 @@
 (defparameter +cm-calltree+    371)   ; call-tree (watch) window
 (defparameter +cm-break-entry+ 372)   ; break on a function's next call
 (defparameter +cm-sbclman+     383)   ; open the SBCL manual in the HTML browser
+(defparameter +cm-eclman+      384)   ; open the ECL manual in the HTML browser
+(defparameter +cm-cclman+      385)   ; open the CCL manual in the HTML browser
 
 (defparameter +hc-repl+ 1)
 ;; Computed at runtime (not load/build time) so they follow the running user's
@@ -244,6 +246,8 @@
      (new-menu
       (menu-item "Hyper~S~pec / browse..." +cm-browse+)
       (menu-item "SBCL ~m~anual"           +cm-sbclman+)
+      (menu-item "~E~CL manual"            +cm-eclman+)
+      (menu-item "~C~CL manual"            +cm-cclman+)
       (menu-item "~B~rowser history..."    +cm-bhistory+)
       (menu-separator)
       (menu-item "~H~elp" +cm-help+ :key-code +kb-f1+ :key-text "F1")))))
@@ -675,6 +679,17 @@ around it and restoring that entry's scroll position."
 
 (defun do-sbcl-manual (app)
   (open-html-window app +sbcl-manual-default+))
+
+(defparameter +ecl-manual-default+
+  "https://ecl.common-lisp.dev/static/files/manual/current-manual/")
+
+(defun do-ecl-manual (app)
+  (open-html-window app +ecl-manual-default+))
+
+(defparameter +ccl-manual-default+ "https://ccl.clozure.com/docs/build/ccl.html")
+
+(defun do-ccl-manual (app)
+  (open-html-window app +ccl-manual-default+))
 
 (defun %hhmm (universal-time)
   "HH:MM for UNIVERSAL-TIME."
@@ -3596,6 +3611,8 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-funcbrowser+) (do-function-browser rv app) (clear-event event))
           ((= c +cm-browse+)      (do-browse app) (clear-event event))
           ((= c +cm-sbclman+)     (do-sbcl-manual app) (clear-event event))
+          ((= c +cm-eclman+)      (do-ecl-manual app) (clear-event event))
+          ((= c +cm-cclman+)      (do-ccl-manual app) (clear-event event))
           ((= c +cm-bhistory+)    (do-browser-history app) (clear-event event))
           ((= c +cm-hslookup+)    (do-hyperspec-lookup app) (clear-event event))
           ((= c +cm-step+)        (do-step rv) (clear-event event))

@@ -78,7 +78,8 @@ At a glance — the tools it ships (each detailed below):
   an **interactive macro stepper** (expand any subform in place), describe /
   documentation / disassemble, a **call tree** (watch functions; live
   args/results as a navigable tree), statistical + deterministic **profilers**,
-  a **thread monitor**, and HyperSpec lookup/browsing plus the SBCL manual.
+  a **thread monitor**, and HyperSpec lookup/browsing plus the SBCL, ECL, and
+  CCL manuals.
 - **Edit** — Lisp syntax highlighting + `cl-indent` auto-indent, **eval** and
   **compile** the defun/region (compile with **navigable compiler notes**),
   in-buffer **symbol completion**, **comment region**, **paredit** structural
@@ -325,8 +326,8 @@ parked with its stack live:
   between highlighted hits.  Help ▸ Browser history pops up the
   visited-page list (current marked) so you can jump straight to any of them.
   Remote pages are fetched with `curl` (no in-image TLS needed); local files
-  are read directly.  Help ▸ SBCL manual opens the online SBCL User Manual in
-  the same browser.
+  are read directly.  The Help menu also opens the online SBCL, ECL, and CCL
+  manuals in the same browser.
 
 ![Open in editor: choosing a file and loading it into an editor window](media/open-in-editor.gif)
 
