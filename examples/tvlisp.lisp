@@ -99,6 +99,12 @@
 (defparameter +cm-compile-defun+ 370) ; compile the form at point, list its notes
 (defparameter +cm-calltree+    371)   ; call-tree (watch) window
 (defparameter +cm-break-entry+ 372)   ; break on a function's next call
+(defparameter +cm-transpose+   377)   ; swap the form at point with its sibling
+(defparameter +cm-slurp-back+  378)   ; slurp the preceding sexp into the form
+(defparameter +cm-barf-back+   379)   ; expel the form's first sexp out the front
+(defparameter +cm-kill-sexp+   380)   ; delete the sexp at point
+(defparameter +cm-reorder-args+ 381)  ; reorder a function's args at its call sites
+(defparameter +cm-project+     382)   ; open a system's source-file tree (system window)
 (defparameter +cm-sbclman+     383)   ; open the SBCL manual in the HTML browser
 (defparameter +cm-eclman+      384)   ; open the ECL manual in the HTML browser
 (defparameter +cm-cclman+      385)   ; open the CCL manual in the HTML browser
@@ -137,6 +143,7 @@
       (menu-item "~C~lear"           +cm-clear+    :key-code +kb-f3+ :key-text "F3")
       (menu-separator)
       (menu-item "Open in ~e~ditor..." +cm-editor+)
+      (menu-item "Open S~y~stem..."    +cm-project+)
       (menu-item "~S~ave"            +cm-save+     :key-text "Ctrl-S")
       (menu-item "Save ~A~s..."      +cm-saveas+)
       (menu-item "Sa~v~e all"        +cm-save-all+)
@@ -167,13 +174,18 @@
       (menu-item "Co~m~ment region"  +cm-comment+)
       (menu-item "Insert templ~a~te" +cm-snippet+)
       (menu-item "Rename s~y~mbol..." +cm-rename+)
+      (menu-item "Re~o~rder args..."  +cm-reorder-args+)
       (sub-menu "~S~tructural"
         (new-menu
          (menu-item "~W~rap in ()" +cm-wrap-paren+)
          (menu-item "~S~plice"     +cm-splice+)
          (menu-item "~R~aise"      +cm-raise+)
+         (menu-item "~T~ranspose"  +cm-transpose+)
          (menu-item "Sl~u~rp fwd"  +cm-slurp+)
-         (menu-item "~B~arf fwd"   +cm-barf+)))
+         (menu-item "~B~arf fwd"   +cm-barf+)
+         (menu-item "Slurp bac~k~" +cm-slurp-back+)
+         (menu-item "Barf b~a~ck"  +cm-barf-back+)
+         (menu-item "Kill se~x~p"  +cm-kill-sexp+)))
       (menu-separator)
       (menu-item "I~n~terrupt eval" +cm-interrupt+ :key-text "Ctrl-C")))
    ;; grouped into submenus so every entry has a unique, unambiguous mnemonic
@@ -389,16 +401,108 @@
       (when (and (= (exec-view desk d) +cm-ok+) (plusp (list-count lb)))
         (list-item lb (list-focused lb))))))
 
-(defun choose-index (title labels &key (start 0) (w 64) (h 18))
+;;; --- incremental-search list picker ----------------------------------------
+;;; A shared text matcher behind the list pickers.  Pickers search a logical KEY
+;;; (e.g. a window's plain title) rather than the decorated label shown in the
+;;; list, so markers like "> " or "1. " don't defeat the search.  This is the
+;;; Tier-2 matcher: a case-insensitive substring test; a fuzzy scorer can later
+;;; sit behind the same MATCH-* entry points without touching the callers.
+
+(defun match-key-p (query key)
+  "True when QUERY matches KEY.  An empty QUERY matches anything; otherwise a
+case-insensitive substring test."
+  (or (zerop (length query))
+      (and (search query key :test #'char-equal) t)))
+
+(defun match-count (query keys)
+  "How many of KEYS (a vector of strings) match QUERY."
+  (count-if (lambda (k) (match-key-p query k)) keys))
+
+(defun match-scan (query keys from dir)
+  "Index of the next element of KEYS matching QUERY, scanning from just past
+FROM in direction DIR (+1 or -1) and wrapping around.  NIL if none match.  Pass
+FROM = -1, DIR = +1 to find the first match from the top."
+  (let ((n (length keys)))
+    (when (plusp n)
+      (loop for step from 1 to n
+            for i = (mod (+ from (* dir step)) n)
+            when (match-key-p query (aref keys i)) return i))))
+
+;;; A TLIST-BOX that filters-by-jump: typing builds a query and moves the focus
+;;; to matching items, non-destructively -- the list keeps its order and every
+;;; item stays visible.  Up/Down cycle between matches while a query is active,
+;;; Backspace shortens it, and Esc clears it (a second Esc then cancels the
+;;; dialog).  KEYS is a vector of match strings parallel to the display items.
+(defclass tincr-list-box (tlist-box)
+  ((keys      :initarg :keys      :initform #() :accessor ilb-keys)
+   (query     :initform ""        :accessor ilb-query)
+   (on-change :initarg :on-change :initform nil :accessor ilb-on-change)))
+
+(defun ilb-jump (lb from dir)
+  "Move focus to the next match from FROM in direction DIR; no-op if none."
+  (let ((pos (match-scan (ilb-query lb) (ilb-keys lb) from dir)))
+    (when pos (list-focus-item lb pos))))
+
+(defun ilb-set-query (lb q)
+  "Set the search query to Q, re-anchor on the first match, and notify."
+  (setf (ilb-query lb) q)
+  (ilb-jump lb -1 +1)
+  (when (ilb-on-change lb) (funcall (ilb-on-change lb) lb)))
+
+(defmethod handle-event ((lb tincr-list-box) event)
+  (let ((q (ilb-query lb)))
+    (cond
+      ((not (and (= (event-type event) +ev-key-down+)
+                 (logtest (view-state lb) +sf-focused+)))
+       (call-next-method))
+      ;; Backspace: shorten the query
+      ((= (event-key-code event) +kb-back+)
+       (when (plusp (length q)) (ilb-set-query lb (subseq q 0 (1- (length q)))))
+       (clear-event event))
+      ;; Esc: clear an active query; when already empty, let the dialog cancel
+      ((= (event-key-code event) +kb-esc+)
+       (cond ((plusp (length q)) (ilb-set-query lb "") (clear-event event))
+             (t (call-next-method))))
+      ;; Up/Down cycle between matches while a query is active
+      ((and (plusp (length q))
+            (or (= (event-key-code event) +kb-down+) (= (event-key-code event) +kb-up+)))
+       (ilb-jump lb (list-focused lb) (if (= (event-key-code event) +kb-down+) 1 -1))
+       (clear-event event))
+      ;; Printable char: extend the query, but only if it still matches something
+      ;; (and never let a leading space start a query)
+      ((let ((cc (event-char-code event)))
+         (and (plusp cc) (zerop (event-modifiers event))
+              (let ((c (code-char cc)))
+                (and c (graphic-char-p c)
+                     (not (and (char= c #\Space) (zerop (length q))))))))
+       (let ((new (concatenate 'string q (string (code-char (event-char-code event))))))
+         (when (match-scan new (ilb-keys lb) -1 1) (ilb-set-query lb new)))
+       (clear-event event))
+      (t (call-next-method)))))
+
+(defun choose-index (title labels &key keys (start 0) (w 64) (h 18))
   "Modal, order-preserving picker over LABELS; return the chosen index (focused
-on START) or NIL on cancel.  Enter or OK selects."
+on START) or NIL on cancel.  Enter or OK selects.  Type to search incrementally;
+KEYS, when given, supplies the per-item strings to match against (defaulting to
+LABELS) so decorated labels can still be searched by their plain text."
   (when (and *application* labels)
     (let* ((desk (program-desktop *application*))
+           (keyv (map 'vector #'princ-to-string (or keys labels)))
            (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar d t))
-           (lb (make-instance 'tlist-box :items labels :command +cm-ok+
+           (foot (make-instance 'tstatic-text :text ""
+                                :bounds (make-trect 2 (- h 3) (- w 26) (- h 2))))
+           (lb (make-instance 'tincr-list-box :items labels :keys keyv :command +cm-ok+
                               :bounds (make-trect 1 1 (1- w) (- h 3)))))
+      (setf (ilb-on-change lb)
+            (lambda (lb)
+              (let ((q (ilb-query lb)))
+                (setf (tvision::static-text-text foot)
+                      (if (zerop (length q)) ""
+                          (format nil "find: ~a  (~d/~d)" q (match-count q keyv) (length keyv))))
+                (draw-view foot))))
       (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (insert d foot)
       (insert d (make-button (make-trect (- w 24) (- h 3) (- w 14) (- h 1)) "~O~K" +cm-ok+ t))
       (insert d (make-button (make-trect (- w 12) (- h 3) (- w 2) (- h 1)) "Cancel" +cm-cancel+))
       (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
@@ -1342,7 +1446,9 @@ Returns (values selected-item end-command)."
                              for n = (window-number w)
                              collect (format nil "~:[  ~;> ~]~@[~d. ~]~a"
                                              (eq w cur) (and (plusp n) n) (window-title w))))
-               (sel (choose-index "Window list" labels :start (max 0 (or (position cur wins) 0)))))
+               (sel (choose-index "Window list" labels
+                                  :keys (mapcar (lambda (w) (or (window-title w) "")) wins)
+                                  :start (max 0 (or (position cur wins) 0)))))
           (when sel (set-current desk (nth sel wins) :normal-select))))))
 
 (defun %load-system-async (rv name force)
@@ -3105,6 +3211,32 @@ debugger support, exactly as if typed)."
           (t (incf i)))))
     (when best (values (car best) (cdr best)))))
 
+(defun %inner-list (str off)
+  "Like %SEXP-BOUNDS but with an exclusive end: a position sitting just past a
+form's closing `)' belongs to the *enclosing* list, not that form.  So a cursor
+in the whitespace between two sibling sub-forms resolves to their parent (which
+is what transpose wants when swapping e.g. two LET bindings)."
+  (let ((len (length str)) (stack '()) (best nil) (i 0))
+    (loop while (< i len) do
+      (let ((c (char str i)))
+        (cond
+          ((char= c #\;) (loop while (and (< i len) (char/= (char str i) #\Newline)) do (incf i)))
+          ((char= c #\")
+           (incf i) (loop while (< i len) do
+             (let ((d (char str i))) (incf i)
+               (cond ((char= d #\\) (incf i)) ((char= d #\") (return))))))
+          ((and (char= c #\#) (< (1+ i) len) (char= (char str (1+ i)) #\\)) (incf i 3))
+          ((char= c #\() (push i stack) (incf i))
+          ((char= c #\))
+           (when stack
+             (let ((start (pop stack)))
+               (when (and (<= start off) (< off (1+ i))
+                          (or (null best) (> start (car best))))
+                 (setf best (cons start (1+ i))))))
+           (incf i))
+          (t (incf i)))))
+    (when best (values (car best) (cdr best)))))
+
 (defun %struct-edit (app transform)
   "Apply TRANSFORM (text offset) -> (values new-text new-offset) to the focused
 editor's buffer, around the cursor.  TRANSFORM returns NIL to do nothing."
@@ -3220,6 +3352,111 @@ leading reader prefixes (' ` , ,@) — or NIL when none remains."
                                      (subseq text l0 l1) (subseq text (1+ cp)))
                         off)))))))))
 
+(defun %sexp-spans (text start &optional (limit (length text)))
+  "List of (START . END) spans of the successive sexps found scanning TEXT from
+START up to LIMIT (using %SEXP-SPAN-AT) -- i.e. the direct children of a list, or
+the top-level forms when scanning the whole buffer."
+  (let ((spans '()) (i start))
+    (loop (multiple-value-bind (a b) (%sexp-span-at text i)
+            (if (and a (< a limit)) (progn (push (cons a b) spans) (setf i b))
+                (return))))
+    (nreverse spans)))
+
+(defun %parent-siblings (text s e)
+  "The (START . END) spans of the form at S..E and all its siblings -- the
+children of the list that directly contains it, or the top-level forms when it
+has no enclosing list."
+  (or (when (> s 0)
+        (multiple-value-bind (ps pe) (%sexp-bounds text (1- s))
+          (when (and ps (< ps s) (> pe e))           ; a real enclosing list
+            (%sexp-spans text (1+ ps) (1- pe)))))
+      (%sexp-spans text 0)))
+
+(defun %code-position-p (text pos)
+  "True when POS in TEXT is ordinary code -- not inside a string, a ; comment or
+a #\\ char literal.  Used so refactors can skip occurrences that only look like
+the symbol."
+  (let ((len (length text)) (i 0))
+    (loop while (< i len) do
+      (when (> i pos) (return))                       ; reached POS in plain code
+      (let ((c (char text i)))
+        (cond
+          ((char= c #\;)
+           (let ((j i))
+             (loop while (and (< i len) (char/= (char text i) #\Newline)) do (incf i))
+             (when (and (<= j pos) (< pos i)) (return-from %code-position-p nil))))
+          ((char= c #\")
+           (let ((j i)) (incf i)
+             (loop while (< i len) do
+               (let ((d (char text i))) (incf i)
+                 (cond ((char= d #\\) (incf i)) ((char= d #\") (return)))))
+             (when (and (<= j pos) (< pos i)) (return-from %code-position-p nil))))
+          ((and (char= c #\#) (< (1+ i) len) (char= (char text (1+ i)) #\\))
+           (let ((j i)) (incf i 3)
+             (when (and (<= j pos) (< pos i)) (return-from %code-position-p nil))))
+          (t (incf i)))))
+    t))
+
+(defun do-transpose (app)
+  "Transpose: swap the child sexp at the cursor with the next one, within the
+innermost enclosing form (so it works on arguments, let bindings, etc.)."
+  (%struct-edit app
+    (lambda (text off)
+      (multiple-value-bind (s e) (%inner-list text off)
+        (when s
+          (let* ((kids (%sexp-spans text (1+ s) (1- e)))
+                 (idx (or (position-if (lambda (k) (and (<= (car k) off) (< off (cdr k)))) kids)
+                          (position-if (lambda (k) (<= (cdr k) off)) kids :from-end t))))
+            (when (and idx (< (1+ idx) (length kids)))
+              (let* ((a (nth idx kids)) (b (nth (1+ idx) kids))
+                     (gap (subseq text (cdr a) (car b))))
+                (values (concatenate 'string (subseq text 0 (car a))
+                                     (subseq text (car b) (cdr b)) gap
+                                     (subseq text (car a) (cdr a)) (subseq text (cdr b)))
+                        (+ (car a) (- (cdr b) (car b)) (length gap)))))))))))
+
+(defun do-slurp-backward (app)
+  "Slurp-backward: pull the sexp just before the form at the cursor in past its
+opening `('.  (x |foo) -> (x foo|), i.e. `x' before the list moves inside."
+  (%struct-edit app
+    (lambda (text off)
+      (multiple-value-bind (s e) (%sexp-bounds text off)
+        (when (and s (> e s))
+          (let* ((sibs (%parent-siblings text s e))
+                 (me (position s sibs :key #'car))
+                 (prev (and me (> me 0) (nth (1- me) sibs))))
+            (when prev
+              (values (concatenate 'string (subseq text 0 (car prev))
+                                   "(" (subseq text (car prev) (cdr prev)) " "
+                                   (subseq text (1+ s) e) (subseq text e))
+                      (1+ (car prev))))))))))
+
+(defun do-barf-backward (app)
+  "Barf-backward: expel the first sexp of the form at the cursor out past its
+opening `('.  (foo bar) -> foo (bar)."
+  (%struct-edit app
+    (lambda (text off)
+      (multiple-value-bind (s e) (%sexp-bounds text off)
+        (when (and s (> (- e s) 2))
+          (let ((first-kid (first (%sexp-spans text (1+ s) (1- e)))))
+            (when first-kid
+              (values (concatenate 'string (subseq text 0 s)
+                                   (subseq text (car first-kid) (cdr first-kid)) " ("
+                                   (string-left-trim '(#\Space #\Tab #\Newline #\Return)
+                                                     (subseq text (cdr first-kid) (1- e)))
+                                   (subseq text (1- e)))
+                      s))))))))
+
+(defun do-kill-sexp (app)
+  "Delete the sexp at or after the cursor (paredit kill-sexp)."
+  (%struct-edit app
+    (lambda (text off)
+      (multiple-value-bind (a b) (%sexp-span-at text off)
+        (when a
+          (values (concatenate 'string (subseq text 0 a)
+                               (string-left-trim '(#\Space #\Tab) (subseq text b)))
+                  a))))))
+
 (defparameter *snippets*
   '(("defun"        . "(defun name (args)~%  )")
     ("defmacro"     . "(defmacro name (args)~%  )")
@@ -3253,16 +3490,20 @@ to the cursor's column)."
 
 ;;; --- rename a symbol across open editor buffers (preview + confirm) ---------
 
-(defun %rename-occurrences (text old)
-  "Offsets of OLD as a whole symbol token in TEXT (case-insensitive)."
+(defun %rename-occurrences (text old &optional code-only)
+  "Offsets of OLD as a whole symbol token in TEXT (case-insensitive).  When
+CODE-ONLY, drop occurrences inside strings, comments and #\\ char literals."
   (let ((offs '()) (i 0))
     (loop for p = (%search-token old text i)
-          while p do (push p offs) (setf i (+ p (length old))))
+          while p do
+            (when (or (not code-only) (%code-position-p text p)) (push p offs))
+            (setf i (+ p (length old))))
     (nreverse offs)))
 
-(defun %rename-in-text (text old new)
-  "Replace every whole-token OLD with NEW in TEXT; (values NEW-TEXT COUNT)."
-  (let ((offs (%rename-occurrences text old)) (n (length old)))
+(defun %rename-in-text (text old new &optional code-only)
+  "Replace every whole-token OLD with NEW in TEXT; (values NEW-TEXT COUNT).
+Honours CODE-ONLY the same way as %RENAME-OCCURRENCES."
+  (let ((offs (%rename-occurrences text old code-only)) (n (length old)))
     (if (null offs) (values text 0)
         (let ((out (make-string-output-stream)) (i 0))
           (dolist (p offs)
@@ -3278,25 +3519,72 @@ to the cursor's column)."
     (values (1+ (count #\Newline text :end ls))
             (string-trim '(#\Space #\Tab) (subseq text ls le)))))
 
+(defun %open-editor-files (app)
+  "Namestrings of the files backing the open editor windows (unsaved buffers,
+which have no file, are skipped)."
+  (loop for w in (desktop-windows (program-desktop app))
+        when (and (typep w 'teditor-window) (editor-filename (editor-window-editor w)))
+          collect (namestring (editor-filename (editor-window-editor w)))))
+
+(defun %xref-files (sym)
+  "Source files that reference SYM (as a caller, reference, binding or setter)
+according to the running image -- used to warn that a rename in the open buffers
+may leave references behind in files that aren't open."
+  (let ((files '()))
+    (dolist (kind '(:calls :references :binds :sets) (nreverse files))
+      (dolist (e (ignore-errors
+                  (ecase kind
+                    (:calls (sb-introspect:who-calls sym))
+                    (:references (sb-introspect:who-references sym))
+                    (:binds (sb-introspect:who-binds sym))
+                    (:sets (sb-introspect:who-sets sym)))))
+        (let ((p (ignore-errors (sb-introspect:definition-source-pathname (cdr e)))))
+          (when p (pushnew (namestring p) files :test #'string=)))))))
+
+(defun %unopened-reference-note (app sym)
+  "A preview note (or \"\") listing files the image says reference SYM but that
+aren't open, so an open-buffer-only refactor knows it isn't whole-program."
+  (or (ignore-errors
+       (when (and sym (symbolp sym))
+         (let* ((open (%open-editor-files app))
+                (missing (remove-if (lambda (f) (member f open :test #'string=))
+                                    (%xref-files sym))))
+           (when missing
+             (format nil "~%Heads-up: the image reports ~d other file~:p referencing ~a, not open here:~%~{  ~a~%~}~a"
+                     (length missing) sym
+                     (mapcar #'file-namestring (subseq missing 0 (min 5 (length missing))))
+                     (if (> (length missing) 5)
+                         (format nil "  ...and ~d more~%" (- (length missing) 5)) ""))))))
+      ""))
+
 (defun do-rename (app)
   "Rename a symbol across all open editor buffers: gather whole-token
-occurrences, show a preview, and on confirm replace them all.  (Textual, so
-occurrences in strings/comments are included — the preview shows what changes.)"
+occurrences, show a preview, and on confirm replace them all.  Defaults to
+code only (skips strings/comments); the running image is also consulted to warn
+about references in files that aren't open."
   (let ((old (prompt-line "Rename" "Symbol to rename:" (%point-symbol))))
     (when (and old (plusp (length (string-trim " " old))))
       (setf old (string-trim " " old))
-      (let ((new (prompt-line "Rename" (format nil "Rename ~a to:" old) old)))
-        (when (and new (plusp (length (string-trim " " new))))
+      (let ((new (prompt-line "Rename" (format nil "Rename ~a to:" old) old))
+            (scope (choose-index "Rename scope"
+                                 '("Code only (skip strings & comments)"
+                                   "Everything (include strings & comments)")
+                                 :start 0)))
+        (when (and new scope (plusp (length (string-trim " " new))))
           (setf new (string-trim " " new))
-          (let* ((desk (program-desktop app))
+          (let* ((code-only (zerop scope))
+                 (desk (program-desktop app))
                  (editors (remove-if-not (lambda (w) (typep w 'teditor-window)) (desktop-windows desk)))
                  (hits (loop for w in editors
                              for ed = (editor-window-editor w)
-                             for offs = (%rename-occurrences (text-string ed) old)
+                             for offs = (%rename-occurrences (text-string ed) old code-only)
                              when offs collect (list w ed offs)))
-                 (total (reduce #'+ hits :key (lambda (h) (length (third h))) :initial-value 0)))
+                 (total (reduce #'+ hits :key (lambda (h) (length (third h))) :initial-value 0))
+                 (rv (some-repl app))   ; not CURRENT-REPL: the editor is focused here
+                 (sym (and rv (ignore-errors (read-in rv old))))
+                 (note (%unopened-reference-note app sym)))
             (if (zerop total)
-                (message-box (format nil "No occurrences of ~a in open editors." old)
+                (message-box (format nil "No occurrences of ~a in open editors.~a" old note)
                              (logior +mf-information+ +mf-ok-button+))
                 (let* ((samples '()) (shown 0))
                   (block gather
@@ -3308,20 +3596,396 @@ occurrences in strings/comments are included — the preview shows what changes.
                           (multiple-value-bind (ln lt) (%line-around text o)
                             (push (format nil "~a:~d: ~a" name ln (tvision::%ellipsize lt 48)) samples))
                           (when (>= (incf shown) 8) (return-from gather))))))
-                  (let ((preview (format nil "Rename ~d occurrence~:p of  ~a  ->  ~a  in ~d buffer~:p:~%~%~{  ~a~%~}~a~%Proceed?"
+                  (let ((preview (format nil "Rename ~d occurrence~:p of  ~a  ->  ~a  in ~d buffer~:p:~%~%~{  ~a~%~}~a~a~%Proceed?"
                                          total old new (length hits) (nreverse samples)
-                                         (if (> total shown) (format nil "  ...and ~d more~%" (- total shown)) ""))))
+                                         (if (> total shown) (format nil "  ...and ~d more~%" (- total shown)) "")
+                                         note)))
                     (when (= +cm-yes+ (message-box preview
                                                    (logior +mf-confirmation+ +mf-yes-button+ +mf-no-button+)))
                       (dolist (h hits)
                         (let* ((w (first h)) (ed (second h)) (off (%editor-offset ed)))
-                          (multiple-value-bind (nt cnt) (%rename-in-text (text-string ed) old new)
+                          (multiple-value-bind (nt cnt) (%rename-in-text (text-string ed) old new code-only)
                             (declare (ignore cnt))
                             (set-text ed nt) (setf (text-modified ed) t)
                             (%macro-set-cursor ed (min off (length nt)))
                             (draw-view w))))
                       (message-box (format nil "Renamed ~d occurrence~:p." total)
                                    (logior +mf-information+ +mf-ok-button+))))))))))))
+
+;;; --- reorder a function's arguments at its call sites ----------------------
+
+(defun %required-count (lambda-list)
+  "Number of leading required parameters in LAMBDA-LIST (stops at the first
+&optional / &rest / &key / &body / &aux / &whole marker)."
+  (let ((n 0))
+    (dolist (p lambda-list n)
+      (when (and (symbolp p) (plusp (length (symbol-name p)))
+                 (char= (char (symbol-name p) 0) #\&))
+        (return n))
+      (incf n))))
+
+(defun %parse-permutation (input n names)
+  "Parse INPUT (space/comma separated) into a 0-based permutation of 0..N-1 --
+either 1-based indices or parameter NAMES (case-insensitive).  NIL unless it is a
+full permutation of all N positions."
+  (let* ((toks (remove "" (uiop:split-string (substitute #\Space #\, input)
+                                             :separator '(#\Space #\Tab))
+                       :test #'string=))
+         (perm (cond
+                 ((/= (length toks) n) nil)
+                 ((every (lambda (tk) (every #'digit-char-p tk)) toks)
+                  (mapcar (lambda (tk) (1- (parse-integer tk))) toks))
+                 (t (mapcar (lambda (tk)
+                              (position (string-upcase tk) names
+                                        :key (lambda (s) (string-upcase (string s)))
+                                        :test #'string=))
+                            toks)))))
+    (when (and perm (notany #'null perm)
+               (equal (sort (copy-list perm) #'<) (loop for i below n collect i)))
+      perm)))
+
+(defun %reorder-edits (text name perm r)
+  "Edits (REGION-START REGION-END REPLACEMENT CALL-OFFSET) that reorder the first
+R positional arguments of each direct call (NAME ...) in TEXT according to PERM.
+Only operator-position, in-code occurrences with at least R arguments qualify, so
+apply/funcall/#' uses and the definition site are left alone."
+  (let ((edits '()) (i 0) (nlen (length name)))
+    (loop for p = (%search-token name text i)
+          while p do
+            (setf i (+ p nlen))
+            (when (%code-position-p text p)
+              (let ((j (1- p)))                       ; preceding non-whitespace char
+                (loop while (and (>= j 0)
+                                 (member (char text j) '(#\Space #\Tab #\Newline #\Return)))
+                      do (decf j))
+                (when (and (>= j 0) (char= (char text j) #\())
+                  (multiple-value-bind (s e) (%sexp-bounds text p)
+                    (when (and s (= j s))             ; that '(' opens this very call
+                      (let* ((kids (%sexp-spans text (1+ s) (1- e)))
+                             (op (first kids)) (args (rest kids)))
+                        (when (and op (= (car op) p) (>= (length args) r))
+                          (let* ((sel (subseq args 0 r)) (parts '())
+                                 (region-end (cdr (nth (1- r) sel)))
+                                 (prev (cdr op)))
+                            (loop for k below r
+                                  for slot = (nth k sel)
+                                  for src = (nth (nth k perm) sel) do
+                                    (push (subseq text prev (car slot)) parts)     ; gap before slot
+                                    (push (subseq text (car src) (cdr src)) parts) ; reordered content
+                                    (setf prev (cdr slot)))
+                            (push (list (cdr op) region-end
+                                        (apply #'concatenate 'string (nreverse parts)) p)
+                                  edits))))))))))
+    (nreverse edits)))
+
+(defun %apply-reorder (text edits)
+  "Apply EDITS (from %REORDER-EDITS) to TEXT, last-to-first so offsets stay valid."
+  (let ((out text))
+    (dolist (ed (sort (copy-list edits) #'> :key #'first) out)
+      (setf out (concatenate 'string (subseq out 0 (first ed)) (third ed)
+                             (subseq out (second ed)))))))
+
+(defun do-reorder-args (app)
+  "Reorder a function's positional (required) arguments at its direct call sites
+across the open buffers.  Reads the current arglist from the running image, asks
+for a new order, then previews and applies.  Calls via apply/funcall/#' are not
+touched (the preview shows exactly what changes)."
+  (let* ((rv (some-repl app))   ; not CURRENT-REPL: this is usually run from the editor
+         (s (prompt-line "Reorder args" "Function:" (%point-symbol))))
+    (when (and s (plusp (length (string-trim " " s))))
+      (setf s (string-trim " " s))
+      (handler-case
+          (let* ((sym (if rv (read-in rv s) (read-from-string s)))
+                 (ll (and (fboundp sym) (sb-introspect:function-lambda-list sym)))
+                 (r (and ll (%required-count ll))))
+            (cond
+              ((not (fboundp sym))
+               (message-box (format nil "~a is not a function." sym)
+                            (logior +mf-information+ +mf-ok-button+)))
+              ((or (null r) (< r 2))
+               (message-box (format nil "~a has fewer than 2 required arguments to reorder.~%Lambda list: ~(~a~)"
+                                    sym ll)
+                            (logior +mf-information+ +mf-ok-button+)))
+              (t
+               (let* ((names (subseq ll 0 r))
+                      (cur (format nil "~{~(~a~)~^ ~}" names))
+                      (input (prompt-line "Reorder args"
+                                          (format nil "Params (~a). New order (names or 1-based indices):" cur)
+                                          cur))
+                      (perm (and input (%parse-permutation input r names))))
+                 (cond
+                   ((null input) nil)
+                   ((null perm)
+                    (message-box (format nil "Not a permutation of the ~d required params (~a)." r cur)
+                                 (logior +mf-error+ +mf-ok-button+)))
+                   ((equal perm (loop for i below r collect i))
+                    (message-box "Order unchanged." (logior +mf-information+ +mf-ok-button+)))
+                   (t
+                    (let* ((desk (program-desktop app))
+                           (editors (remove-if-not (lambda (w) (typep w 'teditor-window)) (desktop-windows desk)))
+                           (name (string-downcase s))
+                           (hits (loop for w in editors
+                                       for ed = (editor-window-editor w)
+                                       for edits = (%reorder-edits (text-string ed) name perm r)
+                                       when edits collect (list w ed edits)))
+                           (total (reduce #'+ hits :key (lambda (h) (length (third h))) :initial-value 0))
+                           (neworder (format nil "~{~(~a~)~^ ~}" (mapcar (lambda (k) (nth k names)) perm)))
+                           (note (%unopened-reference-note app sym)))
+                      (if (zerop total)
+                          (message-box (format nil "No direct calls to ~a found in open buffers.~a" name note)
+                                       (logior +mf-information+ +mf-ok-button+))
+                          (let ((samples '()) (shown 0))
+                            (block gather
+                              (dolist (h hits)
+                                (let* ((w (first h)) (ed (second h)) (text (text-string ed))
+                                       (nm (or (and (editor-filename ed) (file-namestring (editor-filename ed)))
+                                               (window-title w))))
+                                  (dolist (e (third h))
+                                    (multiple-value-bind (ln lt) (%line-around text (fourth e))
+                                      (push (format nil "~a:~d: ~a" nm ln (tvision::%ellipsize lt 48)) samples))
+                                    (when (>= (incf shown) 8) (return-from gather))))))
+                            (let ((preview (format nil "Reorder ~a to (~a) at ~d call site~:p in ~d buffer~:p:~%~%~{  ~a~%~}~a~a~%Proceed?"
+                                                   name neworder total (length hits) (nreverse samples)
+                                                   (if (> total shown) (format nil "  ...and ~d more~%" (- total shown)) "")
+                                                   note)))
+                              (when (= +cm-yes+ (message-box preview
+                                                             (logior +mf-confirmation+ +mf-yes-button+ +mf-no-button+)))
+                                (dolist (h hits)
+                                  (let* ((w (first h)) (ed (second h)) (off (%editor-offset ed))
+                                         (nt (%apply-reorder (text-string ed) (third h))))
+                                    (set-text ed nt) (setf (text-modified ed) t)
+                                    (%macro-set-cursor ed (min off (length nt)))
+                                    (draw-view w)))
+                                (message-box (format nil "Reordered ~d call site~:p." total)
+                                             (logior +mf-information+ +mf-ok-button+)))))))))))))
+        (error (e) (err-box e))))))
+
+;;; --- system window: an ASDF system's source tree --------------------------
+;;; A TOutline of a system's components (modules -> source files) in a window.
+;;; Enter opens (or focuses) the file at point; O opens every file under the
+;;; node at point; C closes every open editor for files under it; R re-reads the
+;;; system from ASDF.  Open files are marked with a filled bullet, closed ones
+;;; with a hollow bullet.
+
+(defun %path-key (p)
+  "A canonical string for pathname P for comparing it against open editors
+ (truename when possible, else its namestring)."
+  (when p (namestring (or (ignore-errors (truename p)) p))))
+
+(defun %open-editor-keys (app)
+  "Path keys (see %PATH-KEY) of every file-backed editor window on the desktop."
+  (loop for w in (desktop-windows (program-desktop app))
+        when (and (typep w 'teditor-window) (editor-filename (editor-window-editor w)))
+          collect (%path-key (editor-filename (editor-window-editor w)))))
+
+(defun %project-file-text (path open-keys)
+  "Outline label for source file PATH: a filled bullet when it is open, a hollow
+one otherwise."
+  (format nil "~:[○~;●~] ~a"
+          (member (%path-key path) open-keys :test #'string=)
+          (file-namestring path)))
+
+(defun %node-file-paths (node)
+  "Every source-file pathname carried by NODE and its descendants, in order."
+  (let ((acc '()))
+    (labels ((walk (n)
+               (when (pathnamep (outline-node-data n)) (push (outline-node-data n) acc))
+               (mapc #'walk (outline-node-children n))))
+      (walk node))
+    (nreverse acc)))
+
+(defun %component-node (comp open-keys)
+  "Outline node for ASDF component COMP: a source file becomes a leaf whose DATA
+is its pathname; a module becomes an expandable node over its children; anything
+else is skipped (NIL)."
+  (cond
+    ((typep comp 'asdf:source-file)
+     (let ((p (asdf:component-pathname comp)))
+       (make-outline-node (%project-file-text p open-keys) nil p)))
+    ((typep comp 'asdf:module)
+     (let* ((kids (remove nil (mapcar (lambda (c) (%component-node c open-keys))
+                                      (asdf:component-children comp))))
+            (node (make-outline-node "" kids)))
+       (setf (outline-node-expanded node) t
+             (outline-node-text node)
+             (format nil "~a/  (~d file~:p)" (asdf:component-name comp)
+                     (length (%node-file-paths node))))
+       node))
+    (t nil)))
+
+(defun %depends-node (sys)
+  "A non-openable `depends-on (N)' node listing SYS's dependency names, or NIL."
+  (let ((deps (ignore-errors (asdf:system-depends-on sys))))
+    (when deps
+      (make-outline-node (format nil "depends-on (~d)" (length deps))
+                         (mapcar (lambda (d) (make-outline-node (format nil "~(~a~)" d)))
+                                 deps)))))
+
+(defun %system-tree (sysname open-keys)
+  "The root outline node for ASDF system SYSNAME (its modules/files plus a
+depends-on node), or NIL when the system can't be read."
+  (let ((sys (ignore-errors (asdf:find-system sysname nil))))
+    (when sys
+      (handler-case
+          (let* ((kids (remove nil (mapcar (lambda (c) (%component-node c open-keys))
+                                           (asdf:component-children sys))))
+                 (deps (%depends-node sys))
+                 (root (make-outline-node "" (append kids (and deps (list deps))))))
+            (setf (outline-node-expanded root) t
+                  (outline-node-text root)
+                  (format nil "~a~:[~; *loaded~]  (~d file~:p)" sysname
+                          (member sysname (ignore-errors (asdf:already-loaded-systems))
+                                  :test #'string-equal)
+                          (length (%node-file-paths root))))
+            root)
+        (error () nil)))))
+
+(defun %pick-system (title)
+  "Pick a registered ASDF system by name (loaded ones marked *); returns the bare
+name string or NIL."
+  (let* ((loaded (ignore-errors (asdf:already-loaded-systems)))
+         (names (sort (copy-list (asdf:registered-systems)) #'string<))
+         (labels (mapcar (lambda (n) (format nil "~:[  ~;* ~]~a"
+                                             (member n loaded :test #'string=) n))
+                         names)))
+    (when labels
+      (let ((picked (choose-from-list title labels)))
+        (and picked (string-left-trim '(#\* #\Space) picked))))))
+
+(defclass tproject-window (twindow)
+  ((app     :initarg :app     :initform nil :accessor pw-app)
+   (sysname :initarg :sysname :initform nil :accessor pw-sysname)
+   (outline :initarg :outline :initform nil :accessor pw-outline))
+  (:documentation "A system's source-file tree.  Enter opens/focuses the file at
+point; O opens all files under the node; C closes them; R re-reads from ASDF."))
+
+(defun %project-open-file (app path &optional focusp)
+  "Focus the editor already showing PATH, or open a new one for it.  Returns
+ (values WINDOW STATUS) with STATUS one of :focused :opened :missing."
+  (let ((key (%path-key path)))
+    (dolist (win (desktop-windows (program-desktop app)))
+      (when (and (typep win 'teditor-window)
+                 (editor-filename (editor-window-editor win))
+                 (string= key (%path-key (editor-filename (editor-window-editor win)))))
+        (when focusp (focus win))
+        (return-from %project-open-file (values win :focused))))
+    (if (not (probe-file path))
+        (values nil :missing)
+        (let* ((desk (program-desktop app))
+               (dw (point-x (view-size desk))) (dh (point-y (view-size desk))))
+          (multiple-value-bind (win ed)
+              (make-edit-window (make-trect 2 1 (min (- dw 2) 78) (min (- dh 1) 22))
+                                :title (file-namestring path) :filename path)
+            (declare (ignore ed))
+            (insert desk win)
+            (when focusp (focus win))
+            (values win :opened))))))
+
+(defun %project-refresh (w)
+  "Recompute the open/closed bullets from the current desktop and repaint."
+  (let ((open (%open-editor-keys (pw-app w))) (ol (pw-outline w)))
+    (labels ((walk (n)
+               (when (pathnamep (outline-node-data n))
+                 (setf (outline-node-text n) (%project-file-text (outline-node-data n) open)))
+               (mapc #'walk (outline-node-children n))))
+      (mapc #'walk (outline-roots ol)))
+    (tvision::outline-update-limit ol)
+    (redraw (program-desktop (pw-app w)))))
+
+(defun %project-rebuild (w)
+  "Re-read the system from ASDF (picks up .asd edits) and rebuild the tree."
+  (let ((root (%system-tree (pw-sysname w) (%open-editor-keys (pw-app w)))))
+    (when root
+      (setf (outline-roots (pw-outline w)) (list root))
+      (outline-focus (pw-outline w) 0)
+      (tvision::outline-update-limit (pw-outline w))
+      (redraw (program-desktop (pw-app w))))))
+
+(defun %project-open-node (w)
+  "Open every source file under the focused node, cascading the new windows."
+  (let* ((app (pw-app w)) (node (outline-current (pw-outline w)))
+         (paths (and node (%node-file-paths node))))
+    (if (null paths)
+        (message-box "No source files under this node."
+                     (logior +mf-information+ +mf-ok-button+))
+        (let ((opened '()) (already 0))
+          (dolist (p paths)
+            (multiple-value-bind (win status) (%project-open-file app p nil)
+              (case status (:opened (push win opened)) (:focused (incf already)))))
+          (loop for win in (reverse opened) for i from 0
+                do (move-to win (+ 2 (* 2 i)) (+ 1 i)))
+          (focus w)
+          (%project-refresh w)
+          (message-box (format nil "Opened ~d file~:p (~d already open)."
+                               (length opened) already)
+                       (logior +mf-information+ +mf-ok-button+))))))
+
+(defun %project-close-node (w)
+  "Close every open editor window for files under the focused node, honouring the
+per-window unsaved-changes prompt."
+  (let* ((app (pw-app w)) (node (outline-current (pw-outline w)))
+         (keys (and node (mapcar #'%path-key (%node-file-paths node))))
+         (closed 0))
+    (if (null keys)
+        (message-box "No source files under this node."
+                     (logior +mf-information+ +mf-ok-button+))
+        (progn
+          (dolist (win (copy-list (desktop-windows (program-desktop app))))
+            (when (and (typep win 'teditor-window)
+                       (editor-filename (editor-window-editor win))
+                       (member (%path-key (editor-filename (editor-window-editor win)))
+                               keys :test #'string=))
+              (close-window win)
+              (unless (member win (desktop-windows (program-desktop app))) (incf closed))))
+          (focus w)
+          (%project-refresh w)
+          (message-box (format nil "Closed ~d window~:p." closed)
+                       (logior +mf-information+ +mf-ok-button+))))))
+
+(defmethod handle-event ((w tproject-window) event)
+  (cond
+    ((and (= (event-type event) +ev-broadcast+)
+          (= (event-command event) +cm-outline-item-selected+)
+          (pw-outline w))
+     (let ((n (outline-current (pw-outline w))))
+       (when (and n (pathnamep (outline-node-data n)))
+         (multiple-value-bind (win status) (%project-open-file (pw-app w) (outline-node-data n) t)
+           (declare (ignore win))
+           (if (eq status :missing)
+               (message-box (format nil "File not found:~%~a" (outline-node-data n))
+                            (logior +mf-error+ +mf-ok-button+))
+               (%project-refresh w)))))
+     (clear-event event))
+    ((and (= (event-type event) +ev-key-down+) (plusp (event-char-code event)))
+     (case (char-downcase (code-char (event-char-code event)))
+       (#\o (%project-open-node w) (clear-event event))
+       (#\c (%project-close-node w) (clear-event event))
+       (#\r (%project-rebuild w) (clear-event event))
+       (t (call-next-method))))
+    (t (call-next-method))))
+
+(defun do-project (app)
+  "Open a system window: pick an ASDF system, then browse/open/close its source
+files as a collapsible tree."
+  (let ((name (%pick-system "Open project (ASDF system)")))
+    (when name
+      (let ((root (%system-tree name (%open-editor-keys app))))
+        (if (null root)
+            (message-box (format nil "Could not read the components of ~a." name)
+                         (logior +mf-information+ +mf-ok-button+))
+            (let* ((desk (program-desktop app))
+                   (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+                   (ww (min 62 (- dw 2))) (wh (min 22 (- dh 2)))
+                   (win (make-instance 'tproject-window :app app :sysname name
+                          :title (format nil "Project: ~a  (Enter:open O:all C:close R:refresh)" name)
+                          :bounds (make-trect 0 0 ww wh)))
+                   (vsb (standard-scrollbar win t))
+                   (ol (make-instance 'toutline :roots (list root)
+                          :bounds (make-trect 1 1 (1- ww) (1- wh)))))
+              (insert win ol) (attach-scrollbars ol :vscroll vsb)
+              (setf (pw-outline win) ol)
+              (move-to win (max 0 (floor (- dw ww) 2)) (max 0 (floor (- dh wh) 2)))
+              (insert desk win) (focus ol)))))))
 
 ;;; --- session save/restore --------------------------------------------------
 
@@ -3642,6 +4306,11 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-raise+)       (do-raise app) (clear-event event))
           ((= c +cm-slurp+)       (do-slurp app) (clear-event event))
           ((= c +cm-barf+)        (do-barf app) (clear-event event))
+          ((= c +cm-transpose+)   (do-transpose app) (clear-event event))
+          ((= c +cm-slurp-back+)  (do-slurp-backward app) (clear-event event))
+          ((= c +cm-barf-back+)   (do-barf-backward app) (clear-event event))
+          ((= c +cm-kill-sexp+)   (do-kill-sexp app) (clear-event event))
+          ((= c +cm-reorder-args+) (do-reorder-args app) (clear-event event))
           ((= c +cm-find+)        (do-find app) (clear-event event))
           ((= c +cm-find-next+)   (do-find-next app) (clear-event event))
           ((= c +cm-replace+)     (do-replace app) (clear-event event))
@@ -3655,6 +4324,7 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-histsearch+)  (do-history-search rv) (clear-event event))
           ((= c +cm-new-file+)    (do-new-editor app) (clear-event event))
           ((= c +cm-editor+)      (do-open-editor app) (clear-event event))
+          ((= c +cm-project+)     (do-project app) (clear-event event))
           ((= c +cm-save+)        (do-save-editor app) (clear-event event))
           ((= c +cm-saveas+)      (do-saveas-editor app) (clear-event event))
           ((= c +cm-save-all+)    (do-save-all app) (clear-event event))

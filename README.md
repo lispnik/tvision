@@ -83,8 +83,9 @@ At a glance — the tools it ships (each detailed below):
 - **Edit** — Lisp syntax highlighting + `cl-indent` auto-indent, **eval** and
   **compile** the defun/region (compile with **navigable compiler notes**),
   in-buffer **symbol completion**, **comment region**, **paredit** structural
-  edits (wrap / splice / raise / slurp / barf), **rename symbol**, templates,
-  and find / replace / incremental-search.
+  edits (wrap / splice / raise / transpose / slurp / barf both ways / kill sexp),
+  **rename symbol**, **reorder args**, templates, and
+  find / replace / incremental-search.
 
 **REPL core**
 
@@ -263,15 +264,26 @@ parked with its stack live:
   or the current line.
 - **Structural editing** (Edit ▸ Structural) — paredit-style **wrap** the form at
   the cursor in `()`, **splice** (remove the enclosing parens), **raise** (replace
-  the enclosing form with the one at point), and **slurp / barf forward** (the
-  form absorbs the next sexp / expels its last one).
+  the enclosing form with the one at point), **transpose** (swap the sexp at point
+  with its sibling — works on args and `let` bindings), **slurp / barf** in both
+  directions (the form absorbs / expels a sexp at either end), and **kill sexp**
+  (delete the form at point).
 
   ![Slurp pulls the next form in; barf pushes the last form out](media/paredit-slurp-barf.gif)
 
 - **Rename symbol** (Edit ▸ Rename symbol) — whole-token rename across every open
   editor buffer, with a preview of the occurrences and a confirm before applying.
+  Defaults to **code only** (skips strings and comments) and consults the running
+  image (`who-calls` / `who-references` / `who-binds` / `who-sets`) to warn when
+  other, unopened files also reference the symbol.
 
   ![Rename a symbol across the buffer with a preview and confirm](media/rename-symbol.gif)
+
+- **Reorder args** (Edit ▸ Reorder args) — reads a function's lambda list from the
+  running image, asks for a new order of its required parameters (by name or
+  1-based index), then rewrites the positional arguments at every direct call site
+  in the open buffers, with a preview and confirm.  `apply` / `funcall` / `#'`
+  uses and the definition site are left untouched.
 - **Insert template** (Edit ▸ Insert template) — `defun` / `defclass` /
   `defmethod` / `loop` / `handler-case` / … skeletons, indented to the cursor.
 - **Go-to-definition pop-back** — **Alt-.** jumps to a definition; **Alt-,** pops
