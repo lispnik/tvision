@@ -347,6 +347,8 @@
 
 (defvar *last-thread-check* 0
   "Throttle for idle-time thread-monitor auto-refresh.")
+(defvar *last-git-check* 0
+  "Throttle for idle-time git-gutter auto-refresh.")
 
 (defmethod tvision::idle ((app tvlisp-app))
   "While a thread monitor is open, refresh it when the live thread set changes
@@ -359,6 +361,17 @@
           (let ((tl (tw-list w)))
             (unless (equal (sb-thread:list-all-threads) (thread-list-threads tl))
               (thread-list-refresh tl)
+              (when tvision:*screen* (flush-screen tvision:*screen*))))))))
+  ;; refresh the focused editor's git gutter so external git ops (commit,
+  ;; checkout, stage) show up without reopening the file
+  (let ((now (get-internal-real-time)))
+    (when (> (- now *last-git-check*) (floor (* 3 internal-time-units-per-second) 2))  ; ~1.5s
+      (setf *last-git-check* now)
+      (let ((w (group-current (program-desktop app))))
+        (when (typep w 'teditor-window)
+          (let ((ed (editor-window-editor w)))
+            (when (and ed (plusp (text-gutter-width ed)))
+              (refresh-git-signs ed :redraw t)
               (when tvision:*screen* (flush-screen tvision:*screen*)))))))))
 
 (defun open-thread-window (app)
@@ -3012,6 +3025,120 @@ PATH~ backup of the previous contents."
               (error (e) (message-box (format nil "Could not save:~%~a" e)
                                       (logior +mf-error+ +mf-ok-button+))))
             (do-saveas-editor app))))))
+
+;;; --- git gutter ------------------------------------------------------------
+;;; A left margin on file editors marking each line added / changed / deleted
+;;; relative to git HEAD.  Signs are recomputed when a file is loaded or saved
+;;; (via :after methods on text-load-file / text-save-file) and, while an editor
+;;; is focused, refreshed on idle so external git operations show up too.
+
+(defparameter +git-gutter-width+ 2)
+
+(defvar *git-signs* (make-hash-table :test 'eq)
+  "Maps a TFILE-EDITOR to a hash of 0-based line index -> :added / :changed /
+:deleted (the line preceding a pure deletion).")
+
+(defun %git-run (dir args)
+  "Run git ARGS in DIR; return a list of output lines, or NIL if git fails."
+  (handler-case
+      (let* ((out (make-string-output-stream))
+             (p (sb-ext:run-program "git" (list* "-C" (namestring dir) args)
+                                    :search t :output out :error nil :wait t)))
+        (when (and p (eql 0 (sb-ext:process-exit-code p)))
+            (let ((s (get-output-stream-string out)) (lines '()) (start 0))
+              (loop for nl = (position #\Newline s :start start)
+                    do (push (subseq s start (or nl (length s))) lines)
+                       (if nl (setf start (1+ nl)) (return)))
+              (nreverse lines))))
+    (error () nil)))
+
+(defun %parse-int-field (spec)
+  "SPEC is a hunk range like \"12,3\" or \"12\"; return (values START COUNT)."
+  (let ((comma (position #\, spec)))
+    (values (parse-integer spec :end comma :junk-allowed t)
+            (if comma (parse-integer spec :start (1+ comma) :junk-allowed t) 1))))
+
+(defun %parse-diff-signs (lines)
+  "Turn the hunk headers of `git diff -U0` output into a line -> sign hash."
+  (let ((h (make-hash-table)))
+    (dolist (ln lines h)
+      (when (and (>= (length ln) 4) (string= "@@ -" ln :end2 4))
+        ;; @@ -old[,b] +new[,d] @@
+        (let* ((minus (1+ (position #\- ln)))
+               (msp   (position #\Space ln :start minus))
+               (plus  (1+ (position #\+ ln :start msp)))
+               (psp   (position #\Space ln :start plus)))
+          (multiple-value-bind (ostart ocount) (%parse-int-field (subseq ln minus msp))
+            (declare (ignore ostart))
+            (multiple-value-bind (nstart ncount) (%parse-int-field (subseq ln plus psp))
+              (when nstart
+                (cond
+                  ((and ncount (zerop ncount))   ; pure deletion: mark the surviving line
+                   (setf (gethash (max 0 (1- nstart)) h) :deleted))
+                  (t
+                   (dotimes (i (or ncount 1))
+                     (setf (gethash (+ (1- nstart) i) h)
+                           (if (and ocount (plusp ocount)) :changed :added)))))))))))))
+
+(defun %signs-equal (a b)
+  (and (= (hash-table-count a) (hash-table-count b))
+       (loop for k being the hash-keys of a using (hash-value v)
+             always (eql v (gethash k b)))))
+
+(defun compute-git-signs (ed)
+  "Compute ED's git gutter signs from its file vs HEAD.  Untracked files are
+marked entirely added.  Returns the line -> sign hash (possibly empty)."
+  (let ((path (editor-filename ed)))
+    (if (and path (probe-file path))
+        (let* ((dir (directory-namestring path))
+               (file (file-namestring path))
+               (diff (%git-run dir (list "--no-pager" "diff" "--no-color" "-U0"
+                                         "HEAD" "--" file)))
+               (signs (%parse-diff-signs (or diff '()))))
+          (when (zerop (hash-table-count signs))
+            (let ((st (%git-run dir (list "status" "--porcelain" "--" file))))
+              (when (and st (>= (length (first st)) 2) (string= "??" (first st) :end2 2))
+                (dotimes (i (line-count ed)) (setf (gethash i signs) :added)))))
+          signs)
+        (make-hash-table))))
+
+(defun refresh-git-signs (ed &key redraw)
+  "Recompute ED's signs; when REDRAW, repaint its window if the signs changed."
+  (when (typep ed 'tfile-editor)
+    (let ((new (compute-git-signs ed))
+          (old (gethash ed *git-signs*)))
+      (setf (gethash ed *git-signs*) new)
+      (when (and redraw (not (and old (%signs-equal old new))))
+        (draw-view ed)))))
+
+(defun git-gutter-enable (ed)
+  "Turn on the git gutter for file editor ED and compute its initial signs."
+  (when (typep ed 'tfile-editor)
+    (setf (text-gutter-width ed) +git-gutter-width+)
+    (refresh-git-signs ed)))
+
+;; Recompute whenever a file editor loads or saves a file — this covers every
+;; place that opens an editor (Open, jump-to-source, project tree, …) and Save.
+(defmethod text-load-file :after ((ed tfile-editor) path)
+  (declare (ignore path))
+  (git-gutter-enable ed))
+
+(defmethod text-save-file :after ((ed tfile-editor) path)
+  ;; a freshly-saved untitled buffer gets its name here (the caller sets the
+  ;; same value just after); then the gutter turns on and recomputes
+  (unless (editor-filename ed) (setf (editor-filename ed) path))
+  (git-gutter-enable ed))
+
+(defmethod draw-gutter ((ed tfile-editor) db li c)
+  (let* ((signs (gethash ed *git-signs*))
+         (sign (and signs (gethash li signs))))
+    (when sign
+      (multiple-value-bind (ch fg)
+          (ecase sign
+            (:added   (values #\▌ 10))    ; bright green bar
+            (:changed (values #\▌ 14))    ; bright yellow bar
+            (:deleted (values #\▁ 12)))   ; red underline (deletion below)
+        (db-fill db ch (make-attr fg (attr-bg c)) 0 1)))))
 
 (defun %write-session-script (rv path)
   "Write RV's input forms (chronological, :help meta-commands dropped) to PATH as

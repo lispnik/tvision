@@ -28,7 +28,18 @@
    (overwrite :initform nil :accessor text-overwrite)
    (wrap      :initarg :wrap :initform nil :accessor text-wrap) ; word-wrap mode
    (highlight :initarg :highlight :initform nil :accessor text-highlight) ; Lisp syntax colouring
+   (gutter-width :initarg :gutter-width :initform 0 :accessor text-gutter-width) ; reserved left margin
    (goal-col  :initform nil :accessor text-goal-col)))  ; desired visual col for Up/Down
+
+(defgeneric draw-gutter (tv db li c)
+  (:documentation "Draw the gutter — columns [0,(TEXT-GUTTER-WIDTH TV)) of draw-buffer
+DB — for source line LI.  C is the view's base colour.  Default: leave it blank.")
+  (:method ((tv ttext-view) db li c) (declare (ignore db li c)) nil))
+
+(declaim (inline text-area-width))
+(defun text-area-width (tv)
+  "The drawable text width: the view width less the reserved gutter."
+  (max 1 (- (point-x (view-size tv)) (text-gutter-width tv))))
 
 (declaim (inline text-top-line text-left-col))
 (defun text-top-line (tv) (point-y (scroller-delta tv)))
@@ -137,7 +148,7 @@ Used to stream output, e.g. REPL results."
 that the cursor is on screen."
   (text-update-limit tv)
   (let ((h (point-y (view-size tv)))
-        (w (max 1 (point-x (view-size tv)))))
+        (w (text-area-width tv)))   ; usable text columns (view width less gutter)
     (if (text-wrap tv)
         ;; vertical scroll is by logical line; keep the cursor's visual row in view
         (let* ((top (min (text-top-line tv) (text-cur-line tv)))
@@ -510,14 +521,14 @@ DATAP marks a quoted/binding/literal list (its elements align, no body rule)."
 (defmethod draw ((tv ttext-view))
   (if (text-wrap tv) (%draw-wrapped tv) (%draw-flat tv)))
 
-(defun %draw-glyphs (db line start end w c &optional attrs)
-  "Lay LINE[START,END) into draw-buffer DB across display columns [0,W): one cell
-per narrow glyph, two per wide one, interning any multi-code-point grapheme
+(defun %draw-glyphs (db line start end w c &optional attrs (xoff 0))
+  "Lay LINE[START,END) into draw-buffer DB across display columns [XOFF,W): one
+cell per narrow glyph, two per wide one, interning any multi-code-point grapheme
 cluster.  ATTRS, when non-NIL, is a per-code-point attribute array (else C).
-Shared by the flat and word-wrapped layouts."
+XOFF reserves a left gutter.  Shared by the flat and word-wrapped layouts."
   (let* ((simple (simple-line-p line))
          (offs (unless simple (grapheme-offsets line))))
-    (loop with vx = 0 and i = start
+    (loop with vx = xoff and i = start
           while (and (< i end) (< vx w)) do
             (let* ((gend (if simple (1+ i)
                              (min end (or (find-if (lambda (o) (> o i)) offs) end))))
@@ -534,6 +545,7 @@ Shared by the flat and word-wrapped layouts."
 (defun %draw-flat (tv)
   (let* ((w (point-x (view-size tv)))
          (h (point-y (view-size tv)))
+         (gw (text-gutter-width tv))
          (c (get-color tv 1))
          (hi (get-color tv 2))
          (dx (text-left-col tv))
@@ -547,6 +559,7 @@ Shared by the flat and word-wrapped layouts."
         (db-fill db #\Space c)
         (let ((li (+ (text-top-line tv) row)))
           (when (< li (line-count tv))
+            (when (plusp gw) (draw-gutter tv db li c))
             (let* ((line (nth-line tv li)) (len (length line))
                    (start (min dx len))
                    (attrs (when hl
@@ -554,32 +567,34 @@ Shared by the flat and word-wrapped layouts."
                               (setf instr s) a))))
               ;; lay out by grapheme cluster: a multi-code-point cluster is one
               ;; interned glyph; a wide glyph also claims the next cell.
-              (%draw-glyphs db line start len w c attrs)
+              (%draw-glyphs db line start len w c attrs gw)
               ;; matching-paren accent
               (when parens
                 (dolist (p parens)
                   (when (and (= (car p) li) (>= (cdr p) start) (< (cdr p) len))
-                    (let ((sx (visual-col line start (cdr p))))
+                    (let ((sx (+ gw (visual-col line start (cdr p)))))
                       (when (< sx w)
                         (db-put-attribute db sx paren-hi (char-width (char line (cdr p)))))))))
               ;; highlight the selected span on this line
               (when (and sels (<= (car sels) li (car sele)))
                 (let* ((hs (if (= li (car sels)) (cdr sels) 0))
                        (he (if (= li (car sele)) (cdr sele) len))
-                       (vs (max 0 (visual-col line start hs)))
-                       (ve (min w (visual-col line start he))))
+                       (vs (+ gw (max 0 (visual-col line start hs))))
+                       (ve (min w (+ gw (visual-col line start he)))))
                   (when (< vs ve) (db-put-attribute db vs hi (- ve vs)))))))
           (write-line* tv 0 row w 1 db)))
       (when (logtest (view-state tv) +sf-focused+)
         (let ((line (nth-line tv (text-cur-line tv))))
-          (set-cursor tv (visual-col line (min dx (length line)) (text-cur-col tv))
+          (set-cursor tv (+ gw (visual-col line (min dx (length line)) (text-cur-col tv)))
                       (- (text-cur-line tv) (text-top-line tv))))))))
 
 (defun %draw-wrapped (tv)
-  (let* ((w (max 1 (point-x (view-size tv))))
+  (let* ((fw (max 1 (point-x (view-size tv))))   ; full width (draw-buffer / write)
+         (gw (text-gutter-width tv))
+         (w (max 1 (- fw gw)))                    ; text-area width (wrap geometry)
          (h (point-y (view-size tv)))
          (c (get-color tv 1)) (hi (get-color tv 2))
-         (db (make-draw-buffer w))
+         (db (make-draw-buffer fw))
          (row 0) (li (text-top-line tv)))
     (multiple-value-bind (sels sele) (selection-range tv)
       (loop while (< row h) do
@@ -592,25 +607,26 @@ Shared by the flat and word-wrapped layouts."
                (let* ((start (nth seg segs))
                       (end (if (< (1+ seg) nseg) (nth (1+ seg) segs) len)))
                  (db-fill db #\Space c)
-                 (%draw-glyphs db line start end w c)
+                 (when (and (plusp gw) (= seg 0)) (draw-gutter tv db li c))
+                 (%draw-glyphs db line start end fw c nil gw)
                  ;; highlight the selected span lying within this segment
                  (when (and sels (<= (car sels) li (car sele)))
                    (let* ((hs (if (= li (car sels)) (cdr sels) 0))
                           (he (if (= li (car sele)) (cdr sele) len))
-                          (vs (visual-col line start (max start (min hs end))))
-                          (ve (min w (visual-col line start (max start (min he end))))))
+                          (vs (+ gw (visual-col line start (max start (min hs end)))))
+                          (ve (min fw (+ gw (visual-col line start (max start (min he end)))))))
                      (when (< vs ve) (db-put-attribute db vs hi (- ve vs)))))
-                 (write-line* tv 0 row w 1 db))
+                 (write-line* tv 0 row fw 1 db))
                (incf row))
              (incf li)))
-          (t (db-fill db #\Space c) (write-line* tv 0 row w 1 db) (incf row)))))
+          (t (db-fill db #\Space c) (write-line* tv 0 row fw 1 db) (incf row)))))
     (when (logtest (view-state tv) +sf-focused+)
       (let* ((line (nth-line tv (text-cur-line tv)))
              (cc (text-cur-col tv))
              (segs (wrap-segments line w))
              (sidx (%seg-index segs cc))
              (sstart (nth sidx segs)))
-        (set-cursor tv (visual-col line sstart cc)
+        (set-cursor tv (+ gw (visual-col line sstart cc))
                     (+ (%vrows-between tv (text-top-line tv) (text-cur-line tv) w)
                        sidx))))))
 
@@ -755,9 +771,9 @@ subclass overrides this to evaluate the current input instead.")
 (defun %mouse-to-cursor (tv event)
   "Move the cursor to the click/drag position of EVENT."
   (let* ((lp (make-local tv (event-mouse-where event)))
-         (mx (max 0 (point-x lp))) (my (max 0 (point-y lp))))
+         (mx (max 0 (- (point-x lp) (text-gutter-width tv)))) (my (max 0 (point-y lp))))
     (if (text-wrap tv)
-        (let ((w (max 1 (point-x (view-size tv)))) (li (text-top-line tv)) (acc 0) (done nil))
+        (let ((w (text-area-width tv)) (li (text-top-line tv)) (acc 0) (done nil))
           (loop while (and (not done) (< li (line-count tv))) do
             (let* ((line (nth-line tv li)) (segs (wrap-segments line w)) (nseg (length segs)))
               (if (< my (+ acc nseg))
@@ -788,7 +804,7 @@ subclass overrides this to evaluate the current input instead.")
 (defun %wrap-vmove (tv dir)
   "Move the cursor one VISUAL row (DIR -1 up / +1 down) in word-wrap mode,
 keeping the goal visual column across the move (width- and grapheme-aware)."
-  (let* ((w (max 1 (point-x (view-size tv))))
+  (let* ((w (text-area-width tv))
          (line (current-line-string tv))
          (segs (wrap-segments line w))
          (nseg (length segs))
@@ -1222,7 +1238,11 @@ Undoable (one snapshot)."
   (let ((tn (ignore-errors (truename path))))
     (and tn (null (pathname-name tn)) (null (pathname-type tn)))))
 
-(defun text-load-file (tv path)
+(defgeneric text-load-file (tv path)
+  (:documentation "Replace TV's buffer with the contents of PATH.  An :after
+method is a natural hook for things derived from the file (e.g. a git gutter)."))
+
+(defmethod text-load-file ((tv ttext-view) path)
   "Replace the buffer with the contents of PATH.  Return T on success, or NIL
 if the file is missing, a directory, or unreadable (never errors)."
   (when (and (probe-file path) (not (directory-pathname-p path)))
@@ -1235,7 +1255,11 @@ if the file is missing, a directory, or unreadable (never errors)."
             t))
       (error () nil))))
 
-(defun text-save-file (tv path)
+(defgeneric text-save-file (tv path)
+  (:documentation "Write TV's buffer to PATH and clear the modified flag.  An
+:after method is a natural hook for refreshing file-derived state."))
+
+(defmethod text-save-file ((tv ttext-view) path)
   "Write the buffer to PATH and clear the modified flag.  Return PATH."
   (with-open-file (s path :direction :output :if-exists :supersede
                           :if-does-not-exist :create)

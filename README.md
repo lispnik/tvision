@@ -305,6 +305,13 @@ parked with its stack live:
   **open a file in an editor window** (a `TEditWindow`) via a
   reusable `TFileDialog` — type a path or browse: Enter on a directory descends
   into it, Enter on `..` goes back up, Enter on a file opens it.
+- **Git gutter** — file editor windows carry a left margin marking each line
+  added (green bar), changed (yellow bar), or deleted (red mark) relative to git
+  `HEAD`.  Signs recompute when the file is loaded or saved, and refresh on idle
+  so external git operations (commit, checkout, stage) show up too.  Files
+  outside a repository simply show no gutter.
+
+  ![Git gutter: added / changed / deleted marks beside each line](media/git-gutter.gif)
 - **Options:** theme picker (`TColorDialog`), pretty-print toggle, eval-timing
   toggle (`; N ms`), auto-close parens.
 - **Thread monitor** (F9, Window ▸ Threads) lists the worker threads with
