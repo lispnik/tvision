@@ -222,8 +222,12 @@ parked with its stack live:
   **Filter** field and a list of matching symbols, each tagged with what it is
   shown in sortable **Package / Symbol / Type** columns (function / macro /
   generic-function / variable / constant / class / package).  Click a header or
-  press `s` / `r` to sort; edit the filter and press Enter to re-search; Enter
-  describes the focused symbol, `i` inspects it, and the window stays open.
+  press `s` / `r` to sort; press Enter to (re)load the candidate pool with
+  apropos, then **type in the Filter to narrow it live with fuzzy (flex)
+  matching** — `outstr` finds `WITH-OUTPUT-TO-STRING`.  Enter describes the
+  focused symbol, `i` inspects it, and the window stays open.
+
+![Live fuzzy filtering: the Symbol Browser narrows 279 → 20 as you type a flex query, and the same mixin powers the Alt-0 window list](media/fuzzy-filter.gif)
 - **Class browser** — a type-ahead list of every class; OK / Enter jumps to the
   selected class's definition, Inspect opens it in the object inspector.
 - **Package browser** — a type-ahead list; OK / Enter switches the listener's
@@ -365,8 +369,10 @@ parked with its stack live:
   **Size/Move** (Ctrl-F5) enters interactive keyboard move (arrows) / resize
   (Shift+arrows), Enter or Esc to finish.
 - **Window list** (Window ▸ List, Alt-0) — a picker of every open window
-  (numbered, the active one marked); Enter / OK raises and focuses the chosen
-  window, like the classic Turbo Vision IDE's Alt-0.
+  (numbered, the active one marked); **type to fuzzy-filter** the list, Enter /
+  OK raises and focuses the chosen window, like the classic Turbo Vision IDE's
+  Alt-0.  (The same type-to-filter mixin powers every modal picker — snippet
+  inserter, method / trace / profiler choosers, …)
 - **Close** (Window ▸ Close) closes the active window; a modified editor first
   prompts Save / Discard / Cancel so you don't lose unsaved changes — and for a
   never-saved buffer, choosing Save brings up the Save As dialog.
