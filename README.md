@@ -228,10 +228,11 @@ parked with its stack live:
   focused symbol, `i` inspects it, and the window stays open.
 
 ![Live fuzzy filtering: the Symbol Browser narrows 279 → 20 as you type a flex query, and the same mixin powers the Alt-0 window list](media/fuzzy-filter.gif)
-- **Class browser** — a type-ahead list of every class; OK / Enter jumps to the
-  selected class's definition, Inspect opens it in the object inspector.
-- **Package browser** — a type-ahead list; OK / Enter switches the listener's
-  current package, Inspect opens the package in the inspector.
+- **Class browser** — a **fuzzy-filtered** list of every class (type to narrow,
+  e.g. `strout` finds `STRING-OUTPUT-STREAM`); OK / Enter jumps to the selected
+  class's definition, Inspect opens it in the object inspector.
+- **Package browser** — a fuzzy-filtered list; OK / Enter switches the
+  listener's current package, Inspect opens the package in the inspector.
 - **ASDF System browser** (load on Enter), **Load buffer** (evaluate an editor
   window into the REPL).
 - **HyperSpec lookup** — opens the browser on the Common Lisp HyperSpec page

@@ -415,21 +415,22 @@
   (let ((*package* (repl-package rv))) (read-from-string string)))
 
 (defun choose-from-list (title items &key (w 56) (h 18))
-  "Modal sorted (type-ahead) picker; return the chosen string or NIL."
+  "Modal fuzzy-filter picker; return the chosen string or NIL."
   (when (and *application* items)
     (let* ((desk (program-desktop *application*))
            (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar d t))
-           (lb (make-instance 'tsorted-list-box :items items :command +cm-ok+
+           (lb (make-instance 'tfilter-list-box :all items :command +cm-ok+
                               :bounds (make-trect 1 1 (1- w) (- h 3)))))
       (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (ff-refilter lb)                               ; populate (empty query -> all)
       (insert d (make-button (make-trect (- w 24) (- h 3) (- w 14) (- h 1)) "~O~K" +cm-ok+ t))
       (insert d (make-button (make-trect (- w 12) (- h 3) (- w 2) (- h 1)) "Cancel" +cm-cancel+))
       (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
                (max 0 (floor (- (point-y (view-size desk)) h) 2)))
       (focus lb)
-      (when (and (= (exec-view desk d) +cm-ok+) (plusp (list-count lb)))
-        (list-item lb (list-focused lb))))))
+      (when (= (exec-view desk d) +cm-ok+)
+        (ff-focused lb)))))
 
 ;;; --- incremental-search list picker ----------------------------------------
 ;;; A shared text matcher behind the list pickers.  Pickers search a logical KEY
@@ -1447,9 +1448,18 @@ Returns (values selected-item end-command)."
            (w (max 58 (+ 4 (* nbtn 13)))) (h 18)
            (d (make-instance 'tlist-pick-dialog :title title :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar d t))
-           (lb (make-instance 'tsorted-list-box :items items :command +cm-ok+
+           (total (length items))
+           (lb (make-instance 'tfilter-list-box :all items :command +cm-ok+
                               :bounds (make-trect 1 1 (1- w) (- h 3)))))
       (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (ff-refilter lb)                               ; populate (empty query -> all)
+      (setf (ff-on-change lb)                        ; live "(n/total)" in the title bar
+            (lambda (lb)
+              (let ((q (ff-query lb)))
+                (setf (window-title d)
+                      (if (zerop (length q)) title
+                          (format nil "~a  —  ~a  (~d/~d)" title q (length (ff-visible lb)) total)))
+                (draw-view d))))
       (when select
         (dotimes (i (list-count lb))
           (when (string= (list-item lb i) select) (list-focus-item lb i) (return))))
@@ -1466,7 +1476,7 @@ Returns (values selected-item end-command)."
                (max 0 (floor (- (point-y (view-size desk)) h) 2)))
       (focus lb)
       (let ((cmd (exec-view desk d)))
-        (values (and (plusp (list-count lb)) (list-item lb (list-focused lb))) cmd)))))
+        (values (ff-focused lb) cmd)))))
 
 (defun pkg-switch (rv p)
   (when (and rv p)

@@ -47,6 +47,11 @@ or just after a separator (word boundary) and in a contiguous run."
    (on-change :initarg :on-change :initform nil        :accessor ff-on-change))
   (:documentation "Adds fuzzy type-to-filter behaviour to a list/table view."))
 
+(defmethod initialize-instance :after ((v fuzzy-filter-mixin) &key)
+  ;; keep the candidate set a vector so REFILTER can iterate it with ACROSS
+  ;; regardless of whether :ALL was given a list or a vector
+  (setf (ff-all v) (coerce (ff-all v) 'vector)))
+
 ;;; protocol the mixin drives the underlying view through
 (defgeneric ff-install (view rows)
   (:documentation "Show ROWS (already filtered/ranked) in VIEW's display."))
