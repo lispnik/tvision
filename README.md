@@ -257,12 +257,15 @@ parked with its stack live:
   navigation key (Left/Right, Up/Down, Home/End, PgUp/PgDn, and Ctrl-Left/Right
   by word) to extend the selection; a plain navigation key collapses it.
   **Select all** (Ctrl-A, also on the Edit and context menus).  The selection
-  is drawn as a clear reverse-video highlight, and Cut/Copy/Paste and typing
-  operate on it.
+  is drawn as a clear reverse-video highlight, and **Cut / Copy / Paste**
+  (Ctrl-X/C/V or the Edit / context menus) and typing operate on it.  The
+  clipboard is shared, so you can copy in one window and paste into another.
 
   ![Shift with navigation keys extends the (reverse-video) text selection](media/shift-selection.gif)
 
   ![Edit ▸ Select all highlights the whole buffer; typing replaces it](media/select-all.gif)
+
+  ![Copy a mouse selection in one window and paste it into another](media/copy-paste.gif)
 
 ![Lisp auto-indent and Alt-Q reflow in an editor window](media/auto-indent.gif)
 
