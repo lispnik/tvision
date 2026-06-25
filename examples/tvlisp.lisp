@@ -2533,28 +2533,23 @@ run a form, and show the call-count/time report."
 
 ;;; A modeless, refreshable browser of a generic function's methods: Enter jumps
 ;;; to a method's source (the window stays open, so you can visit several), `r'
-;;; re-fetches (newly-defined methods appear), and the list's type-ahead filters.
+;;; re-fetches (newly-defined methods appear), and `/' fuzzy-filters.
 (defclass tfun-browser (twindow)
   ((gf    :initarg :gf  :accessor fb-gf)
    (app   :initarg :app :accessor fb-app)
-   (lb    :initform nil :accessor fb-lb)
-   (alist :initform nil :accessor fb-alist)))   ; (label . method)
+   (lb    :initform nil :accessor fb-lb)))
 
 (defun %fb-refresh (w)
   (let* ((gf (fb-gf w))
-         (alist (mapcar (lambda (m) (cons (method-label m) m))
-                        (sb-mop:generic-function-methods gf))))
-    (setf (fb-alist w) alist)
-    (list-set-items (fb-lb w) (mapcar #'car alist))
+         (methods (sb-mop:generic-function-methods gf)))
+    (ff-set-all (fb-lb w) methods)            ; rows are the method objects
     (setf (window-title w)
-          (format nil "~(~a~) — ~d method~:p  (Enter: source  r: refresh)"
-                  (sb-mop:generic-function-name gf) (length alist)))
+          (format nil "~(~a~) — ~d method~:p  (Enter: source  r: refresh  /: filter)"
+                  (sb-mop:generic-function-name gf) (length methods)))
     (draw-view w)))
 
 (defun %fb-goto (w)
-  (let* ((lb (fb-lb w))
-         (label (and (plusp (list-count lb)) (list-item lb (list-focused lb))))
-         (m (cdr (assoc label (fb-alist w) :test #'string=)))
+  (let* ((m (ff-focused (fb-lb w)))           ; the focused method (filter-aware)
          (src (and m (ignore-errors (sb-introspect:find-definition-source (sb-mop:method-function m)))))
          (path (and src (sb-introspect:definition-source-pathname src))))
     (cond (path (goto-source (fb-app w) :method (namestring path)
@@ -2563,6 +2558,7 @@ run a form, and show the call-count/time report."
 
 (defmethod handle-event ((w tfun-browser) event)
   (cond
+    ((%filter-key w (fb-lb w) event) (clear-event event))
     ((and (= (event-type event) +ev-broadcast+)
           (= (event-command event) +cm-list-item-selected+) (fb-lb w))
      (%fb-goto w) (clear-event event))
@@ -2577,7 +2573,8 @@ run a form, and show the call-count/time report."
          (w (min 72 (- dw 2))) (h (min 20 (- dh 2)))
          (win (make-instance 'tfun-browser :gf gf :app app :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t))
-         (lb (make-instance 'tsorted-list-box :bounds (make-trect 1 1 (1- w) (1- h)))))
+         (lb (make-instance 'tfilter-list-box :key #'method-label :display #'method-label
+                            :self-edit nil :bounds (make-trect 1 1 (1- w) (1- h)))))
     (insert win lb) (attach-scrollbars lb :vscroll vsb)
     (setf (fb-lb win) lb)
     (%fb-refresh win)
@@ -3358,20 +3355,22 @@ SOME-REPL because the clipboard window — not a REPL — is the focused one her
           (focus rv) (draw-view rv))
         (message-box "No REPL to paste into." (logior +mf-information+ +mf-ok-button+)))))
 
+(defun %cb-label (e) (cddr e))   ; an entry is (id obj . label)
+
 (defun %cb-entry (w)
   "The clipboard entry under the focus in window W, or NIL."
-  (let ((lb (cb-lb w)))
-    (and lb (plusp (list-count lb)) (nth (list-focused lb) *object-clipboard*))))
+  (let ((lb (cb-lb w))) (and lb (ff-focused lb))))
 
 (defun %cb-refresh (w)
-  (list-set-items (cb-lb w) (mapcar #'cddr *object-clipboard*))
+  (ff-set-all (cb-lb w) *object-clipboard*)        ; rows are the entries themselves
   (setf (window-title w)
-        (format nil "Clipboard (~d)  Enter:inspect p:paste d:remove"
+        (format nil "Clipboard (~d)  Enter:inspect p:paste d:remove  /:filter"
                 (length *object-clipboard*)))
   (draw-view w))
 
 (defmethod handle-event ((w tclipboard-window) event)
   (cond
+    ((%filter-key w (cb-lb w) event) (clear-event event))
     ((and (= (event-type event) +ev-broadcast+)
           (= (event-command event) +cm-list-item-selected+) (cb-lb w))
      (let ((e (%cb-entry w))) (when e (repl-inspect (cadr e) (cddr e))))
@@ -3401,7 +3400,8 @@ SOME-REPL because the clipboard window — not a REPL — is the focused one her
                (win (make-instance 'tclipboard-window :app app :title "Object Clipboard"
                                    :bounds (make-trect 0 0 w h)))
                (vsb (standard-scrollbar win t))
-               (lb (make-instance 'tlist-box :items #() :command 0
+               (lb (make-instance 'tfilter-list-box :key #'%cb-label :display #'%cb-label
+                                  :self-edit nil :command 0
                                   :bounds (make-trect 1 1 (1- w) (1- h)))))
           (insert win lb) (attach-scrollbars lb :vscroll vsb)
           (setf (cb-lb win) lb)

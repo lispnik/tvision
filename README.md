@@ -179,9 +179,9 @@ parked with its stack live:
   REPL's last value (`*`) from the Lisp menu / right-click, or press **`c`** in
   an Inspector to clip the object under inspection (drill in first to clip a
   nested value).  The clipboard window lists each object by type and printed
-  value; on a row, **Enter/`i`** re-inspects it, **`d`** removes it, and **`p`**
+  value; on a row, **Enter/`i`** re-inspects it, **`d`** removes it, **`p`**
   pastes it back into the REPL as a live `(clip N)` reference that evaluates to
-  the very same object.  Clipped objects are held by strong references (so they
+  the very same object, and **`/`** fuzzy-filters the list.  Clipped objects are held by strong references (so they
   stay alive — and pinned against GC — until you remove them).
 
   ![Object clipboard: clip a live value, inspect it, paste it back as (clip N)](media/object-clipboard.gif)
