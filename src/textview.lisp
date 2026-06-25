@@ -1321,6 +1321,11 @@ counterpart of the windowed editor).  Its data is the whole text string."))
   ((filename :initarg :filename :initform nil :accessor editor-filename))
   (:documentation "An editor bound to a file (TEditor + a filename)."))
 
+;; Classic Turbo Vision editors are blue, not the cyan of an input field: map
+;; the text view's normal/selected colours to white-on-blue and a cyan selection
+;; band (app palette 8 and 14) instead of the input colours (13 14).
+(defmethod get-palette ((ed tfile-editor)) (make-palette 8 14))
+
 (defmethod initialize-instance :after ((ed tfile-editor) &key)
   (setf (text-highlight ed) t))   ; Lisp syntax colouring on for file editors
 
