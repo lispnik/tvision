@@ -247,7 +247,10 @@ parked with its stack live:
 
 - **Lisp syntax highlighting** in editor windows — comments, strings, `#\chars`
   and `:keywords` are coloured, and the paren matching the one at the cursor is
-  highlighted.  **Auto-indent** follows Emacs `cl-indent`: per-operator specs
+  highlighted.  Editor windows use the classic Turbo Vision **blue** background
+  (the REPL keeps its input colours).
+
+  ![Classic blue editor with Lisp syntax highlighting and a selection](media/blue-editor.gif)  **Auto-indent** follows Emacs `cl-indent`: per-operator specs
   give each form's distinguished arguments a deeper indent and the body two
   columns, ordinary calls align under their first argument, binding/literal and
   quoted/backquoted lists align under their first element, `loop` clauses align
