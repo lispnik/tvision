@@ -337,7 +337,13 @@ parked with its stack live:
 
   ![Editor gutter: line numbers plus added / changed / deleted git marks](media/git-gutter.gif)
 - **Options:** theme picker (`TColorDialog`), pretty-print toggle, eval-timing
-  toggle (`; N ms`), auto-close parens, **line numbers**.
+  toggle (`; N ms`), auto-close parens, **line numbers**, and a **DOS mouse
+  cursor** — an experimental reverse-video software pointer that follows the
+  mouse the way Turbo Vision drew it on text-mode displays (it asks the terminal
+  for hover motion via `?1003h`; most modern terminals still draw their own
+  arrow on top, which there is no portable way to hide).
+
+  ![Experimental DOS-style software mouse cursor following the pointer](media/dos-mouse.gif)
 - **Thread monitor** (F9, Window ▸ Threads) lists the worker threads with
   Refresh / Kill; new REPL (F2), Clear (F3), Tile (F4), Cascade (F5), Next (F6),
   Close (Window ▸ Close), Help (F1).

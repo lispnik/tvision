@@ -114,6 +114,7 @@
 (defparameter +cm-clipboard+   389)   ; open the object clipboard tool window
 (defparameter +cm-clip-star+   390)   ; clip the REPL's last value (*)
 (defparameter +cm-select-all+  391)   ; select the whole focused buffer
+(defparameter +cm-dosmouse+    392)   ; toggle the DOS-style software mouse cursor
 
 (defparameter +hc-repl+ 1)
 ;; Computed at runtime (not load/build time) so they follow the running user's
@@ -254,7 +255,8 @@
       (menu-item "~P~retty-print"      +cm-pprint+)
       (menu-item "Eval t~i~ming"       +cm-timing+)
       (menu-item "~A~uto-close parens" +cm-autoclose+)
-      (menu-item "~L~ine numbers"      +cm-linenums+)))
+      (menu-item "~L~ine numbers"      +cm-linenums+)
+      (menu-item "DOS mouse c~u~rsor"  +cm-dosmouse+)))
    (sub-menu "~W~indow"
      (new-menu
       (menu-item "~L~ist..." +cm-winlist+ :key-text "Alt-0")
@@ -3048,6 +3050,8 @@ PATH~ backup of the previous contents."
 
 (defvar *line-numbers* t
   "When true, file editors show line numbers in the gutter (Options menu).")
+(defvar *dos-mouse* nil
+  "When true, draw a DOS-style software mouse cursor (Options menu).")
 
 (defvar *git-signs* (make-hash-table :test 'eq)
   "Maps a TFILE-EDITOR to a hash of 0-based line index -> :added / :changed /
@@ -4656,6 +4660,9 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-linenums+)    (setf *line-numbers* (not *line-numbers*))
                                   (when *screen* (screen-invalidate *screen*) (flush-screen *screen*))
                                   (toggle-msg "Line numbers" *line-numbers*) (clear-event event))
+          ((= c +cm-dosmouse+)    (setf *dos-mouse* (not *dos-mouse*))
+                                  (when *screen* (set-mouse-cursor *dos-mouse* *screen*))
+                                  (toggle-msg "DOS mouse cursor" *dos-mouse*) (clear-event event))
           ((= c +cm-help+)        (open-help +hc-repl+ "tvlisp Help") (clear-event event))
           ((= c +cm-load+)
            (let ((path (file-open-dialog :title "Load Lisp file")))

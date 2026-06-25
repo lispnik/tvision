@@ -55,7 +55,7 @@
    ;; screen driver
    #:init-screen #:done-screen #:with-screen #:screen-width #:screen-height
    #:flush-screen #:screen-back-buffer #:screen-cell-set #:screen-resize
-   #:screen-invalidate
+   #:screen-invalidate #:set-mouse-cursor
    #:show-cursor #:hide-cursor #:set-cursor-pos #:set-cursor-shape #:*screen*
    ;; view
    #:tview #:view-origin #:view-size #:view-cursor #:view-owner #:view-next

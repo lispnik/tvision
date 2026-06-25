@@ -30,7 +30,9 @@
   (last-click-y -1 :type fixnum)
   (click-count 0 :type fixnum)
   (last-auto-time 0 :type fixnum)
-  (cursor-shape :underline))
+  (cursor-shape :underline)
+  ;; DOS-style software mouse cursor: an inverted cell drawn under the pointer
+  (mouse-cursor nil))
 
 (defvar *screen* nil "The active terminal screen, or NIL when not initialised.")
 
@@ -106,6 +108,7 @@ LINES/COLUMNS environment variables and finally to a sane 24x80 default."
 (defun done-screen (&optional (s *screen*))
   "Restore the terminal to its original state."
   (when s
+    (%emit s (ctl "?1003l"))      ; any-event mouse tracking (DOS cursor), if on
     (%emit s (ctl "?1006l"))
     (%emit s (ctl "?1002l"))
     (%emit s (ctl "?1000l"))
@@ -118,6 +121,22 @@ LINES/COLUMNS environment variables and finally to a sane 24x80 default."
       (handler-case (%stty (screen-saved-stty s)) (error () nil)))
     (handler-case (%stty "sane") (error () nil))
     (when (eq s *screen*) (setf *screen* nil))))
+
+(defun set-mouse-cursor (on &optional (s *screen*))
+  "Turn the DOS-style software mouse cursor ON (T) or off (NIL).  When on, the
+terminal is asked to report pointer motion (?1003h) so an inverted cell can
+follow the mouse even with no button held — the way Turbo Vision drew its mouse
+cursor on text-mode displays.  (Most terminals also keep drawing their own arrow
+pointer on top; there is no portable way to hide that.)  Returns ON."
+  (when s
+    (let ((was (screen-mouse-cursor s)))
+      (setf (screen-mouse-cursor s) on)
+      (if on
+          (%emit s (ctl "?1003h"))         ; any-event tracking (report hover)
+          (when was (%emit s (ctl "?1003l"))))  ; back to button / drag tracking
+      (%flush-out s)
+      (flush-screen s)))                   ; the diff erases the cursor cell when off
+  on)
 
 (defmacro with-screen ((&optional var) &body body)
   "Run BODY with an initialised screen, guaranteeing teardown on exit."
@@ -170,12 +189,23 @@ silently ignored, which lets views draw without bounds-checking."
          (h (screen-height s))
          (out (screen-out s))
          (last-attr -1)
-         (cx -1) (cy -1))            ; last cursor position written
+         (cx -1) (cy -1)             ; last cursor position written
+         ;; DOS mouse cursor: composite an inverted cell at the pointer straight
+         ;; into the diff, so the back/front comparison erases the old position
+         ;; and draws the new one with no separate tracking.
+         (mc (screen-mouse-cursor s))
+         (mx (if mc (screen-mouse-x s) -1))
+         (my (if mc (screen-mouse-y s) -1)))
     (%emit s (ctl "?25l"))
     (dotimes (y h)
       (dotimes (x w)
         (let* ((idx (+ x (* y w)))
-               (cell (aref back idx))
+               (raw (aref back idx))
+               (cell (if (and (= x mx) (= y my))
+                         (let ((a (cell-attr raw)))
+                           (cell-make-code (cell-char-code raw)
+                                           (make-attr (attr-bg a) (logand (attr-fg a) 7))))
+                         raw))
                (code (cell-char-code cell)))
           (when (/= cell (aref front idx))
             (setf (aref front idx) cell)
@@ -299,7 +329,13 @@ mouse button is held with nothing else pending, synthesize ev-mouse-auto."
     (multiple-value-bind (events consumed) (parse-input-buffer buf (fill-pointer buf))
       (dolist (e events)
         (%update-mouse-state s e)
-        (setf (screen-event-queue s) (nconc (screen-event-queue s) (list e))))
+        ;; With the DOS mouse cursor on we ask for hover motion (?1003h); consume
+        ;; those button-less moves to drive the cursor without disturbing views.
+        (if (and (screen-mouse-cursor s)
+                 (= (event-type e) +ev-mouse-move+)
+                 (zerop (event-mouse-buttons e)))
+            (flush-screen s)
+            (setf (screen-event-queue s) (nconc (screen-event-queue s) (list e)))))
       ;; shift unconsumed bytes (a partial escape sequence) to the front
       (when (> consumed 0)
         (let ((remaining (- (fill-pointer buf) consumed)))
