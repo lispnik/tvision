@@ -542,12 +542,22 @@ XOFF reserves a left gutter.  Shared by the flat and word-wrapped layouts."
                 (db-put-code db (1+ vx) +wide-cont+ attr))
               (incf vx cw) (setf i gend)))))
 
+(defun %selection-attr (tv)
+  "A clearly-visible highlight for selected text: the view's selection colour
+when it actually differs from the normal background, else reverse-video of the
+normal colour (so a selection is never invisible whatever the theme)."
+  (let* ((normal (get-color tv 1))
+         (sel    (get-color tv 2)))
+    (if (= (attr-bg sel) (attr-bg normal))
+        (make-attr (attr-bg normal) (logand (attr-fg normal) 7))   ; reverse video
+        sel)))
+
 (defun %draw-flat (tv)
   (let* ((w (point-x (view-size tv)))
          (h (point-y (view-size tv)))
          (gw (text-gutter-width tv))
          (c (get-color tv 1))
-         (hi (get-color tv 2))
+         (hi (%selection-attr tv))
          (dx (text-left-col tv))
          (db (make-draw-buffer w))
          (hl (text-highlight tv))
@@ -593,7 +603,7 @@ XOFF reserves a left gutter.  Shared by the flat and word-wrapped layouts."
          (gw (text-gutter-width tv))
          (w (max 1 (- fw gw)))                    ; text-area width (wrap geometry)
          (h (point-y (view-size tv)))
-         (c (get-color tv 1)) (hi (get-color tv 2))
+         (c (get-color tv 1)) (hi (%selection-attr tv))
          (db (make-draw-buffer fw))
          (row 0) (li (text-top-line tv)))
     (multiple-value-bind (sels sele) (selection-range tv)
