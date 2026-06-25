@@ -256,10 +256,13 @@ parked with its stack live:
 - **Text selection** — drag with the mouse, or hold **Shift** with any
   navigation key (Left/Right, Up/Down, Home/End, PgUp/PgDn, and Ctrl-Left/Right
   by word) to extend the selection; a plain navigation key collapses it.
-  Ctrl-A selects all.  The selection is drawn as a clear reverse-video
-  highlight, and Cut/Copy/Paste and typing operate on it.
+  **Select all** (Ctrl-A, also on the Edit and context menus).  The selection
+  is drawn as a clear reverse-video highlight, and Cut/Copy/Paste and typing
+  operate on it.
 
   ![Shift with navigation keys extends the (reverse-video) text selection](media/shift-selection.gif)
+
+  ![Edit ▸ Select all highlights the whole buffer; typing replaces it](media/select-all.gif)
 
 ![Lisp auto-indent and Alt-Q reflow in an editor window](media/auto-indent.gif)
 
