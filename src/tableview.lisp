@@ -87,7 +87,10 @@
 (defmethod draw ((tv ttable-view))
   (let* ((w (point-x (view-size tv))) (h (point-y (view-size tv)))
          (cols (table-columns tv))
-         (hdr (get-color tv 1)) (normal (get-color tv 2)) (sel (get-color tv 3))
+         (hdr (get-color tv 1)) (normal (get-color tv 2))
+         ;; a reverse-video bar marks the selected row, visible even when the
+         ;; table isn't the focused view (the palette's "sel" equals NORMAL)
+         (sel (selection-highlight normal (logtest (view-state tv) +sf-focused+)))
          (top (table-top tv))
          (db (make-draw-buffer w)))
     ;; header row (fixed)

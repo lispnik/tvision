@@ -1377,11 +1377,17 @@ with the arrows and expand the macro call under the cursor with `e'."
     (if roles (format nil "~{~a~^, ~}" (nreverse roles)) "—")))
 
 (defun %pkg-label (sym)
-  "The shortest name/nickname of SYM's home package (\"#:\" if uninterned)."
+  "SYM's home package, written with the colon convention that shows the symbol's
+accessibility there: PKG: for an external symbol, PKG:: for an internal one
+(\":\" for keywords, \"#:\" when uninterned)."
   (let ((p (symbol-package sym)))
-    (if (null p) "#:"
-        (first (sort (cons (package-name p) (copy-list (package-nicknames p)))
-                     #'< :key #'length)))))
+    (cond
+      ((null p) "#:")
+      ((eq p (find-package :keyword)) ":")
+      (t (let ((name (first (sort (cons (package-name p) (copy-list (package-nicknames p)))
+                                  #'< :key #'length)))
+               (ext (eq :external (nth-value 1 (find-symbol (symbol-name sym) p)))))
+           (format nil "~a~:[::~;:~]" name ext))))))
 
 (defclass tapropos-window (twindow)
   ((rv    :initarg :rv :accessor aw-rv)

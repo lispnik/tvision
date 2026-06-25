@@ -76,7 +76,7 @@
 
 (defmethod draw ((lb tlist-box))
   (let* ((w (point-x (view-size lb))) (h (point-y (view-size lb)))
-         (normal (get-color lb 1)) (focused (get-color lb 2))
+         (normal (get-color lb 1))
          (dx (point-x (scroller-delta lb))) (dy (point-y (scroller-delta lb)))
          (active (logtest (view-state lb) +sf-focused+))
          (cols (list-cols lb)) (cw (list-col-width lb))
@@ -87,8 +87,9 @@
         (dotimes (c cols)
           (let ((i (+ (* row cols) c)))
             (when (< i (list-count lb))
-              (let* ((sel (and (= i (list-focused lb)) active))
-                     (attr (if sel focused normal))
+              (let* ((sel (= i (list-focused lb)))
+                     ;; show the selection even when the list isn't focused
+                     (attr (if sel (selection-highlight normal active) normal))
                      (x (* c cw))
                      (cwidth (if (> cols 1) cw w))
                      (s (list-item lb i))

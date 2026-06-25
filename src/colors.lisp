@@ -23,6 +23,13 @@
 (defun attr-fg (a) (logand a #x0f))
 (defun attr-bg (a) (logand (ash a -4) #x07))
 
+(defun selection-highlight (normal &optional active)
+  "A reverse-video highlight for the currently-selected row/item in a list or
+table: a solid bar (NORMAL's foreground becomes the background) that stays
+visible whether or not the view has keyboard focus — brighter when ACTIVE."
+  (make-attr (if active 15 (attr-bg normal))      ; bar fg: bright white when active, else NORMAL's bg
+             (logand (attr-fg normal) 7)))         ; bar bg: NORMAL's foreground colour
+
 ;;; --- true-colour attributes ------------------------------------------------
 
 (defconstant +attr-rgb-flag+ #x80000000)
