@@ -244,7 +244,8 @@ parked with its stack live:
   sortable `TTableView` grid (Self% / Cumul% / Samples / Function — click a
   header or press `s`/`r` to re-sort, **`/` to fuzzy-filter by name**); **Enter**
   jumps to a function's source and **`g`** opens the call-graph as a `TOutline`
-  tree.
+  tree (which, like the class-hierarchy and project-source trees, also takes
+  **`/`** to prune to matching nodes and their ancestors).
 
 ![The tvlisp statistical profiler: sortable results table and call-graph outline](media/profiler.gif)
 

@@ -521,14 +521,87 @@ against (defaulting to LABELS) so decorated labels can still be searched."
       (focus lb)
       (when (= (exec-view desk d) +cm-ok+) (ff-focused lb)))))
 
+;;; --- `/`-to-filter for outline (tree) windows ------------------------------
+;;; Outlines are trees, not flat lists, so they filter differently: `/` then
+;;; typing prunes the tree to the nodes whose text fuzzy-matches, keeping their
+;;; ancestors and auto-expanding so matches show in context; Esc restores it.
+
+(defun %outline-prune (nodes query)
+  "A filtered copy of NODES: keep each node that matches QUERY or has a matching
+descendant, with kept inner nodes expanded.  NIL when nothing matches."
+  (let ((kept '()))
+    (dolist (n nodes (nreverse kept))
+      (let ((subs (%outline-prune (outline-node-children n) query)))
+        (when (or subs (flex-score query (outline-node-text n)))
+          (let ((c (make-outline-node (outline-node-text n) subs
+                                      (outline-node-data n) (outline-node-setter n))))
+            (setf (outline-node-expanded c) t)
+            (push c kept)))))))
+
+(defclass tfilter-outline-window (twindow)
+  ((outline   :initarg :outline   :initform nil :accessor fo-outline)
+   (all-roots :initarg :all-roots :initform nil :accessor fo-all-roots)
+   (filtering :initform nil       :accessor fo-filtering)
+   (query     :initform ""        :accessor fo-query))
+  (:documentation "An outline window with `/`-to-filter over the whole tree."))
+
+(defun %fo-apply (w)
+  "Re-prune the outline to the current query and refresh the title."
+  (let* ((ol (fo-outline w)) (q (fo-query w)) (base (%filter-title-base (window-title w))))
+    (setf (outline-roots ol) (if (zerop (length q)) (fo-all-roots w)
+                                 (or (%outline-prune (fo-all-roots w) q) '()))
+          (outline-focused ol) 0)
+    (outline-update-limit ol)
+    (setf (window-title w)
+          (cond ((plusp (length q)) (format nil "~a  [/~a]" base q))
+                ((fo-filtering w)   (format nil "~a  [/_]" base))
+                (t base)))
+    (draw-view w)))
+
+(defun %fo-set-query (w q) (setf (fo-query w) q) (%fo-apply w))
+
+(defun %fo-filter-key (w event)
+  "Drive W's outline `/`-filter from key EVENT (W has fo-* slots + an FO-OUTLINE).
+Returns T when the event was consumed by the filter (caller should clear it);
+NIL to let W's own commands / the focused outline run."
+  (let ((ol (fo-outline w)) (q (fo-query w)))
+    (when (and ol (= (event-type event) +ev-key-down+)
+               (logtest (view-state ol) +sf-focused+))
+      (cond
+        ((fo-filtering w)
+         (let ((k (event-key-code event)) (cc (event-char-code event)))
+           (cond
+             ((= k +kb-esc+)   (setf (fo-filtering w) nil) (%fo-set-query w "") t)
+             ((= k +kb-enter+) (setf (fo-filtering w) nil) (%fo-apply w) nil) ; let Enter act on the row
+             ((= k +kb-back+)
+              (if (plusp (length q)) (%fo-set-query w (subseq q 0 (1- (length q))))
+                  (progn (setf (fo-filtering w) nil) (%fo-set-query w "")))
+              t)
+             ((and (plusp cc) (zerop (event-modifiers event))
+                   (let ((c (code-char cc)))
+                     (and c (graphic-char-p c) (not (and (char= c #\Space) (zerop (length q)))))))
+              (%fo-set-query w (concatenate 'string q (string (code-char cc))))
+              t)
+             (t nil))))   ; arrows / +/- fall through to navigate the pruned tree
+        ((and (plusp (event-char-code event)) (zerop (event-modifiers event))
+              (char= (code-char (event-char-code event)) #\/))
+         (setf (fo-filtering w) t) (%fo-set-query w "") t)
+        (t nil)))))
+
+(defmethod handle-event ((w tfilter-outline-window) event)
+  (if (%fo-filter-key w event) (clear-event event) (call-next-method)))
+
 (defun open-outline-window (title roots)
   (let* ((desk (program-desktop *application*))
-         (w (make-instance 'twindow :title title :bounds (make-trect 4 2 64 22)))
+         (w (make-instance 'tfilter-outline-window :all-roots roots
+                           :title (format nil "~a  (/: filter)" title)
+                           :bounds (make-trect 4 2 64 22)))
          (vsb (standard-scrollbar w t))
          (ol (make-instance 'toutline :roots roots
                             :bounds (make-trect 1 1 (1- (point-x (view-size w)))
                                                 (1- (point-y (view-size w)))))))
     (insert w ol) (attach-scrollbars ol :vscroll vsb)
+    (setf (fo-outline w) ol)
     (insert desk w) (focus ol)
     ol))
 
@@ -4267,12 +4340,13 @@ name string or NIL."
       (let ((picked (choose-from-list title labels)))
         (and picked (string-left-trim '(#\* #\Space) picked))))))
 
-(defclass tproject-window (twindow)
+(defclass tproject-window (tfilter-outline-window)
   ((app     :initarg :app     :initform nil :accessor pw-app)
    (sysname :initarg :sysname :initform nil :accessor pw-sysname)
-   (outline :initarg :outline :initform nil :accessor pw-outline))
+   (outline :initarg :outline :initform nil :accessor pw-outline))  ; same slot as FO-OUTLINE
   (:documentation "A system's source-file tree.  Enter opens/focuses the file at
-point; O opens all files under the node; C closes them; R re-reads from ASDF."))
+point; O opens all files under the node; C closes them; R re-reads from ASDF;
+`/' fuzzy-filters the tree."))
 
 (defun %project-open-file (app path &optional focusp)
   "Focus the editor already showing PATH, or open a new one for it.  Returns
@@ -4298,22 +4372,22 @@ point; O opens all files under the node; C closes them; R re-reads from ASDF."))
 
 (defun %project-refresh (w)
   "Recompute the open/closed bullets from the current desktop and repaint."
-  (let ((open (%open-editor-keys (pw-app w))) (ol (pw-outline w)))
+  (let ((open (%open-editor-keys (pw-app w))))
     (labels ((walk (n)
                (when (pathnamep (outline-node-data n))
                  (setf (outline-node-text n) (%project-file-text (outline-node-data n) open)))
                (mapc #'walk (outline-node-children n))))
-      (mapc #'walk (outline-roots ol)))
-    (tvision::outline-update-limit ol)
+      (mapc #'walk (fo-all-roots w)))     ; re-mark the full tree, then re-apply any filter
+    (%fo-apply w)
     (redraw (program-desktop (pw-app w)))))
 
 (defun %project-rebuild (w)
   "Re-read the system from ASDF (picks up .asd edits) and rebuild the tree."
   (let ((root (%system-tree (pw-sysname w) (%open-editor-keys (pw-app w)))))
     (when root
-      (setf (outline-roots (pw-outline w)) (list root))
+      (setf (fo-all-roots w) (list root))
+      (%fo-apply w)
       (outline-focus (pw-outline w) 0)
-      (tvision::outline-update-limit (pw-outline w))
       (redraw (program-desktop (pw-app w))))))
 
 (defun %project-open-node (w)
@@ -4359,6 +4433,7 @@ per-window unsaved-changes prompt."
 
 (defmethod handle-event ((w tproject-window) event)
   (cond
+    ((%fo-filter-key w event) (clear-event event))
     ((and (= (event-type event) +ev-broadcast+)
           (= (event-command event) +cm-outline-item-selected+)
           (pw-outline w))
@@ -4391,8 +4466,8 @@ files as a collapsible tree."
             (let* ((desk (program-desktop app))
                    (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
                    (ww (min 62 (- dw 2))) (wh (min 22 (- dh 2)))
-                   (win (make-instance 'tproject-window :app app :sysname name
-                          :title (format nil "Project: ~a  (Enter:open O:all C:close R:refresh)" name)
+                   (win (make-instance 'tproject-window :app app :sysname name :all-roots (list root)
+                          :title (format nil "Project: ~a  (Enter:open O:all C:close R:refresh /:filter)" name)
                           :bounds (make-trect 0 0 ww wh)))
                    (vsb (standard-scrollbar win t))
                    (ol (make-instance 'toutline :roots (list root)
