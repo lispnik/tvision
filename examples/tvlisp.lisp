@@ -1354,9 +1354,51 @@ with the arrows and expand the macro call under the cursor with `e'."
               (let ((*standard-output* o)) (disassemble (read-in rv s)))))
         (error (e) (err-box e))))))
 
+;;; --- apropos: a modeless results window that stays open -------------------
+;;; Unlike the modal picker, the apropos window stays on the desktop so you can
+;;; describe / inspect several matches in turn.  Enter (or double-click)
+;;; describes the focused symbol; `i' inspects it; the window stays until closed.
+
+(defclass tapropos-window (twindow)
+  ((rv :initarg :rv :accessor aw-rv)
+   (lb :initform nil :accessor aw-lb)))
+
+(defun %aw-symbol (w)
+  (let ((lb (aw-lb w)))
+    (and lb (plusp (list-count lb)) (list-item lb (list-focused lb)))))
+
+(defmethod handle-event ((w tapropos-window) event)
+  (cond
+    ((and (= (event-type event) +ev-broadcast+)
+          (= (event-command event) +cm-list-item-selected+) (aw-lb w))
+     (let ((s (%aw-symbol w))) (when s (describe-named (aw-rv w) s)))
+     (clear-event event))
+    ((and (= (event-type event) +ev-key-down+)
+          (let ((ch (event-char-code event)))
+            (or (eql ch (char-code #\i)) (eql ch (char-code #\I)))))
+     (let ((s (%aw-symbol w)))
+       (when s (handler-case (repl-inspect (read-in (aw-rv w) s) s)
+                 (error (e) (err-box e)))))
+     (clear-event event))
+    (t (call-next-method))))
+
+(defun show-apropos-window (rv title items)
+  (let* ((desk (program-desktop *application*))
+         (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+         (w (min 64 (- dw 2))) (h (min 20 (- dh 2)))
+         (win (make-instance 'tapropos-window :rv rv :title title :bounds (make-trect 0 0 w h)))
+         (vsb (standard-scrollbar win t))
+         (lb (make-instance 'tsorted-list-box :items items
+                            :bounds (make-trect 1 1 (1- w) (1- h)))))
+    (insert win lb) (attach-scrollbars lb :vscroll vsb)
+    (setf (aw-lb win) lb)
+    (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
+    (insert desk win) (focus lb)))
+
 (defun do-apropos (rv)
   ;; Prompt for a substring; on no match, say so and re-prompt (prefilled with
   ;; what was typed) so the user can adjust and try again.  Cancel (Esc) exits.
+  ;; A match opens a modeless results window that stays open.
   (when rv
     (loop with default = (%point-symbol)
           for s = (prompt-line "Apropos" "Substring:" default)
@@ -1369,15 +1411,10 @@ with the arrows and expand the macro call under the cursor with `e'."
                               (logior +mf-information+ +mf-ok-button+))
                  (setf default s))         ; retry, prefilled with what they typed
                 (t
-                 ;; multi-action picker: Describe (default) or Inspect the symbol
-                 (multiple-value-bind (chosen cmd)
-                     (pick-with-inspect (format nil "Apropos \"~a\" (~d)" s (length names)) names
-                                        :ok "~D~escribe")
-                   (when chosen
-                     (cond ((eql cmd +cm-ok+) (describe-named rv chosen))
-                           ((eql cmd +cm-pick-inspect+)
-                            (handler-case (repl-inspect (read-in rv chosen) chosen)
-                              (error (e) (err-box e)))))))
+                 (show-apropos-window
+                  rv (format nil "Apropos \"~a\" (~d)  [Enter:describe  i:inspect]"
+                             s (length names))
+                  names)
                  (return)))))))
 
 (defun do-inspect-expr (rv)
