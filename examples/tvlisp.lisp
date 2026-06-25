@@ -1355,21 +1355,30 @@ with the arrows and expand the macro call under the cursor with `e'."
         (error (e) (err-box e))))))
 
 (defun do-apropos (rv)
-  (let ((s (prompt-line "Apropos" "Substring:" (%point-symbol))))
-    (when (and rv s)
-      (let ((names (sort (mapcar #'prin1-to-string (apropos-list s)) #'string<)))
-        (if (null names)
-            (message-box (format nil "Nothing matches \"~a\"." s)
-                         (logior +mf-information+ +mf-ok-button+))
-            ;; multi-action picker: Describe (default) or Inspect the symbol
-            (multiple-value-bind (chosen cmd)
-                (pick-with-inspect (format nil "Apropos \"~a\" (~d)" s (length names)) names
-                                   :ok "~D~escribe")
-              (when chosen
-                (cond ((eql cmd +cm-ok+) (describe-named rv chosen))
-                      ((eql cmd +cm-pick-inspect+)
-                       (handler-case (repl-inspect (read-in rv chosen) chosen)
-                         (error (e) (err-box e))))))))))))
+  ;; Prompt for a substring; on no match, say so and re-prompt (prefilled with
+  ;; what was typed) so the user can adjust and try again.  Cancel (Esc) exits.
+  (when rv
+    (loop with default = (%point-symbol)
+          for s = (prompt-line "Apropos" "Substring:" default)
+          while s do
+            (let ((names (sort (mapcar #'prin1-to-string (apropos-list s)) #'string<)))
+              (cond
+                ((null names)
+                 (message-box (format nil "Nothing matches \"~a\".~%~%Try a different substring."
+                                      s)
+                              (logior +mf-information+ +mf-ok-button+))
+                 (setf default s))         ; retry, prefilled with what they typed
+                (t
+                 ;; multi-action picker: Describe (default) or Inspect the symbol
+                 (multiple-value-bind (chosen cmd)
+                     (pick-with-inspect (format nil "Apropos \"~a\" (~d)" s (length names)) names
+                                        :ok "~D~escribe")
+                   (when chosen
+                     (cond ((eql cmd +cm-ok+) (describe-named rv chosen))
+                           ((eql cmd +cm-pick-inspect+)
+                            (handler-case (repl-inspect (read-in rv chosen) chosen)
+                              (error (e) (err-box e)))))))
+                 (return)))))))
 
 (defun do-inspect-expr (rv)
   (let ((s (prompt-line "Inspect" "Expression:" (%point-symbol))))
