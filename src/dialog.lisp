@@ -94,11 +94,16 @@ that closed the box (e.g. +cm-ok+, +cm-cancel+)."
     (center-dialog d)
     (exec-view (program-desktop *application*) d)))
 
-(defun input-box (title label initial &optional (maxlen 40))
-  "Prompt for a string.  Return (values command string)."
+(defun input-box (title label initial &optional (maxlen 40) history-id)
+  "Prompt for a string.  Return (values command string).  When HISTORY-ID is
+given, the field remembers submitted values under that id: a down-arrow gadget
+(or the Down key) drops down previously-entered values to pick from."
   (let* ((w (max 40 (+ 10 (length label))))
          (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w 8)))
-         (il (make-instance 'tinputline :data initial :maxlen maxlen)))
+         (il (if history-id
+                 (make-instance 'thistory-input :data initial :maxlen maxlen
+                                                :history-id history-id)
+                 (make-instance 'tinputline :data initial :maxlen maxlen))))
     (let ((lbl (make-instance 'tlabel :text label :link il)))
       (set-bounds lbl (make-trect 3 2 (- w 3) 3))
       (insert d lbl))
@@ -108,4 +113,5 @@ that closed the box (e.g. +cm-ok+, +cm-cancel+)."
     (center-dialog d)
     (focus il)
     (let ((cmd (exec-view (program-desktop *application*) d)))
+      (when (and history-id (= cmd +cm-ok+)) (history-record il))
       (values cmd (input-data il)))))

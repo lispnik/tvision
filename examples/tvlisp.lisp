@@ -402,8 +402,10 @@
 
 ;;; --- prompts / output helpers ----------------------------------------------
 
-(defun prompt-line (title label &optional (default ""))
-  (multiple-value-bind (cmd s) (input-box title label (or default "") 200)
+(defun prompt-line (title label &optional (default "") (history-id title))
+  ;; Each prompt remembers its submitted values (keyed by HISTORY-ID, the title
+  ;; by default): a down-arrow gadget / the Down key recalls earlier entries.
+  (multiple-value-bind (cmd s) (input-box title label (or default "") 200 history-id)
     (when (and (= cmd +cm-ok+) (plusp (length (string-trim '(#\Space #\Tab) s)))) s)))
 
 (defun err-box (e)
@@ -1416,6 +1418,7 @@ with the arrows and expand the macro call under the cursor with `e'."
          ;; Enter while editing the filter -> re-search, then jump to the results
          ((and (= k +kb-enter+) in-input)
           (%aw-search w (get-data (aw-input w)))
+          (history-record (aw-input w))
           (when (plusp (length (table-rows (aw-tbl w)))) (focus (aw-tbl w)))
           (clear-event event))
          ;; `i' on the table -> inspect the focused symbol (s / r sort the table)
@@ -1435,8 +1438,8 @@ with the arrows and expand the macro call under the cursor with `e'."
                              :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t))
          (lbl (make-instance 'tlabel :text "Filter:" :bounds (make-trect 2 1 9 2)))
-         (input (make-instance 'tinputline :data (or initial "") :maxlen 80
-                               :bounds (make-trect 9 1 (1- w) 2)))
+         (input (make-instance 'thistory-input :data (or initial "") :maxlen 80
+                               :history-id "apropos" :bounds (make-trect 9 1 (1- w) 2)))
          (cols (vector (make-table-column "Package" 18 #'%pkg-label)
                        (make-table-column "Symbol"  34 #'symbol-name)
                        (make-table-column "Type"    20 #'%symbol-roles)))
@@ -2575,11 +2578,11 @@ run a form, and show the call-count/time report."
 (values ok find-text replace-text case-p word-p back-or-all-p)."
   (let* ((w 52) (h (if replace 14 13))
          (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
-         (find-in (make-instance 'tinputline :data initial :maxlen 100
-                                 :bounds (make-trect 12 2 (- w 3) 3)))
+         (find-in (make-instance 'thistory-input :data initial :maxlen 100
+                                 :history-id "find" :bounds (make-trect 12 2 (- w 3) 3)))
          (repl-in (when replace
-                    (make-instance 'tinputline :data (replace-last app) :maxlen 100
-                                   :bounds (make-trect 12 4 (- w 3) 5))))
+                    (make-instance 'thistory-input :data (replace-last app) :maxlen 100
+                                   :history-id "replace" :bounds (make-trect 12 4 (- w 3) 5))))
          (opts (make-instance 'tcheck-boxes
                               :labels (if replace
                                           '("~C~ase sensitive" "~W~hole word" "Rege~x~p" "Replace ~a~ll (no prompt)")
@@ -2602,6 +2605,8 @@ run a form, and show the call-count/time report."
     (focus find-in)
     (if (= (exec-view (program-desktop app) d) +cm-ok+)
         (let ((v (cluster-value opts)))
+          (history-record find-in)
+          (when repl-in (history-record repl-in))
           ;; ok find replace case word regex back-or-all
           (values t (get-data find-in) (and repl-in (get-data repl-in))
                   (logbitp 0 v) (logbitp 1 v) (logbitp 2 v) (logbitp 3 v)))
