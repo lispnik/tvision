@@ -220,9 +220,10 @@ parked with its stack live:
   ![Who-sets: find every place a variable is assigned, jump to the source](media/xref-who-sets.gif)
 - **Symbol browser** (Apropos) — a modeless, LispWorks-style window with a live
   **Filter** field and a list of matching symbols, each tagged with what it is
-  (function / macro / generic-function / variable / constant / class /
-  package).  Edit the filter and press Enter to re-search; Enter describes the
-  focused symbol, `i` inspects it, and the window stays open.
+  shown in sortable **Package / Symbol / Type** columns (function / macro /
+  generic-function / variable / constant / class / package).  Click a header or
+  press `s` / `r` to sort; edit the filter and press Enter to re-search; Enter
+  describes the focused symbol, `i` inspects it, and the window stays open.
 - **Class browser** — a type-ahead list of every class; OK / Enter jumps to the
   selected class's definition, Inspect opens it in the object inspector.
 - **Package browser** — a type-ahead list; OK / Enter switches the listener's

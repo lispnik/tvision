@@ -1374,43 +1374,40 @@ with the arrows and expand the macro call under the cursor with `e'."
     (when (find-package sym)         (push "package" roles))
     (if roles (format nil "~{~a~^, ~}" (nreverse roles)) "—")))
 
-(defparameter +aw-sep+ "  ·  ")
-
-(defun %aw-item (sym)
-  (format nil "~a~a~a" (prin1-to-string sym) +aw-sep+ (%symbol-roles sym)))
+(defun %pkg-label (sym)
+  "The shortest name/nickname of SYM's home package (\"#:\" if uninterned)."
+  (let ((p (symbol-package sym)))
+    (if (null p) "#:"
+        (first (sort (cons (package-name p) (copy-list (package-nicknames p)))
+                     #'< :key #'length)))))
 
 (defclass tapropos-window (twindow)
   ((rv    :initarg :rv :accessor aw-rv)
    (input :initform nil :accessor aw-input)
-   (lb    :initform nil :accessor aw-lb)))
+   (tbl   :initform nil :accessor aw-tbl)))
 
 (defun %aw-symbol (w)
-  "The symbol-name string of the focused list item (without its role tag)."
-  (let ((lb (aw-lb w)))
-    (when (and lb (plusp (list-count lb)))
-      (let* ((item (list-item lb (list-focused lb)))
-             (p (search +aw-sep+ item)))
-        (if p (subseq item 0 p) item)))))
+  "The symbol object of the focused table row, or NIL."
+  (let ((tbl (aw-tbl w))) (and tbl (table-selected-row tbl))))
 
 (defun %aw-search (w str)
-  "Re-run apropos for STR and refresh the list and title."
-  (let* ((syms (and (plusp (length str)) (ignore-errors (apropos-list str))))
-         (sorted (sort (copy-list syms) #'string< :key #'prin1-to-string))
-         (items (mapcar #'%aw-item sorted)))
-    (list-set-items (aw-lb w) items)
+  "Re-run apropos for STR and refresh the table and title."
+  (let ((syms (and (plusp (length str)) (ignore-errors (apropos-list str)))))
+    (table-set-rows (aw-tbl w) syms)
     (setf (window-title w)
           (if (plusp (length str))
-              (format nil "Symbol Browser — ~d match~:p for \"~a\"  [Enter:describe  i:inspect]"
-                      (length items) str)
-              "Symbol Browser — type a filter, Enter to search"))
-    (draw-view w)))
+              (format nil "Symbol Browser — ~d match~:p for \"~a\"  [Enter:describe i:inspect s/r:sort]"
+                      (length syms) str)
+              "Symbol Browser — type a filter, Enter to search")))
+  (draw-view w))
 
 (defmethod handle-event ((w tapropos-window) event)
   (cond
-    ;; Enter / double-click on the list -> describe the focused symbol
+    ;; Enter / double-click on a row -> describe the focused symbol
     ((and (= (event-type event) +ev-broadcast+)
-          (= (event-command event) +cm-list-item-selected+) (aw-lb w))
-     (let ((s (%aw-symbol w))) (when s (describe-named (aw-rv w) s)))
+          (= (event-command event) +cm-list-item-selected+) (aw-tbl w))
+     (let ((s (%aw-symbol w)))
+       (when s (describe-named (aw-rv w) (prin1-to-string s))))
      (clear-event event))
     ((= (event-type event) +ev-key-down+)
      (let ((k (event-key-code event)) (ch (event-char-code event))
@@ -1419,12 +1416,12 @@ with the arrows and expand the macro call under the cursor with `e'."
          ;; Enter while editing the filter -> re-search, then jump to the results
          ((and (= k +kb-enter+) in-input)
           (%aw-search w (get-data (aw-input w)))
-          (when (plusp (list-count (aw-lb w))) (focus (aw-lb w)))
+          (when (plusp (length (table-rows (aw-tbl w)))) (focus (aw-tbl w)))
           (clear-event event))
-         ;; `i' on the list -> inspect the focused symbol
+         ;; `i' on the table -> inspect the focused symbol (s / r sort the table)
          ((and (not in-input) (or (eql ch (char-code #\i)) (eql ch (char-code #\I))))
           (let ((s (%aw-symbol w)))
-            (when s (handler-case (repl-inspect (read-in (aw-rv w) s) s)
+            (when s (handler-case (repl-inspect s (prin1-to-string s))
                       (error (e) (err-box e)))))
           (clear-event event))
          (t (call-next-method)))))
@@ -1433,22 +1430,25 @@ with the arrows and expand the macro call under the cursor with `e'."
 (defun show-apropos-window (rv initial)
   (let* ((desk (program-desktop *application*))
          (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
-         (w (min 68 (- dw 2))) (h (min 22 (- dh 2)))
+         (w (min 76 (- dw 2))) (h (min 22 (- dh 2)))
          (win (make-instance 'tapropos-window :rv rv :title "Symbol Browser"
                              :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t))
          (lbl (make-instance 'tlabel :text "Filter:" :bounds (make-trect 2 1 9 2)))
          (input (make-instance 'tinputline :data (or initial "") :maxlen 80
                                :bounds (make-trect 9 1 (1- w) 2)))
-         (lb (make-instance 'tsorted-list-box :command 0
-                            :bounds (make-trect 1 3 (1- w) (1- h)))))
-    (insert win lbl) (insert win input) (insert win lb)
-    (attach-scrollbars lb :vscroll vsb)
-    (setf (aw-input win) input (aw-lb win) lb)
+         (cols (vector (make-table-column "Package" 18 #'%pkg-label)
+                       (make-table-column "Symbol"  34 #'symbol-name)
+                       (make-table-column "Type"    20 #'%symbol-roles)))
+         (tbl (make-instance 'ttable-view :columns cols :sort-col 1 :sort-asc t :command 0
+                             :bounds (make-trect 1 3 (1- w) (1- h)))))
+    (insert win lbl) (insert win input) (insert win tbl)
+    (attach-scrollbars tbl :vscroll vsb)
+    (setf (aw-input win) input (aw-tbl win) tbl)
     (%aw-search win (or initial ""))
     (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
     (insert desk win)
-    (focus (if (plusp (list-count lb)) lb input))))
+    (focus (if (plusp (length (table-rows tbl))) tbl input))))
 
 (defun do-apropos (rv)
   "Open the Symbol Browser, prefilled with the symbol at point."
