@@ -758,6 +758,13 @@ normal colour (so a selection is never invisible whatever the theme)."
   (when (selected-string tv)
     (text-snapshot tv) (copy-selection tv) (delete-selection tv) t))
 
+(defun select-all (tv)
+  "Select the whole buffer (anchor at the start, cursor at the end)."
+  (setf (text-anchor tv) (cons 0 0)
+        (text-cur-line tv) (1- (line-count tv))
+        (text-cur-col tv) (length (nth-line tv (1- (line-count tv)))))
+  tv)
+
 (defun paste-clipboard (tv)
   (when (and (plusp (length *clipboard*)) (not (pos-protected-p tv (text-pos tv))))
     (text-snapshot tv)
@@ -948,10 +955,7 @@ keeping the goal visual column across the move (width- and grapheme-aware)."
          ((eql ctrl-letter #\v) (if (text-read-only tv) (setf handled nil) (paste-clipboard tv)))
          ((eql ctrl-letter #\z) (if (text-read-only tv) (setf handled nil) (text-undo! tv)))
          ((eql ctrl-letter #\y) (if (text-read-only tv) (setf handled nil) (text-redo! tv)))
-         ((eql ctrl-letter #\a)             ; select all
-          (setf (text-anchor tv) (cons 0 0)
-                (text-cur-line tv) (1- (line-count tv))
-                (text-cur-col tv) (length (nth-line tv (1- (line-count tv))))))
+         ((eql ctrl-letter #\a) (select-all tv))   ; select all
          ;; Insert toggles overwrite mode (block cursor)
          ((= k +kb-ins+)
           (setf (text-overwrite tv) (not (text-overwrite tv)))

@@ -191,7 +191,7 @@
    #:set-line #:selection-range #:text-left-col #:text-top-line
    #:text-attach-scrollbars #:text-update-limit
    #:set-protect-boundary #:text-protect #:insert-string #:selected-string
-   #:copy-selection #:cut-selection #:paste-clipboard #:*clipboard*
+   #:copy-selection #:cut-selection #:paste-clipboard #:select-all #:*clipboard*
    #:text-snapshot #:text-undo! #:text-redo! #:text-anchor #:set-lines
    #:text-modified #:text-overwrite #:text-goto #:word-left #:word-right
    #:text-find #:text-find-and-select #:text-select-match #:text-replace-all

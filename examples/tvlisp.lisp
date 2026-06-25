@@ -113,6 +113,7 @@
 (defparameter +cm-redo+        388)   ; redo the last undone edit
 (defparameter +cm-clipboard+   389)   ; open the object clipboard tool window
 (defparameter +cm-clip-star+   390)   ; clip the REPL's last value (*)
+(defparameter +cm-select-all+  391)   ; select the whole focused buffer
 
 (defparameter +hc-repl+ 1)
 ;; Computed at runtime (not load/build time) so they follow the running user's
@@ -169,6 +170,7 @@
       (menu-item "Cu~t~"        +cm-cut+   :key-text "Ctrl-X")
       (menu-item "~C~opy"       +cm-copy+  :key-text "Ctrl-C")
       (menu-item "~P~aste"      +cm-paste+ :key-text "Ctrl-V")
+      (menu-item "Select ~a~ll" +cm-select-all+ :key-text "Ctrl-A")
       (menu-separator)
       (menu-item "~F~ind..."    +cm-find+      :key-text "Ctrl-F")
       (menu-item "Find ne~x~t"  +cm-find-next+ :key-text "Ctrl-L")
@@ -4476,6 +4478,7 @@ string or comment (so it won't fight existing literals)."
    (menu-item "Cu~t~"       +cm-cut+      :key-text "Ctrl-X")
    (menu-item "~C~opy"      +cm-copy+     :key-text "Ctrl-C")
    (menu-item "~P~aste"     +cm-paste+    :key-text "Ctrl-V")
+   (menu-item "Select ~a~ll" +cm-select-all+ :key-text "Ctrl-A")
    (menu-separator)
    (menu-item "~I~nspect *" +cm-inspect+  :key-text "F8")
    (menu-item "C~l~ip * (object clipboard)" +cm-clip-star+)
@@ -4569,6 +4572,9 @@ string or comment (so it won't fight existing literals)."
           ((= c +cm-cut+)      (with-repl #'cut-selection) (clear-event event))
           ((= c +cm-copy+)     (with-repl #'copy-selection) (clear-event event))
           ((= c +cm-paste+)    (with-repl #'paste-clipboard) (clear-event event))
+          ((= c +cm-select-all+) (let ((v (%current-text-view app)))
+                                   (when v (select-all v) (draw-view v)))
+                                 (clear-event event))
           ((= c +cm-inspect+)  (when rv (repl-inspect (repl-hvar rv '*) "*")) (clear-event event))
           ((= c +cm-inspect-expr+) (do-inspect-expr rv) (clear-event event))
           ((= c +cm-macroexpand+) (do-macroexpand app) (clear-event event))
