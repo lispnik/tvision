@@ -62,9 +62,11 @@ File names are filtered by the glob PATTERN."
   ((dialog :initarg :dialog :initform nil :accessor fdl-dialog)))
 
 ;;; TFileInputLine: the name field; entering a wildcard (e.g. *.lisp) refilters
-;;; the list instead of accepting.
-(defclass tfile-input-line (tinputline)
-  ((dialog :initarg :dialog :initform nil :accessor fil-dialog)))
+;;; the list instead of accepting.  Inherits THistory so the Down key / ▼ gadget
+;;; recalls previously-entered paths.
+(defclass tfile-input-line (thistory-input)
+  ((dialog :initarg :dialog :initform nil :accessor fil-dialog)
+   (history-id :initform "file")))
 
 ;;; TFileInfoPane: shows the focused entry's size and modification date.
 (defclass tfile-info-pane (tstatic-text)
@@ -237,7 +239,9 @@ into the Name field, and (when OPEN) the dialog is accepted."
                (max 0 (floor (- (point-y (view-size desk)) (point-y (view-size d))) 2)))
       (when (= (exec-view desk d) +cm-ok+)
         (let ((path (get-data (fd-input d))))
-          (and (plusp (length path)) path))))))
+          (when (plusp (length path))
+            (history-add "file" path)        ; remember the chosen path
+            path))))))
 
 (defun file-open-dialog (&key (title "Open File")
                               (directory (truename (user-homedir-pathname))))
