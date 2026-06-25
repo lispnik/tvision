@@ -432,10 +432,56 @@
       (when (= (exec-view desk d) +cm-ok+)
         (ff-focused lb)))))
 
-;;; --- incremental-search list picker ----------------------------------------
-;;; A shared text matcher behind the list pickers.  Pickers search a logical KEY
-;;; (e.g. a window's plain title) rather than the decorated label shown in the
-;;; list, so markers like "> " or "1. " don't defeat the search.  This is the
+;;; --- `/`-to-filter for results windows -------------------------------------
+;;; The modal pickers above filter on every keystroke, but the modeless results
+;;; windows (xref, profiler, compiler notes, ...) give their focused list/table
+;;; letter-key commands (s/r/e/g/i/...), so they can't.  Instead `/` arms an
+;;; incremental fuzzy filter: typing narrows, Backspace shortens, Esc restores
+;;; the full list, Enter keeps the narrowed list and acts on the focused row.
+;;; The list/table is a TFILTER-* with :self-edit nil; the window calls
+;;; %FILTER-KEY first in its HANDLE-EVENT (events reach a window before its
+;;; focused child), so the filter sees keys before the window's own commands.
+
+(defun %filter-title-base (s)
+  "S with any trailing \"  [/...]\" filter annotation removed."
+  (let ((p (search "  [/" s))) (if p (subseq s 0 p) s)))
+
+(defun %filter-title (win lb)
+  "Reflect LB's live filter in WIN's title bar, then redraw."
+  (let ((base (%filter-title-base (window-title win))) (q (ff-query lb)))
+    (setf (window-title win)
+          (cond ((plusp (length q))
+                 (format nil "~a  [/~a  ~d/~d]" base q
+                         (length (ff-visible lb)) (length (ff-all lb))))
+                ((ff-filtering lb) (format nil "~a  [/_]" base))
+                (t base)))
+    (draw-view win)))
+
+(defun %filter-key (win lb event)
+  "Drive LB's `/`-armed fuzzy filter from WIN's key EVENT.  Returns T when the
+event was consumed by the filter UI (caller should then clear it); NIL to let
+WIN's own command keys / the focused view run."
+  (when (and lb (= (event-type event) +ev-key-down+))
+    (let ((k (event-key-code event)) (cc (event-char-code event)) (q (ff-query lb)))
+      (cond
+        ((ff-filtering lb)
+         (cond
+           ((= k +kb-esc+)   (ff-end-filter lb) (%filter-title win lb) t)
+           ((= k +kb-enter+) (setf (ff-filtering lb) nil) (%filter-title win lb) nil) ; act on row
+           ((= k +kb-back+)
+            (if (plusp (length q)) (ff-set-query lb (subseq q 0 (1- (length q))))
+                (setf (ff-filtering lb) nil))
+            (%filter-title win lb) t)
+           ((and (plusp cc) (zerop (event-modifiers event))
+                 (let ((c (code-char cc)))
+                   (and c (graphic-char-p c) (not (and (char= c #\Space) (zerop (length q)))))))
+            (ff-set-query lb (concatenate 'string q (string (code-char cc))))
+            (%filter-title win lb) t)
+           (t nil)))   ; arrows / page keys fall through to navigate the filtered list
+        ((and (plusp cc) (zerop (event-modifiers event)) (char= (code-char cc) #\/))
+         (setf (ff-filtering lb) t) (ff-set-query lb "") (%filter-title win lb) t)
+        (t nil)))))
+
 (defun choose-index (title labels &key keys (start 0) (w 64) (h 18))
   "Modal, order-preserving picker over LABELS; return the chosen index (focused
 on START) or NIL on cancel.  Enter or OK selects.  Type to **fuzzy-filter** the
@@ -1845,6 +1891,7 @@ a trailing portion of it under the known source roots (relocation), or NIL."
 
 (defmethod handle-event ((w txref-window) event)
   (cond
+    ((%filter-key w (xref-table w) event) (clear-event event))
     ((and (= (event-type event) +ev-broadcast+)
           (= (event-command event) +cm-list-item-selected+)
           (xref-table w))
@@ -1860,11 +1907,12 @@ still shown (entries without a source location simply aren't navigable)."
            (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
            (w (min 74 (- dw 2))) (h (min 20 (- dh 2)))
            (win (make-instance 'txref-window :app app
-                               :title (format nil "~a  (Enter: jump to source)" title)
+                               :title (format nil "~a  (Enter: jump  /: filter)" title)
                                :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar win t))
-           (tbl (make-instance 'ttable-view :columns (%xref-columns) :rows rows
-                               :sort-col 2 :sort-asc t
+           (tbl (make-instance 'tfilter-table :columns (%xref-columns) :rows rows :all rows
+                               :key (lambda (r) (format nil "~a ~a" (getf r :label) (getf r :file)))
+                               :self-edit nil :sort-col 2 :sort-asc t
                                :bounds (make-trect 1 1 (1- w) (1- h)))))
       (insert win tbl)
       (attach-scrollbars tbl :vscroll vsb)
@@ -2265,12 +2313,14 @@ seconds; ALL-THREADS samples every thread, not just this one."
         (error (e) (err-box e))))))
 
 (defmethod handle-event ((w tdata-window) event)
-  (when (and (= (event-type event) +ev-key-down+)
-             (data-table w)
-             (member (event-char-code event) (list (char-code #\e) (char-code #\E))))
-    (%export-table-csv (data-table w) (window-title w))
-    (clear-event event))
-  (call-next-method))
+  (cond
+    ((%filter-key w (data-table w) event) (clear-event event))
+    ((and (= (event-type event) +ev-key-down+)
+          (data-table w)
+          (member (event-char-code event) (list (char-code #\e) (char-code #\E))))
+     (%export-table-csv (data-table w) (%filter-title-base (window-title w)))
+     (clear-event event))
+    (t (call-next-method))))
 
 (defun %profile-columns ()
   (vector (make-table-column "Self%"  6 (lambda (r) (getf r :self%))  :numeric t
@@ -2310,6 +2360,7 @@ seconds; ALL-THREADS samples every thread, not just this one."
 
 (defmethod handle-event ((w tprofile-window) event)
   (cond
+    ((%filter-key w (data-table w) event) (clear-event event))
     ((and (= (event-type event) +ev-broadcast+)
           (= (event-command event) +cm-list-item-selected+)
           (data-table w))
@@ -2332,11 +2383,13 @@ seconds; ALL-THREADS samples every thread, not just this one."
          (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
          (w (min 82 (- dw 2))) (h (min 22 (- dh 2)))
          (win (make-instance 'tprofile-window :data data :app app
-                             :title (format nil "Profile (~(~a~)) — ~d samples, ~,2fs  (Enter:src g:callees r:callers s:sort e:csv)"
+                             :title (format nil "Profile (~(~a~)) — ~d samples, ~,2fs  (Enter:src g:callees r:callers s:sort e:csv /:filter)"
                                             (or (getf data :mode) :time) (getf data :total) (getf data :secs))
                              :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t))
-         (tbl (make-instance 'ttable-view :columns (%profile-columns) :rows (getf data :rows)
+         (tbl (make-instance 'tfilter-table :columns (%profile-columns)
+                             :rows (getf data :rows) :all (getf data :rows)
+                             :key (lambda (r) (%fn-name (getf r :name))) :self-edit nil
                              :sort-col 0 :sort-asc nil
                              :bounds (make-trect 1 1 (1- w) (1- h)))))
     (insert win tbl)
@@ -2430,11 +2483,13 @@ sortable, CSV-exportable Kind/Message table.  Bound to TVISION:*LOAD-NOTES-HOOK*
                                             (lambda (r) (string-downcase (princ-to-string (getf r :kind)))))
                          (make-table-column "Message" 72 (lambda (r) (%one-line (getf r :msg))))))
            (win (make-instance 'tdata-window
-                               :title (format nil "~a — ~d warning~:p  (s:sort  e:csv)"
+                               :title (format nil "~a — ~d warning~:p  (s:sort  e:csv  /:filter)"
                                               (file-namestring path) (length notes))
                                :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar win t))
-           (tbl (make-instance 'ttable-view :columns cols :rows rows :sort-col 0 :sort-asc t
+           (tbl (make-instance 'tfilter-table :columns cols :rows rows :all rows
+                               :key (lambda (r) (%one-line (getf r :msg))) :self-edit nil
+                               :sort-col 0 :sort-asc t
                                :bounds (make-trect 1 1 (1- w) (1- h)))))
       (insert win tbl) (attach-scrollbars tbl :vscroll vsb) (setf (data-table win) tbl)
       (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
@@ -2970,9 +3025,15 @@ character offset in TEXT (via SBCL's compiler-error-context)."
   (:documentation "A navigable list of compiler notes; Enter jumps to the
 offending location in the source editor window."))
 
+(defun %note-label (r)
+  (format nil "~7a ~a"
+          (case (getf r :severity)
+            (:style "style") (:warning "warning") (:note "note") (t "?"))
+          (getf r :message)))
+
 (defun %notes-jump (w)
-  (let* ((rows (notes-rows w)) (lb (notes-lb w))
-         (row (and lb rows (nth (list-focused lb) rows)))
+  (let* ((lb (notes-lb w))
+         (row (and lb (ff-focused lb)))          ; the focused note plist (filter-aware)
          (sw (notes-src-win w)) (desk (and *application* (program-desktop *application*))))
     (when (and row sw desk (member sw (desktop-windows desk)))
       (let ((ed (editor-window-editor sw)))
@@ -2982,6 +3043,7 @@ offending location in the source editor window."))
 
 (defmethod handle-event ((w tnotes-window) event)
   (cond
+    ((%filter-key w (notes-lb w) event) (clear-event event))
     ((and (= (event-type event) +ev-broadcast+)
           (= (event-command event) +cm-list-item-selected+)
           (notes-lb w))
@@ -2990,23 +3052,19 @@ offending location in the source editor window."))
 
 (defun show-compile-notes (app src-win rows title)
   "Open a navigable compiler-notes window for ROWS (each (:severity :message
-:offset)); Enter jumps into SRC-WIN's editor."
+:offset)); Enter jumps into SRC-WIN's editor, `/` fuzzy-filters."
   (let* ((desk (program-desktop app))
          (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
          (w (min 84 (- dw 2))) (h (min 12 (max 6 (+ 3 (length rows)))))
-         (items (mapcar (lambda (r)
-                          (format nil "~7a ~a"
-                                  (case (getf r :severity)
-                                    (:style "style") (:warning "warning")
-                                    (:note "note") (t "?"))
-                                  (getf r :message)))
-                        rows))
-         (lb (make-instance 'tlist-box :items items :command 0
+         (lb (make-instance 'tfilter-list-box :all rows :key #'%note-label
+                            :display #'%note-label :self-edit nil :command 0
                             :bounds (make-trect 1 1 (1- w) (- h 2))))
          (win (make-instance 'tnotes-window :src-win src-win :rows rows :lb lb
-                             :title title :bounds (make-trect 0 0 w h)))
+                             :title (format nil "~a  (/:filter)" title)
+                             :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t)))
     (insert win lb) (attach-scrollbars lb :vscroll vsb)
+    (ff-refilter lb)                                  ; populate (empty query -> all)
     (move-to win (max 0 (floor (- dw w) 2)) (max 1 (- dh h 1)))   ; bottom: editor stays visible
     (insert desk win) (focus win)))
 

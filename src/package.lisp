@@ -96,6 +96,7 @@
    ;; fuzzy filtering
    #:flex-score #:fuzzy-filter-mixin #:tfilter-list-box #:tfilter-table
    #:ff-all #:ff-key #:ff-display #:ff-query #:ff-self-edit #:ff-on-change
+   #:ff-filtering #:ff-end-filter
    #:ff-set-query #:ff-set-all #:ff-refilter #:ff-focused #:ff-visible
    #:ttable-view #:make-table-column #:table-columns #:table-rows #:table-set-rows
    #:table-selected-row #:table-sort #:table-sort-by #:table-focused

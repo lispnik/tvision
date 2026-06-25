@@ -44,6 +44,9 @@ or just after a separator (word boundary) and in a contiguous run."
    (visible   :initform #()       :accessor ff-visible)                       ; current rows (shown order)
    (query     :initform ""        :accessor ff-query)
    (self-edit :initarg :self-edit :initform t          :accessor ff-self-edit)
+   ;; When the mixin is driven externally (SELF-EDIT nil) by a host window's
+   ;; `/`-to-filter mode, FILTERING records whether that mode is armed.
+   (filtering :initform nil       :accessor ff-filtering)
    (on-change :initarg :on-change :initform nil        :accessor ff-on-change))
   (:documentation "Adds fuzzy type-to-filter behaviour to a list/table view."))
 
@@ -95,9 +98,16 @@ or just after a separator (word boundary) and in a contiguous run."
   (setf (ff-all v) (coerce rows 'vector))
   (when refilter (ff-refilter v)))
 
+(defun ff-end-filter (v)
+  "Leave externally-driven filter mode and restore the full (unfiltered) view."
+  (setf (ff-filtering v) nil)
+  (ff-set-query v ""))
+
 (defmethod handle-event ((v fuzzy-filter-mixin) event)
   ;; Capture typing into the query (only when SELF-EDIT); everything else —
-  ;; arrows, Enter, mouse — falls through to the base list/table view.
+  ;; arrows, Enter, mouse — falls through to the base list/table view.  When
+  ;; SELF-EDIT is nil the mixin is inert and the host (an input field, or a
+  ;; window's `/`-filter mode) drives FF-SET-QUERY instead.
   (let ((q (ff-query v)))
     (cond
       ((not (and (ff-self-edit v)

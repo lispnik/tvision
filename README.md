@@ -215,7 +215,8 @@ parked with its stack live:
 
 - **Cross-reference** (Lisp ▸ Navigate) — who **calls / references / binds / sets
   / macroexpands** a symbol, in one navigable results window (Enter jumps to the
-  site); plus go-to-definition with an **Alt-,** pop-back stack.
+  site, **`/` fuzzy-filters** the hits); plus go-to-definition with an **Alt-,**
+  pop-back stack.
 
   ![Who-sets: find every place a variable is assigned, jump to the source](media/xref-who-sets.gif)
 - **Symbol browser** (Apropos) — a modeless, LispWorks-style window with a live
@@ -241,8 +242,9 @@ parked with its stack live:
 - **Profiler** — statistical (`sb-sprof`) and deterministic (`sb-profile`).
   Runs on the worker thread so the UI stays live, then shows the results in a
   sortable `TTableView` grid (Self% / Cumul% / Samples / Function — click a
-  header or press `s`/`r` to re-sort); **Enter** jumps to a function's source
-  and **`g`** opens the call-graph as a `TOutline` tree.
+  header or press `s`/`r` to re-sort, **`/` to fuzzy-filter by name**); **Enter**
+  jumps to a function's source and **`g`** opens the call-graph as a `TOutline`
+  tree.
 
 ![The tvlisp statistical profiler: sortable results table and call-graph outline](media/profiler.gif)
 
@@ -288,7 +290,8 @@ parked with its stack live:
 - **Compile with navigable notes** (SLIME `C-c C-c`) — Lisp ▸ Compile defun (the
   form at the cursor) or Compile buffer compiles *without loading* and lists the
   compiler warnings/notes in a window; **Enter on a note jumps to the offending
-  source** (located precisely by matching the symbol named in the message).
+  source** (located precisely by matching the symbol named in the message), and
+  **`/` fuzzy-filters** the notes.
 
   ![Compile the form at point and jump to each compiler note](media/compile-defun-notes.gif)
 
