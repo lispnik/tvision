@@ -253,6 +253,13 @@ parked with its stack live:
   below); **Alt-Q** re-indents the whole top-level form.  **Undo /
   redo** (Ctrl-Z / Ctrl-Y, also on the Edit menu and the right-click context
   menu).
+- **Text selection** — drag with the mouse, or hold **Shift** with any
+  navigation key (Left/Right, Up/Down, Home/End, PgUp/PgDn, and Ctrl-Left/Right
+  by word) to extend the selection; a plain navigation key collapses it.
+  Ctrl-A selects all.  The selection is drawn as a clear reverse-video
+  highlight, and Cut/Copy/Paste and typing operate on it.
+
+  ![Shift with navigation keys extends the (reverse-video) text selection](media/shift-selection.gif)
 
 ![Lisp auto-indent and Alt-Q reflow in an editor window](media/auto-indent.gif)
 
