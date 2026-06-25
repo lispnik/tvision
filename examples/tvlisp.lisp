@@ -1354,68 +1354,105 @@ with the arrows and expand the macro call under the cursor with `e'."
               (let ((*standard-output* o)) (disassemble (read-in rv s)))))
         (error (e) (err-box e))))))
 
-;;; --- apropos: a modeless results window that stays open -------------------
-;;; Unlike the modal picker, the apropos window stays on the desktop so you can
-;;; describe / inspect several matches in turn.  Enter (or double-click)
-;;; describes the focused symbol; `i' inspects it; the window stays until closed.
+;;; --- Symbol Browser (LispWorks-style apropos) ------------------------------
+;;; A modeless window with a live Filter field at the top and a list of matching
+;;; symbols below, each tagged with what it is (function / macro / variable /
+;;; class / ...).  Edit the filter and press Enter to re-search; Enter on the
+;;; list describes the focused symbol, `i' inspects it; the window stays open.
+
+(defun %symbol-roles (sym)
+  "A short, comma-separated description of what SYM is bound to."
+  (let (roles)
+    (cond ((special-operator-p sym)  (push "special-operator" roles))
+          ((macro-function sym)      (push "macro" roles))
+          ((and (fboundp sym) (typep (fdefinition sym) 'generic-function))
+           (push "generic-function" roles))
+          ((fboundp sym)             (push "function" roles)))
+    (cond ((and (boundp sym) (constantp sym)) (push "constant" roles))
+          ((boundp sym)              (push "variable" roles)))
+    (when (ignore-errors (find-class sym nil)) (push "class" roles))
+    (when (find-package sym)         (push "package" roles))
+    (if roles (format nil "~{~a~^, ~}" (nreverse roles)) "—")))
+
+(defparameter +aw-sep+ "  ·  ")
+
+(defun %aw-item (sym)
+  (format nil "~a~a~a" (prin1-to-string sym) +aw-sep+ (%symbol-roles sym)))
 
 (defclass tapropos-window (twindow)
-  ((rv :initarg :rv :accessor aw-rv)
-   (lb :initform nil :accessor aw-lb)))
+  ((rv    :initarg :rv :accessor aw-rv)
+   (input :initform nil :accessor aw-input)
+   (lb    :initform nil :accessor aw-lb)))
 
 (defun %aw-symbol (w)
+  "The symbol-name string of the focused list item (without its role tag)."
   (let ((lb (aw-lb w)))
-    (and lb (plusp (list-count lb)) (list-item lb (list-focused lb)))))
+    (when (and lb (plusp (list-count lb)))
+      (let* ((item (list-item lb (list-focused lb)))
+             (p (search +aw-sep+ item)))
+        (if p (subseq item 0 p) item)))))
+
+(defun %aw-search (w str)
+  "Re-run apropos for STR and refresh the list and title."
+  (let* ((syms (and (plusp (length str)) (ignore-errors (apropos-list str))))
+         (sorted (sort (copy-list syms) #'string< :key #'prin1-to-string))
+         (items (mapcar #'%aw-item sorted)))
+    (list-set-items (aw-lb w) items)
+    (setf (window-title w)
+          (if (plusp (length str))
+              (format nil "Symbol Browser — ~d match~:p for \"~a\"  [Enter:describe  i:inspect]"
+                      (length items) str)
+              "Symbol Browser — type a filter, Enter to search"))
+    (draw-view w)))
 
 (defmethod handle-event ((w tapropos-window) event)
   (cond
+    ;; Enter / double-click on the list -> describe the focused symbol
     ((and (= (event-type event) +ev-broadcast+)
           (= (event-command event) +cm-list-item-selected+) (aw-lb w))
      (let ((s (%aw-symbol w))) (when s (describe-named (aw-rv w) s)))
      (clear-event event))
-    ((and (= (event-type event) +ev-key-down+)
-          (let ((ch (event-char-code event)))
-            (or (eql ch (char-code #\i)) (eql ch (char-code #\I)))))
-     (let ((s (%aw-symbol w)))
-       (when s (handler-case (repl-inspect (read-in (aw-rv w) s) s)
-                 (error (e) (err-box e)))))
-     (clear-event event))
+    ((= (event-type event) +ev-key-down+)
+     (let ((k (event-key-code event)) (ch (event-char-code event))
+           (in-input (and (aw-input w) (logtest (view-state (aw-input w)) +sf-focused+))))
+       (cond
+         ;; Enter while editing the filter -> re-search, then jump to the results
+         ((and (= k +kb-enter+) in-input)
+          (%aw-search w (get-data (aw-input w)))
+          (when (plusp (list-count (aw-lb w))) (focus (aw-lb w)))
+          (clear-event event))
+         ;; `i' on the list -> inspect the focused symbol
+         ((and (not in-input) (or (eql ch (char-code #\i)) (eql ch (char-code #\I))))
+          (let ((s (%aw-symbol w)))
+            (when s (handler-case (repl-inspect (read-in (aw-rv w) s) s)
+                      (error (e) (err-box e)))))
+          (clear-event event))
+         (t (call-next-method)))))
     (t (call-next-method))))
 
-(defun show-apropos-window (rv title items)
+(defun show-apropos-window (rv initial)
   (let* ((desk (program-desktop *application*))
          (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
-         (w (min 64 (- dw 2))) (h (min 20 (- dh 2)))
-         (win (make-instance 'tapropos-window :rv rv :title title :bounds (make-trect 0 0 w h)))
+         (w (min 68 (- dw 2))) (h (min 22 (- dh 2)))
+         (win (make-instance 'tapropos-window :rv rv :title "Symbol Browser"
+                             :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t))
-         (lb (make-instance 'tsorted-list-box :items items
-                            :bounds (make-trect 1 1 (1- w) (1- h)))))
-    (insert win lb) (attach-scrollbars lb :vscroll vsb)
-    (setf (aw-lb win) lb)
+         (lbl (make-instance 'tlabel :text "Filter:" :bounds (make-trect 2 1 9 2)))
+         (input (make-instance 'tinputline :data (or initial "") :maxlen 80
+                               :bounds (make-trect 9 1 (1- w) 2)))
+         (lb (make-instance 'tsorted-list-box :command 0
+                            :bounds (make-trect 1 3 (1- w) (1- h)))))
+    (insert win lbl) (insert win input) (insert win lb)
+    (attach-scrollbars lb :vscroll vsb)
+    (setf (aw-input win) input (aw-lb win) lb)
+    (%aw-search win (or initial ""))
     (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
-    (insert desk win) (focus lb)))
+    (insert desk win)
+    (focus (if (plusp (list-count lb)) lb input))))
 
 (defun do-apropos (rv)
-  ;; Prompt for a substring; on no match, say so and re-prompt (prefilled with
-  ;; what was typed) so the user can adjust and try again.  Cancel (Esc) exits.
-  ;; A match opens a modeless results window that stays open.
-  (when rv
-    (loop with default = (%point-symbol)
-          for s = (prompt-line "Apropos" "Substring:" default)
-          while s do
-            (let ((names (sort (mapcar #'prin1-to-string (apropos-list s)) #'string<)))
-              (cond
-                ((null names)
-                 (message-box (format nil "Nothing matches \"~a\".~%~%Try a different substring."
-                                      s)
-                              (logior +mf-information+ +mf-ok-button+))
-                 (setf default s))         ; retry, prefilled with what they typed
-                (t
-                 (show-apropos-window
-                  rv (format nil "Apropos \"~a\" (~d)  [Enter:describe  i:inspect]"
-                             s (length names))
-                  names)
-                 (return)))))))
+  "Open the Symbol Browser, prefilled with the symbol at point."
+  (when rv (show-apropos-window rv (%point-symbol))))
 
 (defun do-inspect-expr (rv)
   (let ((s (prompt-line "Inspect" "Expression:" (%point-symbol))))
