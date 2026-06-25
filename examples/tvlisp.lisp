@@ -435,101 +435,33 @@
 ;;; A shared text matcher behind the list pickers.  Pickers search a logical KEY
 ;;; (e.g. a window's plain title) rather than the decorated label shown in the
 ;;; list, so markers like "> " or "1. " don't defeat the search.  This is the
-;;; Tier-2 matcher: a case-insensitive substring test; a fuzzy scorer can later
-;;; sit behind the same MATCH-* entry points without touching the callers.
-
-(defun match-key-p (query key)
-  "True when QUERY matches KEY.  An empty QUERY matches anything; otherwise a
-case-insensitive substring test."
-  (or (zerop (length query))
-      (and (search query key :test #'char-equal) t)))
-
-(defun match-count (query keys)
-  "How many of KEYS (a vector of strings) match QUERY."
-  (count-if (lambda (k) (match-key-p query k)) keys))
-
-(defun match-scan (query keys from dir)
-  "Index of the next element of KEYS matching QUERY, scanning from just past
-FROM in direction DIR (+1 or -1) and wrapping around.  NIL if none match.  Pass
-FROM = -1, DIR = +1 to find the first match from the top."
-  (let ((n (length keys)))
-    (when (plusp n)
-      (loop for step from 1 to n
-            for i = (mod (+ from (* dir step)) n)
-            when (match-key-p query (aref keys i)) return i))))
-
-;;; A TLIST-BOX that filters-by-jump: typing builds a query and moves the focus
-;;; to matching items, non-destructively -- the list keeps its order and every
-;;; item stays visible.  Up/Down cycle between matches while a query is active,
-;;; Backspace shortens it, and Esc clears it (a second Esc then cancels the
-;;; dialog).  KEYS is a vector of match strings parallel to the display items.
-(defclass tincr-list-box (tlist-box)
-  ((keys      :initarg :keys      :initform #() :accessor ilb-keys)
-   (query     :initform ""        :accessor ilb-query)
-   (on-change :initarg :on-change :initform nil :accessor ilb-on-change)))
-
-(defun ilb-jump (lb from dir)
-  "Move focus to the next match from FROM in direction DIR; no-op if none."
-  (let ((pos (match-scan (ilb-query lb) (ilb-keys lb) from dir)))
-    (when pos (list-focus-item lb pos))))
-
-(defun ilb-set-query (lb q)
-  "Set the search query to Q, re-anchor on the first match, and notify."
-  (setf (ilb-query lb) q)
-  (ilb-jump lb -1 +1)
-  (when (ilb-on-change lb) (funcall (ilb-on-change lb) lb)))
-
-(defmethod handle-event ((lb tincr-list-box) event)
-  (let ((q (ilb-query lb)))
-    (cond
-      ((not (and (= (event-type event) +ev-key-down+)
-                 (logtest (view-state lb) +sf-focused+)))
-       (call-next-method))
-      ;; Backspace: shorten the query
-      ((= (event-key-code event) +kb-back+)
-       (when (plusp (length q)) (ilb-set-query lb (subseq q 0 (1- (length q)))))
-       (clear-event event))
-      ;; Esc: clear an active query; when already empty, let the dialog cancel
-      ((= (event-key-code event) +kb-esc+)
-       (cond ((plusp (length q)) (ilb-set-query lb "") (clear-event event))
-             (t (call-next-method))))
-      ;; Up/Down cycle between matches while a query is active
-      ((and (plusp (length q))
-            (or (= (event-key-code event) +kb-down+) (= (event-key-code event) +kb-up+)))
-       (ilb-jump lb (list-focused lb) (if (= (event-key-code event) +kb-down+) 1 -1))
-       (clear-event event))
-      ;; Printable char: extend the query, but only if it still matches something
-      ;; (and never let a leading space start a query)
-      ((let ((cc (event-char-code event)))
-         (and (plusp cc) (zerop (event-modifiers event))
-              (let ((c (code-char cc)))
-                (and c (graphic-char-p c)
-                     (not (and (char= c #\Space) (zerop (length q))))))))
-       (let ((new (concatenate 'string q (string (code-char (event-char-code event))))))
-         (when (match-scan new (ilb-keys lb) -1 1) (ilb-set-query lb new)))
-       (clear-event event))
-      (t (call-next-method)))))
-
 (defun choose-index (title labels &key keys (start 0) (w 64) (h 18))
   "Modal, order-preserving picker over LABELS; return the chosen index (focused
-on START) or NIL on cancel.  Enter or OK selects.  Type to search incrementally;
-KEYS, when given, supplies the per-item strings to match against (defaulting to
-LABELS) so decorated labels can still be searched by their plain text."
+on START) or NIL on cancel.  Enter or OK selects.  Type to **fuzzy-filter** the
+list (fzf-style); KEYS, when given, supplies the per-item strings to match
+against (defaulting to LABELS) so decorated labels can still be searched."
   (when (and *application* labels)
     (let* ((desk (program-desktop *application*))
+           (labelv (map 'vector #'princ-to-string labels))
            (keyv (map 'vector #'princ-to-string (or keys labels)))
+           (n (length labelv))
+           (rows (let ((v (make-array n))) (dotimes (i n v) (setf (aref v i) i))))
            (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar d t))
            (foot (make-instance 'tstatic-text :text ""
                                 :bounds (make-trect 2 (- h 3) (- w 26) (- h 2))))
-           (lb (make-instance 'tincr-list-box :items labels :keys keyv :command +cm-ok+
+           (lb (make-instance 'tfilter-list-box
+                              :all rows
+                              :key (lambda (i) (aref keyv i))
+                              :display (lambda (i) (aref labelv i))
+                              :command +cm-ok+
                               :bounds (make-trect 1 1 (1- w) (- h 3)))))
-      (setf (ilb-on-change lb)
+      (setf (ff-on-change lb)
             (lambda (lb)
-              (let ((q (ilb-query lb)))
+              (let ((q (ff-query lb)))
                 (setf (tvision::static-text-text foot)
                       (if (zerop (length q)) ""
-                          (format nil "find: ~a  (~d/~d)" q (match-count q keyv) (length keyv))))
+                          (format nil "filter: ~a  (~d/~d)" q (length (ff-visible lb)) n)))
                 (draw-view foot))))
       (insert d lb) (attach-scrollbars lb :vscroll vsb)
       (insert d foot)
@@ -537,9 +469,10 @@ LABELS) so decorated labels can still be searched by their plain text."
       (insert d (make-button (make-trect (- w 12) (- h 3) (- w 2) (- h 1)) "Cancel" +cm-cancel+))
       (move-to d (max 0 (floor (- (point-x (view-size desk)) w) 2))
                (max 0 (floor (- (point-y (view-size desk)) h) 2)))
-      (list-focus-item lb (min (max 0 start) (1- (list-count lb))))
+      (ff-refilter lb)                                   ; populate (empty query -> all)
+      (list-focus-item lb (min (max 0 start) (max 0 (1- (list-count lb)))))
       (focus lb)
-      (when (= (exec-view desk d) +cm-ok+) (list-focused lb)))))
+      (when (= (exec-view desk d) +cm-ok+) (ff-focused lb)))))
 
 (defun open-outline-window (title roots)
   (let* ((desk (program-desktop *application*))
@@ -1399,15 +1332,30 @@ accessibility there: PKG: for an external symbol, PKG:: for an internal one
   (let ((tbl (aw-tbl w))) (and tbl (table-selected-row tbl))))
 
 (defun %aw-search (w str)
-  "Re-run apropos for STR and refresh the table and title."
-  (let ((syms (and (plusp (length str)) (ignore-errors (apropos-list str)))))
-    (table-set-rows (aw-tbl w) syms)
+  "Re-run apropos for STR to (re)load the candidate pool, then arm the table's
+live fuzzy filter with STR so typing further narrows the pool in place."
+  (let ((syms (and (plusp (length str)) (ignore-errors (apropos-list str))))
+        (tbl (aw-tbl w)))
+    (setf (ff-query tbl) str)              ; seed the live filter ...
+    (ff-set-all tbl (or syms #()))         ; ... and refilter the fresh pool by it
     (setf (window-title w)
           (if (plusp (length str))
-              (format nil "Symbol Browser — ~d match~:p for \"~a\"  [Enter:describe i:inspect s/r:sort]"
+              (format nil "Symbol Browser — ~d match~:p for \"~a\"  [type:filter Enter:describe i:inspect s/r:sort]"
                       (length syms) str)
               "Symbol Browser — type a filter, Enter to search")))
   (draw-view w))
+
+(defun %aw-live-filter (w)
+  "Sync the table's fuzzy filter to the filter field's current text (live, no
+re-apropos), narrowing the already-loaded pool as the user types."
+  (let ((tbl (aw-tbl w)) (str (get-data (aw-input w))))
+    (unless (string= str (ff-query tbl))
+      (ff-set-query tbl str)
+      (let ((n (length (ff-visible tbl))))
+        (setf (window-title w)
+              (format nil "Symbol Browser — ~d match~:p for \"~a\"  [type:filter Enter:describe i:inspect s/r:sort]"
+                      n str))
+        (draw-view w)))))
 
 (defmethod handle-event ((w tapropos-window) event)
   (cond
@@ -1433,6 +1381,11 @@ accessibility there: PKG: for an external symbol, PKG:: for an internal one
             (when s (handler-case (repl-inspect s (prin1-to-string s))
                       (error (e) (err-box e)))))
           (clear-event event))
+         ;; any other keystroke while editing the filter -> let the field edit,
+         ;; then live-fuzzy-narrow the loaded pool to the new text
+         (in-input
+          (call-next-method)
+          (%aw-live-filter w))
          (t (call-next-method)))))
     (t (call-next-method))))
 
@@ -1449,7 +1402,8 @@ accessibility there: PKG: for an external symbol, PKG:: for an internal one
          (cols (vector (make-table-column "Package" 18 #'%pkg-label)
                        (make-table-column "Symbol"  34 #'symbol-name)
                        (make-table-column "Type"    20 #'%symbol-roles)))
-         (tbl (make-instance 'ttable-view :columns cols :sort-col 1 :sort-asc t :command 0
+         (tbl (make-instance 'tfilter-table :columns cols :sort-col 1 :sort-asc t :command 0
+                             :key #'symbol-name :self-edit nil
                              :bounds (make-trect 1 3 (1- w) (1- h)))))
     (insert win lbl) (insert win input) (insert win tbl)
     (attach-scrollbars tbl :vscroll vsb)

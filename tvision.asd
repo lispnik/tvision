@@ -37,6 +37,7 @@
                              (:file "collection")
                              (:file "listbox")
                              (:file "tableview")
+                             (:file "fuzzy")
                              (:file "outline")
                              (:file "htmlview")
                              (:file "history")

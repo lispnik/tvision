@@ -93,6 +93,10 @@
    #:+cm-list-item-selected+ #:+cm-list-focus-changed+
    #:tlist-viewer #:tsorted-list-box #:slb-search #:slb-find
    ;; table view (sortable grid)
+   ;; fuzzy filtering
+   #:flex-score #:fuzzy-filter-mixin #:tfilter-list-box #:tfilter-table
+   #:ff-all #:ff-key #:ff-display #:ff-query #:ff-self-edit #:ff-on-change
+   #:ff-set-query #:ff-set-all #:ff-refilter #:ff-focused #:ff-visible
    #:ttable-view #:make-table-column #:table-columns #:table-rows #:table-set-rows
    #:table-selected-row #:table-sort #:table-sort-by #:table-focused
    #:table-sort-col #:table-sort-asc #:table-column-title #:table-column-width
