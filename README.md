@@ -229,11 +229,11 @@ parked with its stack live:
   focused symbol, `i` inspects it, and the window stays open.
 
 ![Live fuzzy filtering: the Symbol Browser narrows 279 → 20 as you type a flex query, and the same mixin powers the Alt-0 window list](media/fuzzy-filter.gif)
-- **Class browser** — a **fuzzy-filtered** list of every class (type to narrow,
-  e.g. `strout` finds `STRING-OUTPUT-STREAM`); OK / Enter jumps to the selected
-  class's definition, Inspect opens it in the object inspector.
-- **Package browser** — a fuzzy-filtered list; OK / Enter switches the
-  listener's current package, Inspect opens the package in the inspector.
+- **Class browser** — a **fuzzy-filtered** list of every class (press **`/`** to
+  filter, e.g. `strout` finds `STRING-OUTPUT-STREAM`); OK / Enter jumps to the
+  selected class's definition, Inspect opens it in the object inspector.
+- **Package browser** — a fuzzy-filtered list (`/` to filter); OK / Enter
+  switches the listener's current package, Inspect opens it in the inspector.
 - **ASDF System browser** (load on Enter), **Load buffer** (evaluate an editor
   window into the REPL).
 - **HyperSpec lookup** — opens the browser on the Common Lisp HyperSpec page
@@ -374,9 +374,9 @@ parked with its stack live:
   **Size/Move** (Ctrl-F5) enters interactive keyboard move (arrows) / resize
   (Shift+arrows), Enter or Esc to finish.
 - **Window list** (Window ▸ List, Alt-0) — a picker of every open window
-  (numbered, the active one marked); **type to fuzzy-filter** the list, Enter /
-  OK raises and focuses the chosen window, like the classic Turbo Vision IDE's
-  Alt-0.  (The same type-to-filter mixin powers every modal picker — snippet
+  (numbered, the active one marked); press **`/`** to fuzzy-filter the list, Enter
+  / OK raises and focuses the chosen window, like the classic Turbo Vision IDE's
+  Alt-0.  (The same `/`-to-filter mixin powers every modal picker — snippet
   inserter, method / trace / profiler choosers, …)
 - **Close** (Window ▸ Close) closes the active window; a modified editor first
   prompts Save / Discard / Cancel so you don't lose unsaved changes — and for a

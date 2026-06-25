@@ -418,7 +418,8 @@
   "Modal fuzzy-filter picker; return the chosen string or NIL."
   (when (and *application* items)
     (let* ((desk (program-desktop *application*))
-           (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
+           (d (make-instance 'tdialog :title (format nil "~a  (/ : filter)" title)
+                             :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar d t))
            (lb (make-instance 'tfilter-list-box :all items :command +cm-ok+
                               :bounds (make-trect 1 1 (1- w) (- h 3)))))
@@ -495,7 +496,7 @@ against (defaulting to LABELS) so decorated labels can still be searched."
            (rows (let ((v (make-array n))) (dotimes (i n v) (setf (aref v i) i))))
            (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar d t))
-           (foot (make-instance 'tstatic-text :text ""
+           (foot (make-instance 'tstatic-text :text "/ : fuzzy filter"
                                 :bounds (make-trect 2 (- h 3) (- w 26) (- h 2))))
            (lb (make-instance 'tfilter-list-box
                               :all rows
@@ -507,8 +508,9 @@ against (defaulting to LABELS) so decorated labels can still be searched."
             (lambda (lb)
               (let ((q (ff-query lb)))
                 (setf (tvision::static-text-text foot)
-                      (if (zerop (length q)) ""
-                          (format nil "filter: ~a  (~d/~d)" q (length (ff-visible lb)) n)))
+                      (cond ((plusp (length q)) (format nil "filter: ~a  (~d/~d)" q (length (ff-visible lb)) n))
+                            ((ff-filtering lb) "filter: ")
+                            (t "/ : fuzzy filter")))
                 (draw-view foot))))
       (insert d lb) (attach-scrollbars lb :vscroll vsb)
       (insert d foot)
@@ -1576,9 +1578,11 @@ Returns (values selected-item end-command)."
             (lambda (lb)
               (let ((q (ff-query lb)))
                 (setf (window-title d)
-                      (if (zerop (length q)) title
-                          (format nil "~a  —  ~a  (~d/~d)" title q (length (ff-visible lb)) total)))
+                      (cond ((plusp (length q)) (format nil "~a  —  ~a  (~d/~d)" title q (length (ff-visible lb)) total))
+                            ((ff-filtering lb) (format nil "~a  —  /" title))
+                            (t (format nil "~a  (/ : filter)" title))))
                 (draw-view d))))
+      (funcall (ff-on-change lb) lb)                 ; show the "/ : filter" hint up front
       (when select
         (dotimes (i (list-count lb))
           (when (string= (list-item lb i) select) (list-focus-item lb i) (return))))

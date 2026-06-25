@@ -104,23 +104,34 @@ or just after a separator (word boundary) and in a contiguous run."
   (ff-set-query v ""))
 
 (defmethod handle-event ((v fuzzy-filter-mixin) event)
-  ;; Capture typing into the query (only when SELF-EDIT); everything else —
-  ;; arrows, Enter, mouse — falls through to the base list/table view.  When
-  ;; SELF-EDIT is nil the mixin is inert and the host (an input field, or a
-  ;; window's `/`-filter mode) drives FF-SET-QUERY instead.
+  ;; `/` starts a fuzzy search; then typing narrows, Backspace shortens, Esc
+  ;; restores the full list, Enter keeps the narrowed list and acts on the
+  ;; focused row.  Until `/` is pressed every key stays the underlying view's
+  ;; own, so the filter never interferes with other keys.  This runs only when
+  ;; SELF-EDIT is set (focused list/table drives itself); when it is nil the
+  ;; mixin is inert and a host (input field, or a window's `/`-mode) drives
+  ;; FF-SET-QUERY / FF-FILTERING instead.
   (let ((q (ff-query v)))
     (cond
       ((not (and (ff-self-edit v)
                  (= (event-type event) +ev-key-down+)
                  (logtest (view-state v) +sf-focused+)))
        (call-next-method))
+      ;; not yet searching: only `/` arms it; all else is the view's own key
+      ((not (ff-filtering v))
+       (if (and (plusp (event-char-code event)) (zerop (event-modifiers event))
+                (char= (code-char (event-char-code event)) #\/))
+           (progn (setf (ff-filtering v) t) (ff-set-query v "") (clear-event event))
+           (call-next-method)))
       ((= (event-key-code event) +kb-back+)
-       (when (plusp (length q)) (ff-set-query v (subseq q 0 (1- (length q)))))
+       (if (plusp (length q)) (ff-set-query v (subseq q 0 (1- (length q)))) (ff-end-filter v))
        (clear-event event))
       ((= (event-key-code event) +kb-esc+)
-       (if (plusp (length q))
-           (progn (ff-set-query v "") (clear-event event))   ; clear the filter
-           (call-next-method)))                              ; empty -> let it cancel
+       (ff-end-filter v) (clear-event event))   ; leave search, restore full list
+      ((= (event-key-code event) +kb-enter+)
+       (setf (ff-filtering v) nil)              ; keep the narrowed list, then select
+       (when (ff-on-change v) (funcall (ff-on-change v) v))
+       (call-next-method))
       ((let ((cc (event-char-code event)))
          (and (plusp cc) (zerop (event-modifiers event))
               (let ((c (code-char cc)))
