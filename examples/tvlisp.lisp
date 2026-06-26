@@ -1599,7 +1599,11 @@ Returns (values selected-item end-command)."
                (max 0 (floor (- (point-y (view-size desk)) h) 2)))
       (focus lb)
       (let ((cmd (exec-view desk d)))
-        (values (ff-focused lb) cmd)))))
+        ;; only hand back a selection for an actual action -- never on Cancel /
+        ;; window-close, so a caller's default branch can't fire on dismissal
+        (values (and (member cmd (list +cm-ok+ +cm-pick-inspect+ +cm-pick-extra+ +cm-pick-extra2+))
+                     (ff-focused lb))
+                cmd)))))
 
 (defun pkg-switch (rv p)
   (when (and rv p)
