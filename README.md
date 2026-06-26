@@ -235,7 +235,7 @@ method browser, …) and `/`-pruned trees (class hierarchy, call graph, project
 source).  Press **`/`** to start a fuzzy search; it never interferes with other
 keys:
 
-![Fuzzy filtering across the IDE: the Symbol Browser, the window-list and Classes/Packages pickers, the cross-reference and method-browser results windows, and the class-hierarchy tree — all driven by one mixin, started with /](media/fuzzy-tour.gif)
+![Fuzzy filtering across the IDE: the Symbol Browser, the window-list and Classes/Packages/Systems pickers, the cross-reference and method-browser results windows, and the class-hierarchy tree — all driven by one mixin, started with /](media/fuzzy-tour.gif)
 - **Class browser** — a **fuzzy-filtered** list of every class (press **`/`** to
   filter, e.g. `strout` finds `STRING-OUTPUT-STREAM`); OK / Enter jumps to the
   selected class's definition, Inspect opens it in the object inspector.
