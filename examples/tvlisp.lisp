@@ -1934,12 +1934,35 @@ a trailing portion of it under the known source roots (relocation), or NIL."
                               for cand = (ignore-errors (merge-pathnames rel root))
                               when (and cand (probe-file cand)) return cand))))))
 
+(defun %refine-form-offset (path offset)
+  "SB-INTROSPECT records a definition's CHARACTER-OFFSET at the end of the
+*previous* top-level form, so it lands a line or two above the real definition.
+Advance OFFSET past whitespace and ;-comments to the next form's opening
+character, so jumps and the reported line hit the actual definition.  Returns
+the refined offset (or OFFSET unchanged if the file can't be read)."
+  (or (and offset
+           (ignore-errors
+             (with-open-file (s path)
+               (file-position s offset)
+               (let ((pos offset))
+                 (loop for c = (read-char s nil nil) do
+                   (cond
+                     ((null c) (return pos))
+                     ((member c '(#\Space #\Tab #\Newline #\Return #\Page)) (incf pos))
+                     ((char= c #\;)                          ; line comment -> skip to EOL
+                      (incf pos)
+                      (loop for d = (read-char s nil nil) while d do
+                        (incf pos) (when (char= d #\Newline) (return))))
+                     (t (return pos))))))))                  ; first real char = form start
+      offset))
+
 (defun goto-source (app type path offset)
   (declare (ignore type))
   (let ((resolved (%resolve-source-path path)))
     (if resolved
         (let* ((desk (program-desktop app))
-               (dw (point-x (view-size desk))) (dh (point-y (view-size desk))))
+               (dw (point-x (view-size desk))) (dh (point-y (view-size desk)))
+               (offset (%refine-form-offset resolved offset)))
           (%nav-push app)                       ; remember where we jumped from
           (multiple-value-bind (w ed)
               (make-edit-window (make-trect 2 1 (min (- dw 2) 84) (min (- dh 1) 26))
@@ -2005,7 +2028,8 @@ still shown (entries without a source location simply aren't navigable)."
 
 (defun %def-rows (sym defs)
   "Result rows for SYMBOL-DEFINITIONS triples (type path offset) of SYM."
-  (loop for (type path offset) in defs
+  (loop for (type path raw) in defs
+        for offset = (%refine-form-offset path raw)
         collect (list :kind type :label (princ-to-string sym)
                       :file (file-namestring path) :path path :offset offset
                       :line (%offset-to-line path offset))))
@@ -2017,7 +2041,8 @@ still shown (entries without a source location simply aren't navigable)."
                     for name = (car e)
                     for src = (cdr e)
                     for path = (ignore-errors (sb-introspect:definition-source-pathname src))
-                    for offset = (ignore-errors (sb-introspect:definition-source-character-offset src))
+                    for raw = (ignore-errors (sb-introspect:definition-source-character-offset src))
+                    for offset = (if path (%refine-form-offset (namestring path) raw) raw)
                     collect (list :kind kind :label (princ-to-string name)
                                   :file (if path (file-namestring path) "")
                                   :path (and path (namestring path)) :offset offset
