@@ -28,6 +28,18 @@
   ;; logical container layout -> application "blue window" block (app 1..15)
   (make-palette 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15))
 
+;;; A window whose frame follows cyan ("input"-coloured) content -- the REPL,
+;;; text/describe windows and the list/table/outline browsers.  Only the frame
+;;; entries (1=passive, 2=active, 3=icon) are remapped onto the cyan attributes
+;;; (black / white / yellow on cyan); the content entries (4..15) are the same
+;;; blue-block indices, so the cyan list/table/input colours are unchanged.
+;;; TWINDOW itself stays blue, for the editor and HTML windows (blue content).
+(defclass tcyan-window (twindow) ()
+  (:documentation "A TWindow whose border matches cyan content."))
+
+(defmethod get-palette ((w tcyan-window))
+  (make-palette 13 14 15 4 5 6 7 8 9 10 11 12 13 14 15))
+
 (defmethod frame-owner-title ((w twindow)) (window-title w))
 (defmethod frame-owner-flags ((w twindow)) (window-flags w))
 (defmethod frame-owner-number ((w twindow)) (window-number w))

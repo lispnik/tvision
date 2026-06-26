@@ -541,7 +541,7 @@ descendant, with kept inner nodes expanded.  NIL when nothing matches."
             (setf (outline-node-expanded c) t)
             (push c kept)))))))
 
-(defclass tfilter-outline-window (twindow)
+(defclass tfilter-outline-window (tcyan-window)
   ((outline   :initarg :outline   :initform nil :accessor fo-outline)
    (all-roots :initarg :all-roots :initform nil :accessor fo-all-roots)
    (filtering :initform nil       :accessor fo-filtering)
@@ -1132,7 +1132,7 @@ in its file's package, and the listener follows -- like compiling a file)."
 ;;;   u          undo the last expansion        0  reset to the original form
 ;;;   o          open the expansion in an editor c  copy it to the clipboard
 
-(defclass tmacro-window (twindow)
+(defclass tmacro-window (tcyan-window)
   ((form    :initarg :form :accessor macro-form)     ; current form object
    (orig    :initarg :orig :accessor macro-orig)      ; original, for reset
    (pkg     :initarg :pkg  :accessor macro-pkg)
@@ -1363,7 +1363,7 @@ with the arrows and expand the macro call under the cursor with `e'."
             (insert desk win) (focus tv))
         (error (e) (err-box e))))))
 
-(defclass tdescribe-window (twindow)
+(defclass tdescribe-window (tcyan-window)
   ((sym :initarg :sym :initform nil :accessor describe-sym)))
 
 (defmethod handle-event ((w tdescribe-window) event)
@@ -1445,7 +1445,7 @@ accessibility there: PKG: for an external symbol, PKG:: for an internal one
                (ext (eq :external (nth-value 1 (find-symbol (symbol-name sym) p)))))
            (format nil "~a~:[::~;:~]" name ext))))))
 
-(defclass tapropos-window (twindow)
+(defclass tapropos-window (tcyan-window)
   ((rv    :initarg :rv :accessor aw-rv)
    (input :initform nil :accessor aw-input)
    (tbl   :initform nil :accessor aw-tbl)))
@@ -1956,7 +1956,7 @@ a trailing portion of it under the known source roots (relocation), or NIL."
 ;;; location.  Used by Go-to-definition (multiple matches), Who-calls and
 ;;; Who-references, so they all share one navigable result list instead of a
 ;;; one-shot picker that exits after a single jump.
-(defclass txref-window (twindow)
+(defclass txref-window (tcyan-window)
   ((app   :initarg :app   :initform nil :accessor xref-app)
    (table :initarg :table :initform nil :accessor xref-table)))
 
@@ -2247,7 +2247,7 @@ checked when you confirm."
                            (or (mapcar #'pr payload) '("; no values"))))
           (:error  (format nil "~a✗ ~(~a~) signalled ~a" ind name (pr payload))))))))
 
-(defclass tcalltree-window (twindow)
+(defclass tcalltree-window (tcyan-window)
   ((app  :initarg :app :initform nil :accessor ct-app)
    (rows :initform nil :accessor ct-rows)
    (lb   :initarg :lb  :initform nil :accessor ct-lb))
@@ -2367,7 +2367,7 @@ seconds; ALL-THREADS samples every thread, not just this one."
 
 ;;; A table window that can export its rows to CSV with the `e' key; the profile
 ;;; windows build on it.
-(defclass tdata-window (twindow)
+(defclass tdata-window (tcyan-window)
   ((table :initarg :table :initform nil :accessor data-table)))
 
 (defun %csv-cell (v)
@@ -2616,7 +2616,7 @@ run a form, and show the call-count/time report."
 ;;; A modeless, refreshable browser of a generic function's methods: Enter jumps
 ;;; to a method's source (the window stays open, so you can visit several), `r'
 ;;; re-fetches (newly-defined methods appear), and `/' fuzzy-filters.
-(defclass tfun-browser (twindow)
+(defclass tfun-browser (tcyan-window)
   ((gf    :initarg :gf  :accessor fb-gf)
    (app   :initarg :app :accessor fb-app)
    (lb    :initform nil :accessor fb-lb)))
@@ -3097,7 +3097,7 @@ character offset in TEXT (via SBCL's compiler-error-context)."
       (ignore-errors (delete-file src))
       (ignore-errors (delete-file (compile-file-pathname src))))))
 
-(defclass tnotes-window (twindow)
+(defclass tnotes-window (tcyan-window)
   ((src-win :initarg :src-win :initform nil :accessor notes-src-win)  ; the editor window
    (rows    :initarg :rows    :initform nil :accessor notes-rows)
    (lb      :initarg :lb      :initform nil :accessor notes-lb))
@@ -3385,7 +3385,7 @@ git-sign column, or nothing when neither has something to show."
 (defvar *clip-counter* 0 "Source of stable clip ids (used by the (clip ID) paste).")
 
 ;;; the clipboard tool window: a modeless list of the clipped objects
-(defclass tclipboard-window (twindow)
+(defclass tclipboard-window (tcyan-window)
   ((app :initarg :app :accessor cb-app)
    (lb  :initform nil :accessor cb-lb)))
 

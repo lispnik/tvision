@@ -113,7 +113,7 @@
    #:html->tokens #:html-document-title #:html-find #:html-find-next #:+cm-html-link+
    #:html-goto-anchor #:html-find-regex #:html-anchors
    ;; window
-   #:twindow #:window-title #:window-number #:window-flags #:window-frame
+   #:twindow #:tcyan-window #:window-title #:window-number #:window-flags #:window-frame
    #:close-window #:zoom-window #:standard-scrollbar
    #:+wf-move+ #:+wf-grow+ #:+wf-close+ #:+wf-zoom+ #:+wn-no-number+
    ;; desktop

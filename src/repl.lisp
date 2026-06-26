@@ -266,7 +266,7 @@ e.g. '*, '+, '/).  Reads listener-local storage, not the global CL specials."
 
 ;;; --- read-only text windows (describe / macroexpand / backtrace / ...) ------
 
-(defun show-text-window (title text &key (width 76) (height 22) (class 'twindow) initargs)
+(defun show-text-window (title text &key (width 76) (height 22) (class 'tcyan-window) initargs)
   "Open a modeless, read-only, scrollable window showing TEXT.  CLASS/INITARGS
 let callers supply a TWINDOW subclass (e.g. one with extra key bindings).
 Returns the window and its text view."
@@ -1830,7 +1830,7 @@ ERROR still reaches the debugger; the sticky package follows any in-package."
 (defun make-repl-window (bounds &key (title "Lisp REPL") history-file)
   "Create a window containing a REPL view bound to a vertical scroll bar.
 Return (values window repl-view)."
-  (let* ((w (make-instance 'twindow :title title :bounds bounds))
+  (let* ((w (make-instance 'tcyan-window :title title :bounds bounds))
          (vsb (standard-scrollbar w t))
          (rv (make-instance 'trepl-view :history-file history-file
                             :bounds (make-trect 1 1 (1- (point-x (view-size w)))
