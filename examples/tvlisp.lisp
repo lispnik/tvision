@@ -213,11 +213,11 @@
       (menu-item "Compile de~f~un"    +cm-compile-defun+)
       (menu-item "~C~ompile buffer"   +cm-compile-buffer+)
       (menu-separator)
-      (sub-menu "~N~avigate"
+      (menu-item "~G~o to definition..." +cm-gotodef+ :key-text "Alt-.")
+      (menu-item "Pop bac~k~"            +cm-nav-back+ :key-text "Alt-,")
+      (menu-separator)
+      (sub-menu "Cr~o~ss Reference"
         (new-menu
-         (menu-item "~G~o to definition..." +cm-gotodef+ :key-text "Alt-.")
-         (menu-item "Pop ~b~ack"            +cm-nav-back+ :key-text "Alt-,")
-         (menu-item "~F~unction browser..." +cm-funcbrowser+)
          (menu-item "~W~ho calls..."        +cm-whocalls+)
          (menu-item "Who ~r~eferences..."   +cm-whorefs+)
          (menu-item "Who b~i~nds..."        +cm-whobinds+)
@@ -244,9 +244,10 @@
          (menu-item "~U~ntrace all..."    +cm-untrace-all+)))
       (sub-menu "~B~rowse"
         (new-menu
-         (menu-item "~C~lasses..."  +cm-classes+)
-         (menu-item "~P~ackages..." +cm-packages+)
-         (menu-item "~S~ystems..."  +cm-systems+)))))
+         (menu-item "~C~lasses..."   +cm-classes+)
+         (menu-item "~F~unctions..." +cm-funcbrowser+)
+         (menu-item "~P~ackages..."  +cm-packages+)
+         (menu-item "~S~ystems..."   +cm-systems+)))))
    (sub-menu "~O~ptions"
      (new-menu
       (menu-item "Desktop c~o~lor..." +cm-theme+)
@@ -4901,7 +4902,7 @@ next line.  Up/Down recall input; *, +, / hold recent values (per window).~%~
 Each REPL runs on its own thread; an error opens the restart debugger (with a~%~
 Backtrace button).~%~%~
 Lisp menu: Inspect, Macroexpand, Describe, Documentation, Disassemble, Apropos,~%~
-Class/Package/System browsers, Load buffer.~%~
+Go to definition, Cross Reference, Class/Function/Package/System browsers.~%~
 Edit menu: Ctrl-F find, Ctrl-L find-next, Ctrl-R history search, Ctrl-C interrupt.~%~
 Options: theme, pretty-print, eval timing, auto-close parens.~%~
 F2 new REPL, F3 clear, F4 tile, F5 cascade, F6 next, F8 inspect, F9 threads.")))
