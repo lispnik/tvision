@@ -258,15 +258,17 @@
       (menu-item "~A~uto-close parens" +cm-autoclose+)
       (menu-item "~L~ine numbers"      +cm-linenums+)
       (menu-item "DOS mouse c~u~rsor"  +cm-dosmouse+)))
-   (sub-menu "~W~indow"
+   (sub-menu "~W~indow"     ; key bindings follow the Turbo Vision defaults
      (new-menu
-      (menu-item "~L~ist..." +cm-winlist+ :key-text "Alt-0")
-      (menu-item "~N~ext"    +cm-next+    :key-code +kb-f6+ :key-text "F6")
-      (menu-item "~Z~oom"    +cm-zoom+    :key-code +kb-f5+ :key-text "F5")
-      (menu-item "~S~ize/Move" +cm-resize+ :key-text "Ctrl-F5")
-      (menu-item "~T~ile"    +cm-tile+    :key-code +kb-f4+ :key-text "F4")
-      (menu-item "C~a~scade" +cm-cascade+)
-      (menu-item "Cl~o~se"   +cm-close+)
+      (menu-item "~S~ize/move" +cm-resize+ :key-code +kb-f5+ :key-mods +md-ctrl+ :key-text "Ctrl-F5")
+      (menu-item "~Z~oom"      +cm-zoom+   :key-code +kb-f5+ :key-text "F5")
+      (menu-item "~N~ext"      +cm-next+   :key-code +kb-f6+ :key-text "F6")
+      (menu-item "~P~revious"  +cm-prev+   :key-code +kb-f6+ :key-mods +md-shift+ :key-text "Shift-F6")
+      (menu-item "Cl~o~se"     +cm-close+  :key-code +kb-f3+ :key-mods +md-alt+ :key-text "Alt-F3")
+      (menu-separator)
+      (menu-item "~T~ile"      +cm-tile+   :key-code +kb-f4+ :key-text "F4")
+      (menu-item "C~a~scade"   +cm-cascade+)
+      (menu-item "~L~ist..."   +cm-winlist+ :key-text "Alt-0")
       (menu-separator)
       (menu-item "T~h~reads..." +cm-threads+ :key-code +kb-f9+ :key-text "F9")
       (menu-item "Object clip~b~oard" +cm-clipboard+)))
@@ -4724,14 +4726,8 @@ string or comment (so it won't fight existing literals)."
              (logtest (event-modifiers event) +md-alt+)
              (= (event-char-code event) (char-code #\0)))
     (do-window-list app) (clear-event event))
-  ;; Ctrl-F5 -> Size/Move the active window.  The menu shortcut machinery
-  ;; ignores modifiers (F5 = Zoom would also fire for Ctrl-F5), so intercept it
-  ;; here -- before the menu bar -- and issue cmResize instead.
-  (when (and (= (event-type event) +ev-key-down+)
-             (= (event-key-code event) +kb-f5+)
-             (logtest (event-modifiers event) +md-ctrl+))
-    (put-event app (make-event :type +ev-command+ :command +cm-resize+))
-    (clear-event event))
+  ;; (Ctrl-F5 -> Size/Move, Alt-F3 -> Close, Shift-F6 -> Previous are wired as
+  ;; modifier-aware Window-menu shortcuts now, so no manual interception here.)
   ;; Alt-Q -> re-indent the whole top-level form in the focused editor
   (when (and (= (event-type event) +ev-key-down+)
              (logtest (event-modifiers event) +md-alt+)
@@ -4930,7 +4926,8 @@ Lisp menu: Inspect, Macroexpand, Describe, Documentation, Disassemble, Apropos,~
 Go to definition, Cross Reference, Class/Function/Package/System browsers.~%~
 Edit menu: Ctrl-F find, Ctrl-L find-next, Ctrl-R history search, Ctrl-C interrupt.~%~
 Options: theme, pretty-print, eval timing, auto-close parens.~%~
-F2 new REPL, F3 clear, F4 tile, F5 cascade, F6 next, F8 inspect, F9 threads.")))
+F2 new REPL, F3 clear, F4 tile, F5 zoom (Ctrl-F5 size/move), F6 next~%~
+ (Shift-F6 prev), Alt-F3 close, F8 inspect, F9 threads.")))
 
 (defmethod tvision::setup ((app tvlisp-app))
   (register-tvlisp-help)

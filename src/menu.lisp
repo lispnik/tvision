@@ -15,6 +15,7 @@
   (name "" )            ; display string, may contain ~hotkey~ markers
   (command 0 :type fixnum)
   (key-code 0 :type fixnum)
+  (key-mods 0 :type fixnum)  ; required event modifiers for the shortcut (Alt/Ctrl/Shift)
   (key-text "")         ; right-aligned shortcut label, e.g. "F3"
   (help-ctx 0)
   (disabled nil)
@@ -25,9 +26,10 @@
 
 (defun new-menu (&rest items) (%make-menu :items items))
 
-(defun menu-item (name command &key (key-code 0) (key-text "") (help 0) disabled)
-  "A leaf menu entry that issues COMMAND when chosen."
-  (%make-menu-item :name name :command command :key-code key-code
+(defun menu-item (name command &key (key-code 0) (key-mods 0) (key-text "") (help 0) disabled)
+  "A leaf menu entry that issues COMMAND when chosen.  KEY-MODS, when given, is
+the exact modifier set (e.g. +MD-ALT+) the KEY-CODE shortcut requires."
+  (%make-menu-item :name name :command command :key-code key-code :key-mods key-mods
                    :key-text key-text :help-ctx help :disabled disabled))
 
 (defun sub-menu (name menu)
@@ -59,17 +61,18 @@
          (p (position #\~ name)))
     (when (and p (< (1+ p) (length name))) (char-downcase (char name (1+ p))))))
 
-(defun find-shortcut (menu key)
-  "Search MENU (recursively) for an item whose shortcut KEY-CODE is KEY,
-returning its command or NIL."
+(defun find-shortcut (menu key &optional (mods 0))
+  "Search MENU (recursively) for an item whose shortcut KEY-CODE is KEY with
+exactly the modifier set MODS, returning its command or NIL."
   (when (and menu (plusp key))
     (dolist (it (menu-items menu))
       (cond
         ((menu-item-submenu it)
-         (let ((c (find-shortcut (menu-item-submenu it) key)))
+         (let ((c (find-shortcut (menu-item-submenu it) key mods)))
            (when c (return-from find-shortcut c))))
         ((and (plusp (menu-item-key-code it))
               (= (menu-item-key-code it) key)
+              (= (menu-item-key-mods it) mods)
               (plusp (menu-item-command it))
               (not (menu-item-disabled it))
               (command-enabled-p (menu-item-command it)))
@@ -166,7 +169,7 @@ returning its command or NIL."
                  (loop for it in (menu-items (menu-bar-menu mb)) for idx from 0
                        when (eql hk (menu-item-hotkey it))
                        do (track-menu mb idx) (clear-event event) (return t)))))
-         (t (let ((cmd (find-shortcut (menu-bar-menu mb) k)))
+         (t (let ((cmd (find-shortcut (menu-bar-menu mb) k (event-modifiers event))))
               (when cmd
                 (put-event mb (make-event :type +ev-command+ :command cmd))
                 (clear-event event)))))))
