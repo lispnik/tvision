@@ -228,7 +228,14 @@ parked with its stack live:
   matching** — `outstr` finds `WITH-OUTPUT-TO-STRING`.  Enter describes the
   focused symbol, `i` inspects it, and the window stays open.
 
-![Live fuzzy filtering: the Symbol Browser narrows 279 → 20 as you type a flex query, and the same mixin powers the Alt-0 window list](media/fuzzy-filter.gif)
+One `FUZZY-FILTER-MIXIN` powers fuzzy filtering everywhere it appears — the
+Symbol Browser's live Filter field, every modal picker (window list, Classes,
+Packages, …), the `/`-filtered results windows (cross-reference, profiler,
+method browser, …) and `/`-pruned trees (class hierarchy, call graph, project
+source).  Press **`/`** to start a fuzzy search; it never interferes with other
+keys:
+
+![Fuzzy filtering across the IDE: the Symbol Browser, the window-list and Classes/Packages pickers, the cross-reference and method-browser results windows, and the class-hierarchy tree — all driven by one mixin, started with /](media/fuzzy-tour.gif)
 - **Class browser** — a **fuzzy-filtered** list of every class (press **`/`** to
   filter, e.g. `strout` finds `STRING-OUTPUT-STREAM`); OK / Enter jumps to the
   selected class's definition, Inspect opens it in the object inspector.
