@@ -602,10 +602,11 @@ NIL to let W's own commands / the focused outline run."
                            :title (format nil "~a  (/: filter)" title)
                            :bounds (make-trect 4 2 64 22)))
          (vsb (standard-scrollbar w t))
+         (hsb (standard-scrollbar w nil))
          (ol (make-instance 'toutline :roots roots
                             :bounds (make-trect 1 1 (1- (point-x (view-size w)))
                                                 (1- (point-y (view-size w)))))))
-    (insert w ol) (attach-scrollbars ol :vscroll vsb)
+    (insert w ol) (attach-scrollbars ol :vscroll vsb :hscroll hsb)
     (setf (fo-outline w) ol)
     (insert desk w) (focus ol)
     ol))
@@ -851,10 +852,11 @@ around it and restoring that entry's scroll position."
          (w (make-instance 'thtml-window :title "Browser"
                            :bounds (make-trect 1 0 (min (- dw 1) 88) (min (- dh 1) 30))))
          (vsb (standard-scrollbar w t))
+         (hsb (standard-scrollbar w nil))
          (hv (make-instance 'thtml-view
                             :bounds (make-trect 1 1 (1- (point-x (view-size w)))
                                                 (1- (point-y (view-size w)))))))
-    (insert w hv) (attach-scrollbars hv :vscroll vsb)
+    (insert w hv) (attach-scrollbars hv :vscroll vsb :hscroll hsb)
     (setf (hw-view w) hv)
     (insert desk w)
     (hw-go w loc)
@@ -1522,6 +1524,7 @@ re-apropos), narrowing the already-loaded pool as the user types."
          (win (make-instance 'tapropos-window :rv rv :title "Symbol Browser"
                              :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t))
+         (hsb (standard-scrollbar win nil))
          (lbl (make-instance 'tlabel :text "Filter:" :bounds (make-trect 2 1 9 2)))
          (input (make-instance 'thistory-input :data (or initial "") :maxlen 80
                                :history-id "apropos" :bounds (make-trect 9 1 (1- w) 2)))
@@ -1532,7 +1535,7 @@ re-apropos), narrowing the already-loaded pool as the user types."
                              :key #'symbol-name :self-edit nil
                              :bounds (make-trect 1 3 (1- w) (1- h)))))
     (insert win lbl) (insert win input) (insert win tbl)
-    (attach-scrollbars tbl :vscroll vsb)
+    (attach-scrollbars tbl :vscroll vsb :hscroll hsb)
     (setf (aw-input win) input (aw-tbl win) tbl)
     (%aw-search win (or initial ""))
     (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
@@ -2018,12 +2021,13 @@ still shown (entries without a source location simply aren't navigable)."
                                :title (format nil "~a  (Enter: jump  /: filter)" title)
                                :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar win t))
+           (hsb (standard-scrollbar win nil))
            (tbl (make-instance 'tfilter-table :columns (%xref-columns) :rows rows :all rows
                                :key (lambda (r) (format nil "~a ~a" (getf r :label) (getf r :file)))
                                :self-edit nil :sort-col 2 :sort-asc t
                                :bounds (make-trect 1 1 (1- w) (1- h)))))
       (insert win tbl)
-      (attach-scrollbars tbl :vscroll vsb)
+      (attach-scrollbars tbl :vscroll vsb :hscroll hsb)
       (setf (xref-table win) tbl)
       (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
       (insert desk win)
@@ -2497,13 +2501,14 @@ seconds; ALL-THREADS samples every thread, not just this one."
                                             (or (getf data :mode) :time) (getf data :total) (getf data :secs))
                              :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t))
+         (hsb (standard-scrollbar win nil))
          (tbl (make-instance 'tfilter-table :columns (%profile-columns)
                              :rows (getf data :rows) :all (getf data :rows)
                              :key (lambda (r) (%fn-name (getf r :name))) :self-edit nil
                              :sort-col 0 :sort-asc nil
                              :bounds (make-trect 1 1 (1- w) (1- h)))))
     (insert win tbl)
-    (attach-scrollbars tbl :vscroll vsb)
+    (attach-scrollbars tbl :vscroll vsb :hscroll hsb)
     (setf (data-table win) tbl)
     (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
     (insert desk win)
@@ -2571,9 +2576,10 @@ plists (:seconds :consed :calls :name).  Header/rule lines are skipped."
          (win (make-instance 'tdata-window :title (format nil "~a  (s:sort  e:csv)" title)
                              :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t))
+         (hsb (standard-scrollbar win nil))
          (tbl (make-instance 'ttable-view :columns cols :rows rows :sort-col 1 :sort-asc nil
                              :bounds (make-trect 1 1 (1- w) (1- h)))))
-    (insert win tbl) (attach-scrollbars tbl :vscroll vsb) (setf (data-table win) tbl)
+    (insert win tbl) (attach-scrollbars tbl :vscroll vsb :hscroll hsb) (setf (data-table win) tbl)
     (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
     (insert desk win) (focus tbl)))
 
@@ -2597,11 +2603,12 @@ sortable, CSV-exportable Kind/Message table.  Bound to TVISION:*LOAD-NOTES-HOOK*
                                               (file-namestring path) (length notes))
                                :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar win t))
+           (hsb (standard-scrollbar win nil))
            (tbl (make-instance 'tfilter-table :columns cols :rows rows :all rows
                                :key (lambda (r) (%one-line (getf r :msg))) :self-edit nil
                                :sort-col 0 :sort-asc t
                                :bounds (make-trect 1 1 (1- w) (1- h)))))
-      (insert win tbl) (attach-scrollbars tbl :vscroll vsb) (setf (data-table win) tbl)
+      (insert win tbl) (attach-scrollbars tbl :vscroll vsb :hscroll hsb) (setf (data-table win) tbl)
       (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
       (insert desk win) (focus tbl))))
 
@@ -4507,9 +4514,10 @@ files as a collapsible tree."
                           :title (format nil "Project: ~a  (Enter:open O:all C:close R:refresh /:filter)" name)
                           :bounds (make-trect 0 0 ww wh)))
                    (vsb (standard-scrollbar win t))
+                   (hsb (standard-scrollbar win nil))
                    (ol (make-instance 'toutline :roots (list root)
                           :bounds (make-trect 1 1 (1- ww) (1- wh)))))
-              (insert win ol) (attach-scrollbars ol :vscroll vsb)
+              (insert win ol) (attach-scrollbars ol :vscroll vsb :hscroll hsb)
               (setf (pw-outline win) ol)
               (move-to win (max 0 (floor (- dw ww) 2)) (max 0 (floor (- dh wh) 2)))
               (insert desk win) (focus ol)))))))

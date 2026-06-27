@@ -214,11 +214,14 @@ given).  Used to mark a wide glyph's continuation cell with +wide-cont+."
   (db-fill b char attr index count))
 
 (defun db-move-str (b index string attr)
-  "Write STRING starting at INDEX, all in attribute ATTR."
+  "Write STRING starting at INDEX, all in attribute ATTR.  INDEX may be negative
+(the part off the buffer's left edge is clipped), so callers can offset by a
+horizontal scroll delta."
   (let ((data (draw-buffer-data b))
         (w (draw-buffer-width b)))
     (loop for ch across string
           for i from index below w
+          when (>= i 0)
           do (setf (aref data i) (cell-make-code (char-code ch) attr))))
   b)
 
