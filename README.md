@@ -114,6 +114,13 @@ At a glance — the tools it ships (each detailed below):
 - **Presentations.** Every value the REPL prints is a live object, not just
   text: **double-click a result** to open the inspector on the actual object and
   drill into its structure (SLY-style).
+- **Live self-modification.** The IDE is itself a Common Lisp image, so you can
+  redefine it *from its own REPL* with no rebuild or restart — `handle-event`,
+  `draw`, commands, palettes are all ordinary generic functions.  For example,
+  a `defmethod handle-event :before` on the application class binds a brand-new
+  key (here Alt-G) that fires on the very next keystroke:
+
+  ![Bind a new key live: a defmethod typed at the REPL makes Alt-G pop a dialog instantly](media/repl-live-keybinding.gif)
 
   ![Double-click a printed REPL result to inspect the live object](media/repl-presentations.gif)
 
