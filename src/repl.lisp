@@ -276,10 +276,11 @@ Returns the window and its text view."
            (w (min width (max 24 (- dw 2)))) (h (min height (max 6 (- dh 2))))
            (win (apply #'make-instance class :title title :bounds (make-trect 0 0 w h) initargs))
            (vsb (standard-scrollbar win t))
+           (hsb (standard-scrollbar win nil))
            (tv (make-instance 'ttext-view :read-only t
                               :bounds (make-trect 1 1 (1- w) (1- h)))))
       (insert win tv)
-      (text-attach-scrollbars tv :vscroll vsb)
+      (text-attach-scrollbars tv :vscroll vsb :hscroll hsb)
       (set-text tv (or text ""))
       (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
       (insert desk win)
@@ -1832,9 +1833,10 @@ ERROR still reaches the debugger; the sticky package follows any in-package."
 Return (values window repl-view)."
   (let* ((w (make-instance 'tcyan-window :title title :bounds bounds))
          (vsb (standard-scrollbar w t))
+         (hsb (standard-scrollbar w nil))
          (rv (make-instance 'trepl-view :history-file history-file
                             :bounds (make-trect 1 1 (1- (point-x (view-size w)))
                                                 (1- (point-y (view-size w)))))))
     (insert w rv)
-    (text-attach-scrollbars rv :vscroll vsb)
+    (text-attach-scrollbars rv :vscroll vsb :hscroll hsb)
     (values w rv)))

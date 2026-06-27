@@ -1356,9 +1356,10 @@ with the arrows and expand the macro call under the cursor with `e'."
                  (win (make-instance 'tmacro-window :form form :orig form :pkg pkg
                                      :bounds (make-trect 0 0 w h)))
                  (vsb (standard-scrollbar win t))
+                 (hsb (standard-scrollbar win nil))
                  (tv (make-instance 'ttext-view :read-only t :highlight t
                                     :bounds (make-trect 1 1 (1- w) (1- h)))))
-            (insert win tv) (text-attach-scrollbars tv :vscroll vsb)
+            (insert win tv) (text-attach-scrollbars tv :vscroll vsb :hscroll hsb)
             (setf (macro-view win) tv)
             (%macro-render win)
             (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))

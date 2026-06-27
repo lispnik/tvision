@@ -1358,13 +1358,16 @@ editor)."
   (let* ((w (make-instance 'teditor-window :title title :bounds bounds))
          (iw (point-x (view-size w))) (ih (point-y (view-size w)))
          (vsb (standard-scrollbar w t))
+         (hsb (make-instance 'tscrollbar :vertical nil))   ; bottom edge, right of the indicator
          (ed (make-instance 'tfile-editor :filename filename
                             :bounds (make-trect 1 1 (1- iw) (- ih 2))))
          (ind (make-instance 'tindicator :source ed
                              :bounds (make-trect 2 (1- ih) 18 ih))))
+    (set-bounds hsb (make-trect 18 (1- ih) (1- iw) ih))
     (insert w ed)
     (insert w ind)
-    (text-attach-scrollbars ed :vscroll vsb)
+    (insert w hsb)
+    (text-attach-scrollbars ed :vscroll vsb :hscroll hsb)
     (when (and filename (probe-file filename))
       (ignore-errors (text-load-file ed filename)))
     (setf (editor-window-editor w) ed)
