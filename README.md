@@ -370,6 +370,12 @@ keys:
   numbers.
 
   ![Editor gutter: line numbers plus added / changed / deleted git marks](media/git-gutter.gif)
+- **Scroll bars on both axes** — the editor, REPL and text windows carry a
+  vertical scroll bar on the right and a horizontal one along the bottom (right
+  of the editor's position indicator); long unwrapped lines scroll sideways and
+  the proportional thumb tracks the view.
+
+  ![A long line scrolls sideways; the horizontal scroll bar's thumb tracks the view](media/horizontal-scrollbar.gif)
 - **Options:** theme picker (`TColorDialog`), pretty-print toggle, eval-timing
   toggle (`; N ms`), auto-close parens, **line numbers**, and a **DOS mouse
   cursor** — an experimental reverse-video software pointer that follows the
