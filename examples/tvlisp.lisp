@@ -2342,8 +2342,9 @@ refreshes."))
          (lb (make-instance 'tlist-box :items #() :command 0
                             :bounds (make-trect 1 1 (1- w) (- h 2))))
          (win (make-instance 'tcalltree-window :app app :lb lb :bounds (make-trect 0 0 w h)))
-         (vsb (standard-scrollbar win t)))
-    (insert win lb) (attach-scrollbars lb :vscroll vsb)
+         (vsb (standard-scrollbar win t))
+         (hsb (standard-scrollbar win nil)))
+    (insert win lb) (attach-scrollbars lb :vscroll vsb :hscroll hsb)
     (%ct-refresh win)
     (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
     (insert desk win) (focus win)))
@@ -2690,9 +2691,10 @@ run a form, and show the call-count/time report."
          (w (min 72 (- dw 2))) (h (min 20 (- dh 2)))
          (win (make-instance 'tfun-browser :gf gf :app app :bounds (make-trect 0 0 w h)))
          (vsb (standard-scrollbar win t))
+         (hsb (standard-scrollbar win nil))
          (lb (make-instance 'tfilter-list-box :key #'method-label :display #'method-label
                             :self-edit nil :bounds (make-trect 1 1 (1- w) (1- h)))))
-    (insert win lb) (attach-scrollbars lb :vscroll vsb)
+    (insert win lb) (attach-scrollbars lb :vscroll vsb :hscroll hsb)
     (setf (fb-lb win) lb)
     (%fb-refresh win)
     (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
@@ -3176,8 +3178,9 @@ offending location in the source editor window."))
          (win (make-instance 'tnotes-window :src-win src-win :rows rows :lb lb
                              :title (format nil "~a  (/:filter)" title)
                              :bounds (make-trect 0 0 w h)))
-         (vsb (standard-scrollbar win t)))
-    (insert win lb) (attach-scrollbars lb :vscroll vsb)
+         (vsb (standard-scrollbar win t))
+         (hsb (standard-scrollbar win nil)))
+    (insert win lb) (attach-scrollbars lb :vscroll vsb :hscroll hsb)
     (ff-refilter lb)                                  ; populate (empty query -> all)
     (move-to win (max 0 (floor (- dw w) 2)) (max 1 (- dh h 1)))   ; bottom: editor stays visible
     (insert desk win) (focus win)))
@@ -3517,10 +3520,11 @@ SOME-REPL because the clipboard window — not a REPL — is the focused one her
                (win (make-instance 'tclipboard-window :app app :title "Object Clipboard"
                                    :bounds (make-trect 0 0 w h)))
                (vsb (standard-scrollbar win t))
+               (hsb (standard-scrollbar win nil))
                (lb (make-instance 'tfilter-list-box :key #'%cb-label :display #'%cb-label
                                   :self-edit nil :command 0
                                   :bounds (make-trect 1 1 (1- w) (1- h)))))
-          (insert win lb) (attach-scrollbars lb :vscroll vsb)
+          (insert win lb) (attach-scrollbars lb :vscroll vsb :hscroll hsb)
           (setf (cb-lb win) lb)
           (%cb-refresh win)
           (move-to win (max 0 (floor (- dw w) 2)) (max 0 (floor (- dh h) 2)))
