@@ -1319,47 +1319,36 @@ counterpart of the windowed editor).  Its data is the whole text string."))
 
 (defclass tfile-editor (ttext-view)
   ((filename :initarg :filename :initform nil :accessor editor-filename))
-  (:documentation "An editor bound to a file (TEditor + a filename)."))
+  (:documentation "An editor bound to a file (TEditor + a filename).  This is a
+plain text editor; language-aware behaviour (syntax colouring, auto-indent on
+Return, re-indent on Tab) lives in subclasses -- see TLISP-FILE-EDITOR in the
+tvlisp project.  The Lisp text utilities those subclasses build on (the indent
+engine and the colouriser) stay here in the framework."))
 
 ;; Classic Turbo Vision editors are blue, not the cyan of an input field: map
 ;; the text view's normal/selected colours to white-on-blue and a cyan selection
 ;; band (app palette 8 and 14) instead of the input colours (13 14).
 (defmethod get-palette ((ed tfile-editor)) (make-palette 8 14))
 
-(defmethod initialize-instance :after ((ed tfile-editor) &key)
-  (setf (text-highlight ed) t))   ; Lisp syntax colouring on for file editors
-
-(defmethod text-return ((ed tfile-editor))
-  "Break the line and auto-indent the new one for Lisp."
-  (if (text-highlight ed)
-      (let ((indent (%lisp-indent-at (text-string ed) (%cursor-offset ed))))
-        (split-line-at-cursor ed)
-        (dotimes (_ indent) (insert-char-at-cursor ed #\Space)))
-      (call-next-method)))
-
-(defmethod text-tab ((ed tfile-editor))
-  "Tab re-indents: the selected lines if there is a selection, else the current
-line."
-  (if (text-highlight ed)
-      (if (text-anchor ed)
-          (multiple-value-bind (s e) (selection-range ed)
-            (lisp-indent-region ed (car s) (car e)))
-          (lisp-indent-line ed (text-cur-line ed)))
-      (call-next-method)))
+(defvar *file-editor-class* 'tfile-editor
+  "The TFILE-EDITOR (sub)class MAKE-EDIT-WINDOW instantiates.  Set this to a
+subclass -- e.g. TLISP-FILE-EDITOR -- to make new edit windows language-aware.")
 
 (defclass teditor-window (twindow)
   ((editor :initform nil :accessor editor-window-editor))
   (:documentation "A window framing a TFileEditor with a scroll bar + indicator."))
 
-(defun make-edit-window (bounds &key (title "Editor") filename)
-  "Build a TEditWindow: a window containing a TFileEditor, a vertical scroll bar
-and a position indicator.  Loads FILENAME if it exists.  Returns (values window
-editor)."
+(defun make-edit-window (bounds &key (title "Editor") filename
+                                     (editor-class *file-editor-class*))
+  "Build a TEditWindow: a window containing a file editor, a vertical scroll bar
+and a position indicator.  Loads FILENAME if it exists.  EDITOR-CLASS is the
+TFILE-EDITOR (sub)class to instantiate (defaults to *FILE-EDITOR-CLASS*).
+Returns (values window editor)."
   (let* ((w (make-instance 'teditor-window :title title :bounds bounds))
          (iw (point-x (view-size w))) (ih (point-y (view-size w)))
          (vsb (standard-scrollbar w t))
          (hsb (make-instance 'tscrollbar :vertical nil))   ; bottom edge, right of the indicator
-         (ed (make-instance 'tfile-editor :filename filename
+         (ed (make-instance editor-class :filename filename
                             :bounds (make-trect 1 1 (1- iw) (- ih 2))))
          (ind (make-instance 'tindicator :source ed
                              :bounds (make-trect 2 (1- ih) 18 ih))))

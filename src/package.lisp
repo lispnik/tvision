@@ -190,8 +190,8 @@
    #:text-find-regex #:text-find-and-select-regex #:text-replace-all-regex #:text-select-span
    #:text-replace-selection #:text-load-file #:text-save-file
    #:tindicator #:indicator-source #:tmemo #:text-wrap #:set-text-wrap
-   #:tfile-editor #:teditor-window #:make-edit-window #:editor-filename
-   #:editor-window-editor #:text-highlight
+   #:tfile-editor #:*file-editor-class* #:teditor-window #:make-edit-window
+   #:editor-filename #:editor-window-editor #:text-highlight
    #:text-gutter-width #:draw-gutter #:text-area-width
    #:lisp-indent-line #:lisp-indent-region #:lisp-indent-sexp #:*lisp-indent-hook*
    ;; resize
