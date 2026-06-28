@@ -424,9 +424,10 @@
            (d (make-instance 'tdialog :title (format nil "~a  (/ : filter)" title)
                              :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar d t))
+           (hsb (standard-scrollbar d nil))          ; bottom frame edge, below the buttons
            (lb (make-instance 'tfilter-list-box :all items :command +cm-ok+
                               :bounds (make-trect 1 1 (1- w) (- h 3)))))
-      (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (insert d lb) (attach-scrollbars lb :vscroll vsb :hscroll hsb)
       (ff-refilter lb)                               ; populate (empty query -> all)
       (insert d (make-button (make-trect (- w 24) (- h 3) (- w 14) (- h 1)) "~O~K" +cm-ok+ t))
       (insert d (make-button (make-trect (- w 12) (- h 3) (- w 2) (- h 1)) "Cancel" +cm-cancel+))
@@ -499,6 +500,7 @@ against (defaulting to LABELS) so decorated labels can still be searched."
            (rows (let ((v (make-array n))) (dotimes (i n v) (setf (aref v i) i))))
            (d (make-instance 'tdialog :title title :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar d t))
+           (hsb (standard-scrollbar d nil))         ; bottom frame edge, below the buttons
            (foot (make-instance 'tstatic-text :text "/ : fuzzy filter"
                                 :bounds (make-trect 2 (- h 3) (- w 26) (- h 2))))
            (lb (make-instance 'tfilter-list-box
@@ -515,7 +517,7 @@ against (defaulting to LABELS) so decorated labels can still be searched."
                             ((ff-filtering lb) "filter: ")
                             (t "/ : fuzzy filter")))
                 (draw-view foot))))
-      (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (insert d lb) (attach-scrollbars lb :vscroll vsb :hscroll hsb)
       (insert d foot)
       (insert d (make-button (make-trect (- w 24) (- h 3) (- w 14) (- h 1)) "~O~K" +cm-ok+ t))
       (insert d (make-button (make-trect (- w 12) (- h 3) (- w 2) (- h 1)) "Cancel" +cm-cancel+))
@@ -1576,10 +1578,11 @@ Returns (values selected-item end-command)."
            (w (max 58 (+ 4 (* nbtn 13)))) (h 18)
            (d (make-instance 'tlist-pick-dialog :title title :bounds (make-trect 0 0 w h)))
            (vsb (standard-scrollbar d t))
+           (hsb (standard-scrollbar d nil))         ; bottom frame edge, below the buttons
            (total (length items))
            (lb (make-instance 'tfilter-list-box :all items :command +cm-ok+
                               :bounds (make-trect 1 1 (1- w) (- h 3)))))
-      (insert d lb) (attach-scrollbars lb :vscroll vsb)
+      (insert d lb) (attach-scrollbars lb :vscroll vsb :hscroll hsb)
       (ff-refilter lb)                               ; populate (empty query -> all)
       (setf (ff-on-change lb)                        ; live "(n/total)" in the title bar
             (lambda (lb)
