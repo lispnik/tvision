@@ -48,13 +48,20 @@ kept as a placeholder for any dependencies you add later.
 The framework's flagship example, **`tvlisp`** — a Lisp REPL / mini-IDE that
 exercises the whole framework (overlapping windows, menus, dialogs, the editor,
 the object inspector, an HTML browser, a threaded debugger, and a suite of
-code-intelligence tools) — now lives in its own sibling project:
+code-intelligence tools) — lives in its own repository:
 
-> **[`../tvlisp`](../tvlisp)** — `cd ../tvlisp && make && ./tvlisp`
+> **[github.com/lispnik/tvlisp](https://github.com/lispnik/tvlisp)**
 
-It depends on this framework through a `systems/tvision` symlink back to this
-directory, so the two build together with no global configuration.  See that
-project's README for the full feature tour and demos.
+Clone it next to this one and build:
+
+```sh
+git clone git@github.com:lispnik/tvlisp.git   # alongside this tvision checkout
+cd tvlisp && make && ./tvlisp
+```
+
+It depends on this framework through a `systems/tvision` symlink back to a
+sibling `tvision` checkout, so the two build together with no global
+configuration.  See that project's README for the full feature tour and demos.
 
 ## Using the library
 
@@ -261,8 +268,9 @@ It exits non-zero on any failure (CI-ready) and covers geometry, the draw
 buffer, every control (clusters, lists, validators, collections, history,
 menus/`TMenuPopup`, colour selectors, file/chdir dialogs, the memo/editor) and
 the concurrency mailbox.  The example app's own tests — the REPL backend, the
-debugger, the inspector, the thread monitor, and an end-to-end pty smoke test —
-live with it in [`../tvlisp`](../tvlisp).
+debugger, the inspector, the thread monitor, the Lisp syntax/indent engine, and
+an end-to-end pty smoke test — live with it in
+[github.com/lispnik/tvlisp](https://github.com/lispnik/tvlisp).
 
 ## License
 
