@@ -14,7 +14,10 @@
   ((items   :initarg :items   :initform #() :accessor %list-items)
    (focused :initform 0       :accessor list-focused)
    (command :initarg :command :initform 0 :accessor list-command)
-   (columns :initarg :columns :initform 1 :accessor list-columns)))
+   (columns :initarg :columns :initform 1 :accessor list-columns)
+   ;; left/right cells of inner margin reserved when drawing a single column
+   ;; (the row fill shows through them as a one-cell padding); 0 = flush
+   (pad     :initarg :pad     :initform 0 :accessor list-pad)))
 
 (defmethod get-palette ((lb tlist-box)) (make-palette 13 14))  ; normal / focused
 
@@ -48,8 +51,12 @@
 (defun list-update-limit (lb)
   (let ((maxw 1) (rows (ceiling (max 1 (list-count lb)) (list-cols lb))))
     (dotimes (i (list-count lb)) (setf maxw (max maxw (length (list-item lb i)))))
-    ;; multi-column lists don't scroll horizontally
-    (set-scroller-limit lb (if (> (list-cols lb) 1) (point-x (view-size lb)) maxw)
+    ;; multi-column lists don't scroll horizontally; for single-column lists the
+    ;; PAD margin narrows the visible width, so inflate the limit to match (the
+    ;; last PAD columns of a long item stay reachable)
+    (set-scroller-limit lb (if (> (list-cols lb) 1)
+                               (point-x (view-size lb))
+                               (+ maxw (* 2 (list-pad lb))))
                         rows)))
 
 (defmethod initialize-instance :after ((lb tlist-box) &key)
@@ -90,8 +97,9 @@
               (let* ((sel (= i (list-focused lb)))
                      ;; show the selection even when the list isn't focused
                      (attr (if sel (selection-highlight normal active) normal))
-                     (x (* c cw))
-                     (cwidth (if (> cols 1) cw w))
+                     (pad (if (> cols 1) 0 (list-pad lb)))   ; inner left/right margin
+                     (x (+ pad (* c cw)))
+                     (cwidth (if (> cols 1) cw (- w (* 2 pad))))
                      (s (list-item lb i))
                      (start (if (> cols 1) 0 (min dx (length s))))
                      (vis (subseq s (min start (length s))

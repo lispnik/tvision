@@ -60,14 +60,3 @@ have no external dependencies."
                 :components ((:file "tvision-tests"))))
   :perform (asdf:test-op (o c)
              (uiop:symbol-call :tvision-tests :run-tests)))
-
-(asdf:defsystem "tvision/examples/tvlisp"
-  :description "A standalone Lisp REPL application on the Turbo Vision port."
-  :depends-on ("tvision")
-  :serial t
-  ;; `asdf:make :tvision/examples/tvlisp` dumps a standalone `tvlisp' REPL.
-  :build-operation "program-op"
-  :build-pathname "tvlisp"
-  :entry-point "tvision-tvlisp:toplevel"
-  :components ((:module "examples"
-                :components ((:file "tvlisp")))))

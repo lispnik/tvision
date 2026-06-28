@@ -2,7 +2,6 @@
 *.o
 .cache/
 /systems/
-/tvlisp
 
 # OS / editor / Python junk
 .DS_Store
