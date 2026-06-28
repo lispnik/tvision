@@ -427,7 +427,8 @@
            (hsb (standard-scrollbar d nil))
            (lb (make-instance 'tfilter-list-box :all items :command +cm-ok+
                               :bounds (make-trect 1 1 (1- w) (- h 4)))))
-      (set-bounds hsb (make-trect 1 (- h 4) (1- w) (- h 3)))   ; list's bottom edge, above the buttons
+      (set-bounds vsb (make-trect (1- w) 1 w (- h 3)))         ; bars frame the list only, not the buttons
+      (set-bounds hsb (make-trect 1 (- h 4) (1- w) (- h 3)))   ; horizontal bar on the list's bottom edge
       (insert d lb) (attach-scrollbars lb :vscroll vsb :hscroll hsb)
       (ff-refilter lb)                               ; populate (empty query -> all)
       (insert d (make-button (make-trect (- w 24) (- h 3) (- w 14) (- h 1)) "~O~K" +cm-ok+ t))
@@ -510,7 +511,8 @@ against (defaulting to LABELS) so decorated labels can still be searched."
                               :display (lambda (i) (aref labelv i))
                               :command +cm-ok+
                               :bounds (make-trect 1 1 (1- w) (- h 4)))))
-      (set-bounds hsb (make-trect 1 (- h 4) (1- w) (- h 3)))   ; list's bottom edge, above the buttons
+      (set-bounds vsb (make-trect (1- w) 1 w (- h 3)))         ; bars frame the list only, not the buttons
+      (set-bounds hsb (make-trect 1 (- h 4) (1- w) (- h 3)))   ; horizontal bar on the list's bottom edge
       (setf (ff-on-change lb)
             (lambda (lb)
               (let ((q (ff-query lb)))
@@ -1584,7 +1586,8 @@ Returns (values selected-item end-command)."
            (total (length items))
            (lb (make-instance 'tfilter-list-box :all items :command +cm-ok+
                               :bounds (make-trect 1 1 (1- w) (- h 4)))))
-      (set-bounds hsb (make-trect 1 (- h 4) (1- w) (- h 3)))   ; list's bottom edge, above the buttons
+      (set-bounds vsb (make-trect (1- w) 1 w (- h 3)))         ; bars frame the list only, not the buttons
+      (set-bounds hsb (make-trect 1 (- h 4) (1- w) (- h 3)))   ; horizontal bar on the list's bottom edge
       (insert d lb) (attach-scrollbars lb :vscroll vsb :hscroll hsb)
       (ff-refilter lb)                               ; populate (empty query -> all)
       (setf (ff-on-change lb)                        ; live "(n/total)" in the title bar
