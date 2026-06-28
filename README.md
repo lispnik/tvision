@@ -374,10 +374,11 @@ keys:
   vertical scroll bar on the right and a horizontal one along the bottom (right
   of the editor's position indicator); long unwrapped lines scroll sideways and
   the proportional thumb tracks the view.  The same goes for the **table**,
-  **list**, **outline** and **HTML** windows — and the **modal pickers**, where a
-  long window title or class name scrolls below the OK/Cancel buttons.  A wide
-  table, long list item or deep tree scrolls horizontally, dropping the leftmost
-  column/text and revealing the rightmost.
+  **list**, **outline** and **HTML** windows — and the **modal pickers**, whose
+  bar sits on the list's bottom edge, above the OK/Cancel buttons, so a long
+  window title or class name scrolls into view.  A wide table, long list item or
+  deep tree scrolls horizontally, dropping the leftmost column/text and revealing
+  the rightmost.
 
   ![A long line scrolls sideways; the horizontal scroll bar's thumb tracks the view](media/horizontal-scrollbar.gif)
 
