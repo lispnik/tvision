@@ -652,59 +652,6 @@ broadcasts and drawing); return the control."
     (is= "reload clears focus" (html-focused-link v) nil)))
 
 ;;; ===========================================================================
-;;; Lisp syntax highlighting (editor)
-;;; ===========================================================================
-
-(deftest syntax-highlight
-  ;; matching-paren scan over a string (offsets); strings/comments are skipped
-  (is= "match forward"  (tvision::%paren-match-offset "(a (b) c)" 0) 8)
-  (is= "match backward" (tvision::%paren-match-offset "(a (b) c)" 8) 0)
-  (is= "match inner"    (tvision::%paren-match-offset "(a (b) c)" 3) 5)
-  (is= "paren inside a string is skipped" (tvision::%paren-match-offset "(foo \")\")" 0) 8)
-  ;; colouriser: comment / string / keyword differ from the base attribute
-  (let* ((base (tvision::make-attr 0 3))            ; black on cyan = the editor base
-         (src "(a :kw \"s\") ; c"))
-    (multiple-value-bind (attrs instr) (tvision::%lisp-colorize src base nil)
-      (ok "line not left in a string" (not instr))
-      (ok "plain symbol char stays base" (= (aref attrs 1) base))   ; the 'a'
-      (ok "keyword coloured"  (/= (aref attrs (search ":kw" src)) base))
-      (ok "string coloured"   (/= (aref attrs (search "\"s\"" src)) base))
-      (ok "comment coloured"  (/= (aref attrs (search "; c" src)) base)))
-    ;; an unterminated string carries the state to the next line
-    (multiple-value-bind (attrs instr) (tvision::%lisp-colorize "\"open" base nil)
-      (declare (ignore attrs))
-      (ok "unterminated string carries over" instr)))
-  ;; auto-indent (per-symbol specs after cl-indent)
-  (flet ((ind (s) (tvision::%lisp-indent-at s (length s))))
-    (is= "defun body indents +2"      (ind "(defun f (x)") 2)
-    (is= "let body indents +2"        (ind "  (let ((x 1))") 4)
-    (is= "args align under first arg" (ind "(foo bar") 5)
-    (is= "bare open indents +1"       (ind "(") 1)
-    (is= "operator alone -> +1"       (ind "(foo") 1)
-    (is= "closed form -> 0"           (ind "(foo)") 0)
-    (is= "paren in string ignored"    (ind "(foo \";)\" ") 5)
-    (is= "if distinguished arg +4"    (ind "(if test") 4)
-    (is= "with-open-file body +2"     (ind "(with-open-file (s p)") 2)
-    (is= "cond clauses +2"            (ind "(cond") 2)
-    (is= "loop clauses align under first clause" (ind "(loop for x in xs") 6)
-    (is= "loop conditional body indents +2"
-         (ind (format nil "(loop for x in xs~%      when (evenp x)")) 8)
-    (is= "loop returns to clause col after an action"
-         (ind (format nil "(loop for x in xs~%      when (evenp x) collect x")) 6)
-    (is= "literal list aligns under first element" (ind "(1 2 3") 1)
-    (is= "binding list aligns under first binding" (ind "(let ((a 1) (b 2)") 6)
-    (is= "quoted list aligns under first element" (ind "'(aa bb") 2)
-    (is= "backquoted list aligns under first element" (ind "`(aa bb") 2)
-    (is= "nested quoted list is data" (ind "'(foo (bar baz") 7))
-  ;; lisp-indent-sexp reflows a whole top-level form
-  (let ((ed (host (make-instance 'tfile-editor :bounds (make-trect 0 0 40 12)
-                                 :text (format nil "(defun f ()~%(when x~%(foo)))")))))
-    (lisp-indent-sexp ed)
-    (is= "defun line unchanged" (nth-line ed 0) "(defun f ()")
-    (is= "when reindented to +2" (nth-line ed 1) "  (when x")
-    (is= "body reindented to +4" (nth-line ed 2) "    (foo)))")))
-
-;;; ===========================================================================
 ;;; Memo + editor
 ;;; ===========================================================================
 
@@ -728,17 +675,6 @@ broadcasts and drawing); return the control."
     (set-text tv "a1b22c333")
     (is= "regex replace count" (text-replace-all-regex tv "[0-9]+" "#") 3)
     (is= "regex replace result" (nth-line tv 0) "a#b#c#")))
-
-(deftest match-paren
-  (let ((tv (focused (host (make-instance 'tmemo :bounds (make-trect 0 0 30 5))))))
-    (set-text tv "(foo (bar))")
-    (setf (text-cur-line tv) 0 (text-cur-col tv) 0)        ; on the outer (
-    (ok "jumps from an open paren" (match-paren-jump tv))
-    (is= "lands on the matching close paren" (text-cur-col tv) 10)
-    (ok "jumps back from the close paren" (match-paren-jump tv))
-    (is= "returns to the open paren" (text-cur-col tv) 0)
-    (setf (text-cur-col tv) 2)                             ; on 'o' of foo
-    (ok "no jump when point isn't on a paren" (not (match-paren-jump tv)))))
 
 (deftest memo
   (let ((m (host (make-instance 'tmemo :bounds (make-trect 1 1 30 6)))))

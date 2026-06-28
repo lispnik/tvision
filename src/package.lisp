@@ -186,14 +186,15 @@
    #:text-snapshot #:text-undo! #:text-redo! #:text-anchor #:set-lines
    #:text-modified #:text-overwrite #:text-goto #:word-left #:word-right
    #:text-find #:text-find-and-select #:text-select-match #:text-replace-all
-   #:match-paren-jump
    #:text-find-regex #:text-find-and-select-regex #:text-replace-all-regex #:text-select-span
    #:text-replace-selection #:text-load-file #:text-save-file
    #:tindicator #:indicator-source #:tmemo #:text-wrap #:set-text-wrap
    #:tfile-editor #:*file-editor-class* #:teditor-window #:make-edit-window
    #:editor-filename #:editor-window-editor #:text-highlight
    #:text-gutter-width #:draw-gutter #:text-area-width
-   #:lisp-indent-line #:lisp-indent-region #:lisp-indent-sexp #:*lisp-indent-hook*
+   ;; syntax-highlighting extension points (Common Lisp impls live in tvlisp;
+   ;; *lisp-indent-hook* / lisp-indent-* / match-paren-jump moved there too)
+   #:*text-colorizer* #:*paren-matcher*
    ;; resize
    #:apply-resize #:install-resize-handler
    ;; program / application
