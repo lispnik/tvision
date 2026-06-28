@@ -167,23 +167,8 @@
    #:make-mailbox #:mailbox-send #:mailbox-receive #:mailbox-try-receive
    #:run-on-ui #:drain-ui-callbacks #:install-ui-wakeup #:remove-ui-wakeup
    #:*ui-callbacks* #:*input-multiplexer* #:shutdown-background-threads
-   ;; thread monitor
-   #:tthread-list #:tthread-window #:make-thread-window #:tw-list
-   #:thread-list-refresh #:thread-list-kill #:thread-list-threads
-   #:thread-list-selected
-   #:+cm-thread-refresh+ #:+cm-thread-kill+
-   ;; repl
-   #:trepl-view #:make-repl-window #:repl-eval #:repl-package #:repl-print
-   #:ensure-repl-package #:repl-clear #:repl-history #:repl-history-file
-   #:repl-complete #:repl-inspect #:object->outline #:repl-load-file
-   #:tinspector-window #:*inspect-goto-hook* #:*load-notes-hook* #:repl-last-file
-   #:call-collecting-notes
-   #:save-repl-history #:load-repl-history #:*repl-debugger* #:popup-list
-   #:repl-backend-completions #:repl-backend-eval #:longest-common-prefix
-   #:*repl-async* #:repl-busy #:repl-interrupt #:repl-worker #:repl-submit
-   #:repl-hvar #:repl-hist-vars #:*repl-time* #:repl-step-eval
-   #:repl-call-on-worker
-   #:show-text-window #:show-text-dialog #:repl-replace-input
+   ;; NOTE: the thread-monitor and REPL symbols moved to the tvlisp project
+   ;; (src/threadmon.lisp, src/repl.lisp); they export into this package there.
    ;; menu
    #:tmenu-bar #:menu #:menu-item #:new-menu #:sub-menu #:menu-separator
    #:menu-items #:menu-bar-menu #:track-menu #:application-menu #:init-menu-bar

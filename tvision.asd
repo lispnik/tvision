@@ -46,9 +46,7 @@
                              (:file "colordialog")
                              (:file "help")
                              (:file "persist")
-                             (:file "stream")
-                             (:file "threadmon")
-                             (:file "repl")))))
+                             (:file "stream")))))
 
 (asdf:defsystem "tvision/tests"
   :description "Headless test suite for the Turbo Vision controls (uses FiveAM).

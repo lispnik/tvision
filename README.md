@@ -246,27 +246,23 @@ on a per-listener `sb-thread` worker; the worker→UI bridge in
 ## Testing
 
 The control suite runs on [FiveAM](https://github.com/lispci/fiveam) — the
-**only** external dependency, and a test-only one: the `tvision` library and the
-example binaries still build with nothing but SBCL.  Each test constructs a
-control, feeds events through `handle-event`, and asserts on state, data or
-rendered cells (thin `deftest`/`ok`/`is=` wrappers over FiveAM's `test`/`is`):
+**only** external dependency, and a test-only one: the `tvision` library itself
+builds with nothing but SBCL.  Each test constructs a control, feeds events
+through `handle-event`, and asserts on state, data or rendered cells (thin
+`deftest`/`ok`/`is=` wrappers over FiveAM's `test`/`is`):
 
 ```sh
-make test         # the FiveAM control suite + the tvlisp pty smoke tests
-make test-lisp    # just the FiveAM control suite (220 checks across 35 tests)
-make test-pty     # just the end-to-end pty smoke tests (builds & drives ./tvlisp)
+make test         # the FiveAM control suite (285 checks across 41 tests)
 # or:  sbcl --eval '(asdf:test-op :tvision/tests)'
 # or from Lisp: (asdf:load-system :tvision/tests) (tvision-tests:run-tests)
 ```
 
-`make test-pty` (in `tests/pty_smoke.py`) launches the built `tvlisp` binary in
-a pseudo-tty and asserts on the reconstructed screen, so the end-to-end example
-flows (REPL eval, editor, save, window list) are regression-guarded too.
-
 It exits non-zero on any failure (CI-ready) and covers geometry, the draw
 buffer, every control (clusters, lists, validators, collections, history,
-menus/`TMenuPopup`, colour selectors, file/chdir dialogs, the memo/editor), the
-concurrency mailbox, the thread monitor, and the REPL backend.
+menus/`TMenuPopup`, colour selectors, file/chdir dialogs, the memo/editor) and
+the concurrency mailbox.  The example app's own tests — the REPL backend, the
+debugger, the inspector, the thread monitor, and an end-to-end pty smoke test —
+live with it in [`../tvlisp`](../tvlisp).
 
 ## License
 
