@@ -10,6 +10,7 @@
   (expanded nil)
   (data nil)
   (color nil)     ; optional foreground colour index for this row (e.g. a git-status tint)
+  (loader nil)    ; optional (lambda () -> children) called on first expand (lazy trees)
   (setter nil))   ; optional (lambda (new-value)) writing DATA back to its place
 
 (defun outline-node (text &rest children)
@@ -17,6 +18,17 @@
   (let ((n (make-outline-node text children)))
     (setf (outline-node-expanded n) t)
     n))
+
+(defun outline-node-expandable-p (n)
+  "True when N can be expanded -- it has children, or a not-yet-loaded LOADER."
+  (or (outline-node-children n) (outline-node-loader n)))
+
+(defun outline-ensure-children (n)
+  "Lazily populate N's children from its LOADER the first time they are needed.
+A no-op for ordinary (eager) nodes.  Returns N."
+  (when (and (outline-node-loader n) (null (outline-node-children n)))
+    (setf (outline-node-children n) (funcall (outline-node-loader n))))
+  n)
 
 (defclass toutline (tscroller)
   ((roots   :initarg :roots :initform '() :accessor outline-roots)  ; list of top nodes
@@ -31,8 +43,10 @@
     (labels ((walk (nodes depth)
                (dolist (n nodes)
                  (push (cons n depth) out)
-                 (when (and (outline-node-children n) (outline-node-expanded n))
-                   (walk (outline-node-children n) (1+ depth))))))
+                 (when (outline-node-expanded n)
+                   (outline-ensure-children n)            ; lazy load on display
+                   (when (outline-node-children n)
+                     (walk (outline-node-children n) (1+ depth)))))))
       (walk (outline-roots ol) 0))
     (nreverse out)))
 
@@ -65,8 +79,9 @@
 
 (defun outline-toggle (ol)
   (let ((n (outline-current ol)))
-    (when (and n (outline-node-children n))
+    (when (and n (outline-node-expandable-p n))
       (setf (outline-node-expanded n) (not (outline-node-expanded n)))
+      (when (outline-node-expanded n) (outline-ensure-children n))
       (outline-update-limit ol)
       (draw-view ol)
       t)))
@@ -98,7 +113,7 @@
         (db-fill db #\Space attr)
         (when nd
           (destructuring-bind (node . depth) nd
-            (let* ((marker (cond ((null (outline-node-children node)) "  ")
+            (let* ((marker (cond ((not (outline-node-expandable-p node)) "  ")
                                  ((outline-node-expanded node) "- ")
                                  (t "+ ")))
                    (text (concatenate 'string
@@ -131,16 +146,16 @@
          ((= k +kb-home+)  (outline-focus ol 0))
          ((= k +kb-end+)   (outline-focus ol (1- (length (outline-visible ol)))))
          ((= k +kb-right+)
-          (cond ((and n (outline-node-children n) (not (outline-node-expanded n)))
+          (cond ((and n (outline-node-expandable-p n) (not (outline-node-expanded n)))
                  (outline-toggle ol))
-                ((and n (outline-node-children n))
+                ((and n (outline-node-expandable-p n))
                  (outline-focus ol (1+ (outline-focused ol))))))
          ((= k +kb-left+)
-          (cond ((and n (outline-node-children n) (outline-node-expanded n))
+          (cond ((and n (outline-node-expandable-p n) (outline-node-expanded n))
                  (outline-toggle ol))
                 (t (outline-focus ol (1- (outline-focused ol))))))
          ((or (= k +kb-enter+) (= ch +kb-space+))
-          (if (and n (outline-node-children n)) (outline-toggle ol) (outline-select ol)))
+          (if (and n (outline-node-expandable-p n)) (outline-toggle ol) (outline-select ol)))
          (t (setf handled nil)))
        (when handled (clear-event event))))))
 
