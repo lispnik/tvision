@@ -9,6 +9,7 @@
   (children '())
   (expanded nil)
   (data nil)
+  (color nil)     ; optional foreground colour index for this row (e.g. a git-status tint)
   (setter nil))   ; optional (lambda (new-value)) writing DATA back to its place
 
 (defun outline-node (text &rest children)
@@ -86,11 +87,17 @@
          (db (make-draw-buffer w)))
     (dotimes (row h)
       (let* ((i (+ dy row))
+             (nd (when (< i (length vis)) (nth i vis)))   ; (node . depth) or NIL
              (sel (and (= i (outline-focused ol)) active))
-             (attr (if sel focused normal)))
+             (col (and nd (outline-node-color (car nd))))
+             ;; a node colour tints the whole row (palette themes only -- on an
+             ;; RGB theme we can't cleanly graft a palette fg, so fall back)
+             (attr (cond (sel focused)
+                         ((and col (not (attr-rgb-p normal))) (make-attr col (attr-bg normal)))
+                         (t normal))))
         (db-fill db #\Space attr)
-        (when (< i (length vis))
-          (destructuring-bind (node . depth) (nth i vis)
+        (when nd
+          (destructuring-bind (node . depth) nd
             (let* ((marker (cond ((null (outline-node-children node)) "  ")
                                  ((outline-node-expanded node) "- ")
                                  (t "+ ")))

@@ -104,8 +104,9 @@
    ;; outline (tree view)
    #:toutline #:outline-node #:make-outline-node #:outline-node-text
    #:outline-node-children #:outline-node-expanded #:outline-node-data #:outline-node-setter
+   #:outline-node-color
    #:outline-roots #:outline-current #:outline-focus #:outline-focused
-   #:outline-update-limit #:outline-toggle
+   #:outline-update-limit #:outline-toggle #:outline-visible
    #:outline-select #:outline-command #:+cm-outline-item-selected+
    ;; html view (hypertext browser)
    #:thtml-view #:set-html #:html-source #:html-current-href #:html-focused-link
