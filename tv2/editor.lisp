@@ -18,6 +18,8 @@
    (cx       :initform 0 :accessor te-cx)
    (top      :initform 0 :accessor te-top)                ; first visible line / column
    (left     :initform 0 :accessor te-left)
+   (wrap     :initform nil :initarg :wrap :accessor te-wrap)   ; soft-wrap mode
+   (tsub     :initform 0 :accessor te-tsub)                ; sub-row within TOP when wrapping
    (anchor   :initform nil :accessor te-anchor)           ; selection origin (cons line col) or NIL
    (modified :initform nil :accessor te-modified)
    (filename :initform nil :initarg :filename :accessor te-filename)
@@ -63,14 +65,52 @@
   (setf (te-cy te) (max 0 (min (1- (te-nlines te)) (te-cy te)))
         (te-cx te) (max 0 (min (length (te-cur te)) (te-cx te)))))
 
+;;; visual-row model for soft-wrap: a logical line of length LEN occupies
+;;; (1+ floor(LEN/W)) visual rows; column C sits on sub-row floor(C/W), col mod(C/W).
+(defun te-vw (te) (max 1 (r-w (view-bounds te))))
+(defun %segs (len w) (max 1 (1+ (floor (max 0 len) w))))
+(defun te-cum-vrows (te line w)               ; visual rows occupied by lines [0, LINE)
+  (loop for i below line sum (%segs (length (te-line te i)) w)))
+(defun te-vrow->pos (te v w)                  ; absolute visual row -> (values line sub)
+  (let ((line 0))
+    (loop for n = (%segs (length (te-line te line)) w)
+          while (and (>= v n) (< line (1- (te-nlines te))))
+          do (decf v n) (incf line))
+    (values line (min v (1- (%segs (length (te-line te line)) w))))))
+
 (defun te-ensure-visible (te)
   (let ((b (view-bounds te)))
     (when b
-      (let ((h (r-h b)) (w (r-w b)))
-        (cond ((< (te-cy te) (te-top te)) (setf (te-top te) (te-cy te)))
-              ((>= (te-cy te) (+ (te-top te) h)) (setf (te-top te) (1+ (- (te-cy te) h)))))
-        (cond ((< (te-cx te) (te-left te)) (setf (te-left te) (te-cx te)))
-              ((>= (te-cx te) (+ (te-left te) w)) (setf (te-left te) (1+ (- (te-cx te) w)))))))))
+      (if (te-wrap te)
+          (let* ((w (te-vw te)) (h (r-h b))
+                 (curv (+ (te-cum-vrows te (te-cy te) w) (floor (te-cx te) w)))
+                 (topv (+ (te-cum-vrows te (te-top te) w) (te-tsub te))))
+            (cond ((< curv topv) (setf topv curv))
+                  ((>= curv (+ topv h)) (setf topv (1+ (- curv h)))))
+            (multiple-value-bind (l s) (te-vrow->pos te (max 0 topv) w)
+              (setf (te-top te) l (te-tsub te) s (te-left te) 0)))
+          (let ((h (r-h b)) (w (r-w b)))
+            (cond ((< (te-cy te) (te-top te)) (setf (te-top te) (te-cy te)))
+                  ((>= (te-cy te) (+ (te-top te) h)) (setf (te-top te) (1+ (- (te-cy te) h)))))
+            (cond ((< (te-cx te) (te-left te)) (setf (te-left te) (te-cx te)))
+                  ((>= (te-cx te) (+ (te-left te) w)) (setf (te-left te) (1+ (- (te-cx te) w))))))))))
+
+(defun te-vmove (te dir)
+  "Move the cursor one visual row (DIR -1/+1) in wrap mode, crossing sub-rows
+within a long line and spilling onto the next/previous logical line at the same
+visual column."
+  (let* ((w (te-vw te)) (seg (floor (te-cx te) w)) (vcol (mod (te-cx te) w)))
+    (if (plusp dir)
+        (if (< seg (1- (%segs (length (te-cur te)) w)))
+            (setf (te-cx te) (min (length (te-cur te)) (+ (* (1+ seg) w) vcol)))
+            (when (< (te-cy te) (1- (te-nlines te)))
+              (incf (te-cy te)) (setf (te-cx te) (min (length (te-cur te)) vcol))))
+        (if (plusp seg)
+            (setf (te-cx te) (+ (* (1- seg) w) vcol))
+            (when (plusp (te-cy te))
+              (decf (te-cy te))
+              (let ((segc (%segs (length (te-cur te)) w)))
+                (setf (te-cx te) (min (length (te-cur te)) (+ (* (1- segc) w) vcol)))))))))
 
 ;;; --- selection --------------------------------------------------------------
 
@@ -225,6 +265,9 @@ selection / an empty selection."
 ;;; --- drawing ----------------------------------------------------------------
 
 (defmethod draw ((te text-edit))
+  (if (te-wrap te) (te-draw-wrap te) (te-draw-flat te)))
+
+(defun te-draw-flat (te)
   (let* ((b (view-bounds te)) (h (r-h b)) (w (r-w b))
          (top (te-top te)) (left (te-left te))
          (norm (role :normal)) (selattr (role :focused))
@@ -250,6 +293,38 @@ selection / an empty selection."
                               (+ (tvision::rect-ay b) (- (te-cy te) top)))
       (tvision:show-cursor tvision:*screen*))))
 
+(defun te-draw-wrap (te)
+  (let* ((b (view-bounds te)) (h (r-h b)) (w (te-vw te))
+         (norm (role :normal)) (selattr (role :focused)) (color (te-colorizer te))
+         (line-i (te-top te)) (seg (te-tsub te))
+         (carry (when color (let ((in nil)) (dotimes (i (te-top te) in) (setf in (lisp-string-carry (te-line te i) in))))))
+         (attrs nil) (cur-line -1) (cursor-row nil) (cursor-col nil))
+    (dotimes (row h)
+      (let ((valid (< line-i (te-nlines te))))
+        (when valid
+          (let* ((line (te-line te line-i)) (start (* seg w)) (len (length line)))
+            (when (and color (/= cur-line line-i))                  ; colorize each logical line once
+              (multiple-value-setq (attrs carry) (funcall color line carry)) (setf cur-line line-i))
+            (dotimes (x w)
+              (let* ((col (+ start x))
+                     (ch (if (< col len) (char line col) #\Space))
+                     (attr (cond ((te-selected-p te line-i col) selattr)
+                                 ((and color attrs (< col (length attrs))) (aref attrs col))
+                                 (t norm))))
+                (%put-cell (+ (tvision::rect-ax b) x) (+ (tvision::rect-ay b) row) ch attr)))
+            ;; is the cursor on this visual row?
+            (when (and (= line-i (te-cy te)) (= seg (floor (te-cx te) w)))
+              (setf cursor-row row cursor-col (mod (te-cx te) w)))
+            ;; advance one visual row
+            (incf seg)
+            (when (>= seg (%segs len w)) (setf seg 0) (incf line-i))))
+        (unless valid
+          (dotimes (x w) (%put-cell (+ (tvision::rect-ax b) x) (+ (tvision::rect-ay b) row) #\Space norm)))))
+    (when (and (view-focused-p te) tvision:*screen* cursor-row)
+      (tvision:set-cursor-pos tvision:*screen*
+                              (+ (tvision::rect-ax b) cursor-col) (+ (tvision::rect-ay b) cursor-row))
+      (tvision:show-cursor tvision:*screen*))))
+
 ;;; --- key handling (dispatched directly) -------------------------------------
 
 (defun te-move (te e fn)
@@ -270,6 +345,7 @@ selection / an empty selection."
            (#\x (te-cut te) (te-ensure-visible te) (done))
            (#\v (te-paste te) (te-ensure-visible te) (done))
            (#\a (te-select-all te) (te-ensure-visible te) (done))
+           (#\w (setf (te-wrap te) (not (te-wrap te)) (te-left te) 0) (te-ensure-visible te) (done))
            (t (call-next-method))))
         ;; printable insert
         ((and (characterp ks) (graphic-char-p ks))
@@ -287,12 +363,14 @@ selection / an empty selection."
                                          (if (< (te-cx te) (length (te-cur te))) (incf (te-cx te))
                                              (when (< (te-cy te) (1- (te-nlines te)))
                                                (incf (te-cy te)) (setf (te-cx te) 0))))) (done))
-        ((eql ks :up)    (te-move te e (lambda () (decf (te-cy te)))) (done))
-        ((eql ks :down)  (te-move te e (lambda () (incf (te-cy te)))) (done))
+        ((eql ks :up)    (te-move te e (lambda () (if (te-wrap te) (te-vmove te -1) (decf (te-cy te))))) (done))
+        ((eql ks :down)  (te-move te e (lambda () (if (te-wrap te) (te-vmove te 1)  (incf (te-cy te))))) (done))
         ((eql ks :home)  (te-move te e (lambda () (setf (te-cx te) 0))) (done))
         ((eql ks :end)   (te-move te e (lambda () (setf (te-cx te) (length (te-cur te))))) (done))
-        ((eql ks :pgup)  (te-move te e (lambda () (decf (te-cy te) (max 1 (1- (r-h (view-bounds te))))))) (done))
-        ((eql ks :pgdn)  (te-move te e (lambda () (incf (te-cy te) (max 1 (1- (r-h (view-bounds te))))))) (done))
+        ((eql ks :pgup)  (te-move te e (lambda () (let ((n (max 1 (1- (r-h (view-bounds te))))))
+                                                   (if (te-wrap te) (dotimes (i n) (te-vmove te -1)) (decf (te-cy te) n))))) (done))
+        ((eql ks :pgdn)  (te-move te e (lambda () (let ((n (max 1 (1- (r-h (view-bounds te))))))
+                                                   (if (te-wrap te) (dotimes (i n) (te-vmove te 1)) (incf (te-cy te) n))))) (done))
         (t (call-next-method))))))               ; Esc / q bubble to the window
 
 ;;; --- the editor window ------------------------------------------------------
@@ -301,10 +379,10 @@ selection / an empty selection."
   (let ((te (find-view win 'edit)) (st (find-view win 'status)))
     (when (and te st)
       (setf (static-text-text st)
-            (format nil " ~a~:[~;*~]   L~d:C~d~:[~; (sel)~]   C-s save · C-z/C-y undo · C-c/x/v · C-a all · Esc quit "
+            (format nil " ~a~:[~;*~]   L~d:C~d~:[~; (sel)~]~:[~; WRAP~]   C-s save · C-z/y undo · C-c/x/v · C-w wrap · Esc quit "
                     (if (te-filename te) (file-namestring (te-filename te)) "scratch")
                     (te-modified te) (1+ (te-cy te)) (1+ (te-cx te))
-                    (te-selected-string te)))
+                    (te-selected-string te) (te-wrap te)))
       (invalidate st))))
 
 (defun run-editor (&optional path)
