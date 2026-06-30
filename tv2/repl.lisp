@@ -75,25 +75,49 @@
 
 ;;; --- the worker thread ------------------------------------------------------
 
+(defun %repl-debug (win condition)
+  "Worker thread, inside HANDLER-BIND: capture the live stack, ask the UI thread
+to show the restart picker (blocking here so the stack stays intact), then invoke
+the chosen restart -- transferring control, so this never returns normally."
+  (declare (ignore win))
+  (let ((bt (%capture-backtrace))
+        (restarts (compute-restarts condition))
+        (sem (sb-thread:make-semaphore)) (choice (list nil nil)))
+    (run-on-ui (lambda ()
+                 (unwind-protect                        ; ALWAYS release the worker
+                      (multiple-value-bind (idx val) (%debugger condition restarts bt)
+                        (setf (first choice) idx (second choice) val))
+                   (sb-thread:signal-semaphore sem))))
+    (sb-thread:wait-on-semaphore sem)
+    (let ((idx (first choice)) (val (second choice)))
+      (if idx
+          (let ((rs (nth idx restarts)))
+            (if (and val (plusp (length val)) (member (restart-name rs) '(use-value store-value)))
+                (invoke-restart rs (eval (read-from-string val)))
+                (invoke-restart rs)))
+          (invoke-restart (find-restart 'repl-abort))))))
+
 (defun %repl-eval (win input)
   "Worker thread: read+eval every form in INPUT under the listener's package,
 streaming output live, maintaining the CL history vars, and posting the result
-lines + new package + cleared busy flag back to the UI thread."
+lines + new package + cleared busy flag back to the UI thread.  Errors route to
+the cross-thread debugger (HANDLER-BIND keeps the stack live for the restart)."
   (let ((out (make-instance 'repl-stream :win win)) (msgs '()) (new-pkg nil))
     (let ((*standard-output* out) (*error-output* out) (*trace-output* out)
           (*package* (repl-package win)) (*read-eval* t))
-      (handler-case
-          (with-input-from-string (in input)
-            (loop for form = (read in nil :eof) until (eq form :eof)
-                  do (setf - form)
-                     (let ((vals (multiple-value-list (eval form))))
-                       (setf +++ ++  ++ +  + form
-                             /// //  // /  / vals
-                             *** **  ** *  * (first vals))
-                       (if vals
-                           (dolist (v vals) (push (format nil "=> ~a" (prin1-to-string v)) msgs))
-                           (push "; No values" msgs)))))
-        (error (e) (push (format nil ";; ~(~a~): ~a" (type-of e) e) msgs)))
+      (restart-case
+          (handler-bind ((error (lambda (e) (%repl-debug win e))))
+            (with-input-from-string (in input)
+              (loop for form = (read in nil :eof) until (eq form :eof)
+                    do (setf - form)
+                       (let ((vals (multiple-value-list (eval form))))
+                         (setf +++ ++  ++ +  + form
+                               /// //  // /  / vals
+                               *** **  ** *  * (first vals))
+                         (if vals
+                             (dolist (v vals) (push (format nil "=> ~a" (prin1-to-string v)) msgs))
+                             (push "; No values" msgs))))))
+        (repl-abort () (push ";; — aborted to top level —" msgs)))
       (setf new-pkg *package*))                         ; sticky IN-PACKAGE (captured before unbind)
     (finish-output out)
     (let ((lines (nreverse msgs)) (pkg new-pkg))
