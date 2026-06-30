@@ -37,7 +37,9 @@ event layers are new.")
    #:input-line #:input-text #:input-caret #:input-on-change
    #:list-box #:list-items #:list-selected #:list-on-activate
    #:scrollback #:scrollback-append #:scrollback-clear #:sb-scroll #:sb-follow
+   #:text-edit #:te-load #:te-save #:te-text #:te-set-text #:te-filename #:te-modified
    ;; demo + ported real windows
    #:run #:run-threadmon
    #:run-browser #:run-packages #:run-systems #:run-project
-   #:run-repl #:repl-window #:repl-package))
+   #:run-repl #:repl-window #:repl-package
+   #:run-editor))

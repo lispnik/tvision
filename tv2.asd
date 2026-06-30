@@ -26,4 +26,5 @@
                              (:file "threadmon")
                              (:file "browser")
                              (:file "project")
-                             (:file "repl")))))
+                             (:file "repl")
+                             (:file "editor")))))
