@@ -27,4 +27,5 @@
                              (:file "browser")
                              (:file "project")
                              (:file "repl")
-                             (:file "editor")))))
+                             (:file "editor")
+                             (:file "html")))))

@@ -42,4 +42,5 @@ event layers are new.")
    #:run #:run-threadmon
    #:run-browser #:run-packages #:run-systems #:run-project
    #:run-repl #:repl-window #:repl-package
-   #:run-editor))
+   #:run-editor
+   #:html-view #:set-html #:run-html))
