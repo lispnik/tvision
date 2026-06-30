@@ -202,7 +202,11 @@
            (:resize
             (let ((nx2 (max (+ ax 24) (min (1+ mx) (tvision::rect-bx c))))
                   (ny2 (max (+ ay 5)  (min (1+ my) (tvision::rect-by c)))))
-              (layout win (rect ax ay nx2 ny2)))))
+              (layout win (rect ax ay nx2 ny2))))
+           (:scroll
+            (multiple-value-bind (sx sy0 sy1) (window-vscroll-bounds win)
+              (declare (ignore sx))
+              (when sy0 (%scroll-from-click (window-scroll-target win) my sy0 sy1)))))
          (invalidate dt))))))
 
 (defun dt-window-click (dt win e)
@@ -212,6 +216,11 @@
       ((not (typep e 'mouse-down)) (handle-event win e))            ; wheel etc. -> widgets
       ((and (zerop ly) (<= 1 lx 3)) (dt-close-window dt win))       ; [✕] close box
       ((and (= lx (1- w)) (= ly (1- h))) (setf (dt-drag dt) (list :resize win)))  ; resize grip
+      ((and (= lx (1- w)) (window-scroll-target win) (>= ly 1) (<= ly (- h 2)))   ; frame scrollbar
+       (multiple-value-bind (sx sy0 sy1) (window-vscroll-bounds win)
+         (declare (ignore sx))
+         (%scroll-from-click (window-scroll-target win) (cdr (event-where e)) sy0 sy1))
+       (setf (dt-drag dt) (list :scroll win)))
       ((zerop ly) (setf (dt-drag dt) (list :move win lx ly)))       ; title bar -> move
       (t (handle-event win e)))                                     ; interior -> widgets
     (invalidate dt)))

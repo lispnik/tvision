@@ -9,7 +9,8 @@
   ((title   :initarg :title :initform "" :accessor window-title)
    (managed :initform nil :accessor window-managed)    ; hosted in a desktop (show close/resize affordances)
    (active  :initform t   :accessor window-active)      ; topmost/focused window (brighter frame)
-   (cleanup :initform nil :accessor window-cleanup))    ; thunk run when the desktop closes it
+   (cleanup :initform nil :accessor window-cleanup)     ; thunk run when the desktop closes it
+   (scroll-target :initform nil :accessor window-scroll-target))  ; scrollable view -> frame scrollbar
   (:metaclass reactive-class))
 
 (defmethod draw ((w window))
@@ -23,7 +24,10 @@
     (%text-at (+ x0 (max 1 (floor (- (tvision::rect-width b) (length (window-title w))) 2)))
               y0 (window-title w) frame)
     (dolist (sv (subviews w)) (draw sv))               ; children paint over the interior
-    (when (window-managed w)                           ; desktop affordances: close box + resize grip
+    (when (window-scroll-target w)                     ; scrollbar on the right frame edge
+      (draw-vscroll x1 (1+ y0) (1- y1)
+                    (scroll-pos (window-scroll-target w)) (scroll-max (window-scroll-target w))))
+    (when (window-managed w)                            ; desktop affordances: close box + resize grip
       (%text-at (+ x0 1) y0 "[✕]" frame)
       (%put-cell x1 y1 #\◢ frame))))
 

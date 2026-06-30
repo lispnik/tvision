@@ -102,6 +102,7 @@ get a lazy loader; files are leaves whose DATA is their relpath."
                        (1 (static-text :name 'echo :role :status :text " Right/Enter: expand (lazy) · Enter on a file: open "))
                        (1 (static-text :role :status
                             :text " Tab/arrows · type to filter to a flat match list · Esc: close ")))))))
+      (setf (window-scroll-target win) (find-view win 'tree))
       (values win (find-view win 'q)))))
 
 (defun run-project (&optional (dir "/Users/mkennedy/Projects/common-lisp/tvision/"))

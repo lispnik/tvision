@@ -208,7 +208,9 @@
         :input-focused  (tvision:make-attr 15 0)     ; white on black
         :error          (tvision:make-attr 15 4)     ; white on red
         :menu           (tvision:make-attr 0 7)      ; black on grey (menu dropdown)
-        :desktop        (tvision:make-attr 8 1))     ; dim ░ pattern on blue (the desktop)
+        :desktop        (tvision:make-attr 8 1)      ; dim ░ pattern on blue (the desktop)
+        :scrollbar      (tvision:make-attr 7 1)      ; scrollbar track
+        :scrollbar-thumb (tvision:make-attr 15 1))   ; arrows + thumb
   "Role -> packed attribute.")
 
 (defun role (key) (or (getf *theme* key) (tvision:make-attr 7 0)))
@@ -225,6 +227,25 @@
 
 (defun %text-at (x y string attr)
   (loop for i below (length string) do (%put-cell (+ x i) y (char string i) attr)))
+
+;;; A scrollable view answers this protocol; a window draws a scrollbar bound to
+;;; its SCROLL-TARGET, and the desktop maps clicks/drags on it to SCROLL-TO.
+(defgeneric scroll-pos  (v) (:documentation "First visible row (the scroll offset)."))
+(defgeneric scroll-max  (v) (:documentation "Maximum scroll offset (>= 0)."))
+(defgeneric scroll-page (v) (:documentation "Number of visible rows."))
+(defgeneric scroll-to   (v pos) (:documentation "Set the offset (clamped) and repaint."))
+
+(defun draw-vscroll (x y0 y1 pos max)
+  "Draw a vertical scrollbar in column X with arrows at rows Y0 (▲) and Y1 (▼)
+and a thumb positioned by POS/MAX over the track between them."
+  (let ((bar (role :scrollbar)) (thumb (role :scrollbar-thumb)))
+    (when (> y1 y0)
+      (%put-cell x y0 #\▲ thumb)
+      (%put-cell x y1 #\▼ thumb)
+      (let ((track (- y1 y0 1)))                       ; inner rows y0+1 .. y1-1
+        (loop for r from 1 below (- y1 y0) do (%put-cell x (+ y0 r) #\░ bar))
+        (when (and (plusp max) (plusp track))
+          (%put-cell x (+ y0 1 (max 0 (min (1- track) (floor (* pos (1- track)) max)))) #\█ thumb))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Focus + containers.  FOCUSABLE-P is a protocol GF (default NIL); a container

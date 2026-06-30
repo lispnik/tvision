@@ -36,6 +36,7 @@ writes the detail line.  Return (values WINDOW FOCUS)."
                        (1 (static-text :name 'detail :role :status :text " (type to filter · Enter to act on a row) "))
                        (1 (static-text :role :status
                             :text " Tab: focus · type to filter · Enter: act · Esc: close ")))))))
+      (setf (window-scroll-target win) (find-view win 'items))
       (values win (find-view win 'q))))
 
 (defun run-browser (title all-items on-activate)

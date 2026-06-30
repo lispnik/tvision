@@ -517,6 +517,7 @@ WINDOW FOCUS)."
                      (echo (format nil " external link: ~a   (a real browser would navigate here) " name))))))
       (setf (hv-on-link doc) (lambda (href) (show href))   ; SHOW renders a known page or echoes an external href
             (hv-on-status doc) #'echo)
+      (setf (window-scroll-target win) doc)
       ;; render AFTER the window is laid out (OPEN runs post-layout), so the
       ;; document wraps to the real width and link-scrolling has bounds
       (values win doc (lambda (s) (declare (ignore s)) (show page) nil)))))
