@@ -159,12 +159,19 @@ the cross-thread debugger (HANDLER-BIND keeps the stack live for the restart)."
       ((not (input-complete-p input))
        (when sb (scrollback-append sb ";; incomplete form — finish it and press Enter again
 ")))                                                    ; keep the text in the field
-      (t (when sb (scrollback-append sb (format nil "~a ~a~%" (repl-prompt-string win) input)))
-         (push input (repl-history win)) (setf (repl-hist-pos win) nil)
-         (setf (input-text v) "" (input-caret v) 0) (input-notify v)
-         (setf (repl-busy win) t) (%repl-update-prompt win)
-         (repl-ensure-worker win)
-         (sb-concurrency:send-message (repl-mailbox win) (cons :eval input))))))
+      (t (setf (input-text v) "" (input-caret v) 0) (input-notify v)
+         (repl-submit-string win input)))))
+
+(defun repl-submit-string (win input)
+  "Echo INPUT at WIN's prompt and evaluate it on the worker.  Used by Enter and
+by the editor's eval-defun / eval-region (programmatic submit)."
+  (unless (or (repl-busy win) (string-blank-p input))
+    (let ((sb (find-view win 'transcript)))
+      (when sb (scrollback-append sb (format nil "~a ~a~%" (repl-prompt-string win) input))))
+    (push input (repl-history win)) (setf (repl-hist-pos win) nil (repl-busy win) t)
+    (%repl-update-prompt win)
+    (repl-ensure-worker win)
+    (sb-concurrency:send-message (repl-mailbox win) (cons :eval input))))
 
 (defun %repl-recall (v text pos)
   (let ((win (view-root v)))

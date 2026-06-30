@@ -510,14 +510,21 @@ or a regex per line when REGEX).  Return the number of replacements."
         (destructuring-bind (find repl regex) r
           (te-replace-all te find repl :regex regex))))))
 
+;;; Set by an embedding app (tvlisp-tv2) to "evaluate the form/region at point in
+;;; the REPL".  When bound, the editor offers an Eval chip.
+(defvar *editor-eval-fn* nil)
+
 (defmethod status-hints ((te text-edit))   ; chips the desktop shows while the editor is focused
-  (list (cons "Find" (lambda () (%editor-find te)))
+  (append
+   (when *editor-eval-fn* (list (cons "Eval" (lambda () (funcall *editor-eval-fn* te)))))
+   (list
+        (cons "Find" (lambda () (%editor-find te)))
         (cons "Next" (lambda () (te-find-next te)))
         (cons "Replace" (lambda () (%editor-replace te)))
         (cons "Undo" (lambda () (te-undo! te)))
         (cons "Redo" (lambda () (te-redo! te)))
         (cons (if (te-wrap te) "Wrap:on" "Wrap:off")
-              (lambda () (setf (te-wrap te) (not (te-wrap te)) (te-left te) 0) (te-ensure-visible te) (invalidate te)))))
+              (lambda () (setf (te-wrap te) (not (te-wrap te)) (te-left te) 0) (te-ensure-visible te) (invalidate te))))))
 
 (defclass editor-window (window) () (:metaclass reactive-class))
 (defmethod draw :before ((w editor-window)) (%editor-status w))   ; keep the status line live each repaint

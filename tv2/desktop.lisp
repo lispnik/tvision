@@ -11,6 +11,7 @@
 (in-package #:tv2)
 
 (defvar *app-done* nil "Set by File→Exit to leave the desktop loop.")
+(defvar *desktop* nil "The running desktop instance (for cross-window actions like eval-in-REPL).")
 
 ;;; --- status bar -------------------------------------------------------------
 
@@ -500,6 +501,12 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                       (list "HTML browser"    (lambda () (dt-open dt (lambda () (make-help :html)))))
                       (list "Thread monitor"  (lambda () (dt-open dt (lambda () (make-help :threads))))))))))
 
+(defun ensure-repl ()
+  "The desktop's REPL window, opening one if none is present.  Returns it."
+  (when *desktop*
+    (or (find :repl (dt-windows *desktop*) :key #'window-kind)
+        (progn (dt-open *desktop* :repl) (dt-top *desktop*)))))
+
 (defun run-desktop ()
   "Run the tv2 IDE: a Turbo-Vision-style desktop with a menu bar, a status bar,
 and movable / resizable / overlapping windows (drag the title bar, drag the ◢
@@ -509,7 +516,7 @@ grip, click [✕] to close; Window menu tiles/cascades).  Returns on File→Exit
       (setf (dt-menubar dt)   (make-instance 'menu-bar :menus (%desktop-menus dt))
             (dt-statusbar dt)  (make-instance 'status-bar :provider (lambda () (dt-status-items dt))))
       (layout dt (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
-      (setf *root* dt *ui-thread* sb-thread:*current-thread* *app-done* nil *dirty* t)
+      (setf *root* dt *desktop* dt *ui-thread* sb-thread:*current-thread* *app-done* nil *dirty* t)
       (dt-load-layout dt)                                    ; restore the previous session's windows
       (loop until *app-done* do
         (drain-ui-callbacks)
