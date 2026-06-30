@@ -365,7 +365,8 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                       (cons "Exit"      (lambda () (setf *app-done* t))))))
     (when top
       (setf chips (append (list (cons "Close" (lambda () (dt-close-window dt top)))) chips
-                          (status-hints (container-focus top)))))
+                          (status-hints top)                       ; the window's own chips (any focus)
+                          (status-hints (container-focus top)))))   ; plus the focused widget's
     chips))
 
 ;;; --- a dialog demonstrating field validators --------------------------------

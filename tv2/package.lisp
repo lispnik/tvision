@@ -46,7 +46,7 @@ event layers are new.")
    #:flex-score #:fuzzy-filter
    ;; demo + ported real windows
    #:run #:run-threadmon
-   #:run-browser #:run-packages #:run-systems #:run-project
+   #:run-browser #:run-packages #:run-systems #:run-project #:*project-status-fn* #:*project-grep-fn*
    #:run-repl #:repl-window #:repl-package #:*repl-eval-fn* #:repl-hist-vars #:repl-busy #:repl-submit-string
    #:run-editor #:*editor-eval-fn* #:*editor-completions-fn* #:*paren-matcher*
    #:html-view #:set-html #:run-html
