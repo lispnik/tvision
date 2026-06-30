@@ -19,9 +19,11 @@ new. Every real tvlisp window has been rebuilt on it as a working demo.
 
 The IDE shell — a Turbo-Vision-style **menu bar**, **status bar**, and a desktop
 that hosts the ported windows (REPL with the SLDB debugger, the syntax-
-highlighting editor, the git project tree, the HTML browser with find-in-page):
+highlighting editor, the git project tree, the HTML browser with find-in-page),
+plus the **Inspect** and **Tools** menus: tracing, a single-stepper that surfaces
+in the debugger, the statistical profiler, the object inspector, and Describe:
 
-![The tv2 IDE: menu bar, desktop, and the ported windows in action](../media/tv2-ide.gif)
+![The tv2 IDE: menu bar, desktop, tracing, stepping, profiling, and the inspector in action](../media/tv2-ide.gif)
 
 ## What's different from classic Turbo Vision
 
