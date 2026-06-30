@@ -25,7 +25,9 @@
    (busy     :initform nil  :accessor repl-busy)        ; evaluating? (input ignored while t)
    (worker   :initform nil  :accessor repl-worker)
    (mailbox  :initform nil  :accessor repl-mailbox)
-   (hist-vars :initform nil :accessor repl-hist-vars))   ; per-listener CL history-var state (for a backend)
+   (hist-vars :initform nil :accessor repl-hist-vars)    ; per-listener CL history-var state (for a backend)
+   (last-value   :initform nil :accessor repl-last-value)    ; most recent primary result (object clipboard)
+   (last-value-p :initform nil :accessor repl-last-value-p))
   (:metaclass reactive-class))
 
 (defun repl-prompt-string (win)
@@ -118,6 +120,7 @@ the cross-thread debugger (HANDLER-BIND keeps the stack live for the restart)."
               (loop for form = (read in nil :eof) until (eq form :eof)
                     do (setf - form)
                        (let ((vals (multiple-value-list (eval form))))
+                         (when vals (setf (repl-last-value win) (first vals) (repl-last-value-p win) t))
                          (setf +++ ++  ++ +  + form
                                /// //  // /  / vals
                                *** **  ** *  * (first vals))

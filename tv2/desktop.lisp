@@ -437,26 +437,38 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
 (defun %desktop-file () (merge-pathnames ".tv2-desktop" (user-homedir-pathname)))
 
 (defun dt-save-layout (dt &optional (path (%desktop-file)))
-  "Write the open windows (kind + bounds, Z-order; editor filename) to PATH."
+  "Write the open windows (kind + bounds, Z-order) to PATH.  Editors also save
+their filename and -- for scratch or modified buffers -- their text, so a full
+session (including unsaved work) is restored."
   (let ((layout (loop for w in (dt-windows dt) for k = (window-kind w) when k
                       collect (let ((b (view-bounds w)))
                                 (list k (tvision::rect-ax b) (tvision::rect-ay b)
                                       (tvision::rect-bx b) (tvision::rect-by b)
                                       (and (eq k :editor)
                                            (let ((te (find-view w 'edit)))
-                                             (and te (te-filename te) (namestring (te-filename te))))))))))
+                                             (when te
+                                               (list (and (te-filename te) (namestring (te-filename te)))
+                                                     (when (or (te-modified te) (null (te-filename te)))
+                                                       (te-text te)))))))))))
     (ignore-errors
      (with-open-file (s path :direction :output :if-exists :supersede :if-does-not-exist :create)
        (prin1 layout s)))
     layout))
 
 (defun dt-load-layout (dt &optional (path (%desktop-file)))
-  "Reopen the windows recorded in PATH at their saved positions."
+  "Reopen the windows recorded in PATH at their saved positions, restoring saved
+editor buffer text."
   (dolist (entry (ignore-errors (with-open-file (s path :if-does-not-exist nil) (and s (read s nil nil)))))
     (ignore-errors
      (destructuring-bind (kind x0 y0 x1 y1 &optional extra) entry
        (multiple-value-bind (win focus open)
-           (if (eq kind :editor) (make-editor extra)
+           (if (eq kind :editor)
+               ;; EXTRA is (filename text) -- or, from older sessions, a bare filename string
+               (let ((fn (if (consp extra) (first extra) extra))
+                     (txt (and (consp extra) (second extra))))
+                 (multiple-value-bind (w f) (make-editor fn)
+                   (when txt (let ((te (find-view w 'edit))) (when te (te-set-text te txt) (setf (te-modified te) t))))
+                   (values w f nil)))
                (let ((b (cdr (assoc kind *window-builders*)))) (when b (funcall b))))
          (when win (dt-add dt win focus open kind (rect x0 y0 x1 y1)))))))
   (dt-refocus dt) (invalidate dt))

@@ -270,6 +270,33 @@ view for Back)."
             (dt-open *desktop* (lambda () (make-inspector val (string-trim " " str))))
             (multiple-value-bind (w f) (make-inspector val (string-trim " " str)) (run-view w :focus f)))))))
 
+;;; --- object clipboard (the `*' register) ------------------------------------
+
+(defvar *clip-object* nil)
+(defvar *clip-present* nil)
+
+(defun do-clip-last-value ()
+  "Stash the REPL's most recent result into the object clipboard."
+  (let ((r (and *desktop* (find :repl (dt-windows *desktop*) :key #'window-kind))))
+    (if (and r (repl-last-value-p r))
+        (progn (setf *clip-object* (repl-last-value r) *clip-present* t)
+               (%tool-note (format nil "clipped *: ~a" (%insp-repr (repl-last-value r)))))
+        (%tool-note "no REPL value to clip yet — evaluate something first"))))
+
+(defun do-inspect-clipped ()
+  (if *clip-present*
+      (if *desktop*
+          (dt-open *desktop* (lambda () (make-inspector *clip-object* "*")))
+          (multiple-value-bind (w f) (make-inspector *clip-object* "*") (run-view w :focus f)))
+      (%open-output " Object * " "Nothing clipped yet (Inspect → Clip last value).")))
+
+(defun do-insert-clipped ()
+  "Insert the clipped object's printed form into the focused editor."
+  (let ((te (%focused-editor)))
+    (cond ((not *clip-present*) (%tool-note "nothing clipped yet"))
+          ((null te) (%tool-note "focus an editor to insert the clipped object"))
+          (t (te-insert te (prin1-to-string *clip-object*)) (te-ensure-visible te) (invalidate te)))))
+
 ;;; --- register with the desktop: builders + an Inspect menu ------------------
 
 (setf *window-builders*
@@ -284,5 +311,9 @@ view for Back)."
               (list "Apropos…"         (lambda () (do-apropos)))
               (list "Describe…"        (lambda () (do-describe)))
               (list "Macroexpand…"     (lambda () (do-macroexpand)))
-              (list "Inspect…"         (lambda () (do-inspect)))))
+              (list "Inspect…"         (lambda () (do-inspect)))
+              (list "Object *" :submenu
+                    (list "Clip last value"  (lambda () (do-clip-last-value)))
+                    (list "Inspect *"        (lambda () (do-inspect-clipped)))
+                    (list "Insert * as text" (lambda () (do-insert-clipped))))))
       *extra-menus*)
