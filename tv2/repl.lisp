@@ -77,25 +77,27 @@
 
 (defun %repl-debug (win condition)
   "Worker thread, inside HANDLER-BIND: capture the live stack, ask the UI thread
-to show the restart picker (blocking here so the stack stays intact), then invoke
-the chosen restart -- transferring control, so this never returns normally."
+to show the SLDB picker (blocking here so the stack -- and the LIVE frames --
+stay intact), then carry out the chosen action: invoke a restart, or return a
+form's values from a chosen frame.  Transfers control, so it never returns."
   (declare (ignore win))
-  (let ((bt (%capture-backtrace))
-        (restarts (compute-restarts condition))
-        (sem (sb-thread:make-semaphore)) (choice (list nil nil)))
-    (run-on-ui (lambda ()
-                 (unwind-protect                        ; ALWAYS release the worker
-                      (multiple-value-bind (idx val) (%debugger condition restarts bt)
-                        (setf (first choice) idx (second choice) val))
-                   (sb-thread:signal-semaphore sem))))
-    (sb-thread:wait-on-semaphore sem)
-    (let ((idx (first choice)) (val (second choice)))
-      (if idx
-          (let ((rs (nth idx restarts)))
-            (if (and val (plusp (length val)) (member (restart-name rs) '(use-value store-value)))
-                (invoke-restart rs (eval (read-from-string val)))
-                (invoke-restart rs)))
-          (invoke-restart (find-restart 'repl-abort))))))
+  (multiple-value-bind (frames lives) (%capture-backtrace)
+    (let ((restarts (compute-restarts condition))
+          (sem (sb-thread:make-semaphore)) (choice (list nil)))
+      (run-on-ui (lambda ()
+                   (unwind-protect                      ; ALWAYS release the worker
+                        (setf (first choice) (%debugger condition restarts frames))
+                     (sb-thread:signal-semaphore sem))))
+      (sb-thread:wait-on-semaphore sem)
+      (let ((c (first choice)))
+        (cond
+          ((null c) (invoke-restart (find-restart 'repl-abort)))
+          ((eq (first c) :frame-return) (%frame-return lives (second c) (third c) *package*))
+          ((eq (first c) :restart)
+           (let ((rs (nth (second c) restarts)) (val (third c)))
+             (if (and rs val (plusp (length val)) (member (restart-name rs) '(use-value store-value)))
+                 (invoke-restart rs (eval (read-from-string val)))
+                 (if rs (invoke-restart rs) (invoke-restart (find-restart 'repl-abort)))))))))))
 
 (defun %repl-eval (win input)
   "Worker thread: read+eval every form in INPUT under the listener's package,

@@ -139,7 +139,8 @@
   ((items       :initarg :items :initform '() :accessor list-items)
    (selected    :initform 0 :accessor list-selected)
    (top         :initform 0 :accessor list-top)            ; first visible row
-   (on-activate :initarg :on-activate :initform nil :accessor list-on-activate))
+   (on-activate :initarg :on-activate :initform nil :accessor list-on-activate)
+   (on-select   :initarg :on-select   :initform nil :accessor list-on-select))   ; fired when selection moves
   (:metaclass reactive-class))
 
 (defmethod focusable-p ((lb list-box)) t)
@@ -151,11 +152,13 @@
         (cond ((< sel top) (setf (list-top lb) sel))
               ((>= sel (+ top h)) (setf (list-top lb) (1+ (- sel h)))))))))
 
+(defun list-notify (lb) (when (list-on-select lb) (funcall (list-on-select lb) lb)))
+
 (defun list-move (lb delta)
   (let ((n (length (list-items lb))))
     (when (plusp n)
       (setf (list-selected lb) (min (1- n) (max 0 (+ (list-selected lb) delta))))
-      (list-scroll-fix lb))))
+      (list-scroll-fix lb) (list-notify lb))))
 
 (defmethod draw ((lb list-box))
   (let* ((b (view-bounds lb)) (h (tvision::rect-height b)) (w (tvision::rect-width b))
@@ -173,8 +176,8 @@
     (cond
       ((eql ks :up)    (list-move lb -1) (setf (handled-p e) t))
       ((eql ks :down)  (list-move lb 1)  (setf (handled-p e) t))
-      ((eql ks :home)  (setf (list-selected lb) 0) (list-scroll-fix lb) (setf (handled-p e) t))
-      ((eql ks :end)   (setf (list-selected lb) (max 0 (1- n))) (list-scroll-fix lb) (setf (handled-p e) t))
+      ((eql ks :home)  (setf (list-selected lb) 0) (list-scroll-fix lb) (list-notify lb) (setf (handled-p e) t))
+      ((eql ks :end)   (setf (list-selected lb) (max 0 (1- n))) (list-scroll-fix lb) (list-notify lb) (setf (handled-p e) t))
       ((eql ks :enter) (when (and (list-on-activate lb) (< (list-selected lb) n))
                          (funcall (list-on-activate lb) lb (nth (list-selected lb) (list-items lb))))
                        (setf (handled-p e) t))
