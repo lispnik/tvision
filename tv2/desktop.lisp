@@ -46,14 +46,17 @@
 (defclass menu-bar (view)
   ((menus  :initarg :menus :initform '() :accessor menu-menus)
    (active :initform 0 :accessor menu-active)                    ; open menu index, or NIL
-   (sel    :initform 0 :accessor menu-sel))
+   (sel    :initform 0 :accessor menu-sel)
+   (sub    :initform nil :accessor menu-sub))                    ; open submenu index, or NIL
   (:metaclass reactive-class))
 
 (defun ctrl (ch) (code-char (logand (char-code (char-upcase ch)) #x1f)))   ; (ctrl #\o) -> ^O keysym
-(defun item-label   (it) (first it))
-(defun item-thunk   (it) (second it))
-(defun item-accel   (it) (third it))
-(defun item-enabled (it) (let ((f (fourth it))) (or (null f) (funcall f))))
+(defun item-label    (it) (first it))
+(defun item-submenu-p (it) (and (consp it) (eq (second it) :submenu)))      ; (LABEL :submenu item...)
+(defun item-thunk    (it) (unless (item-submenu-p it) (second it)))
+(defun item-accel    (it) (unless (item-submenu-p it) (third it)))          ; submenu parents have no accel
+(defun item-enabled  (it) (let ((f (and (not (item-submenu-p it)) (fourth it)))) (or (null f) (funcall f))))
+(defun item-submenu   (it) (cddr it))
 (defun menu-items   (mb) (cdr (nth (menu-active mb) (menu-menus mb))))
 (defun menu-hotkey  (m)  (and (plusp (length (car m))) (char-downcase (char (car m) 0))))
 
@@ -79,29 +82,51 @@
         (%put-cell (+ ax x 1) ay (char label 0) (if open attr hot))   ; highlight the hotkey letter
         (when open
           (let* ((items (cdr menu)) (dx (+ ax x)) (dy (1+ ay)) (mw (menu-dropdown-width items)))
-            (loop for it in items for r from 0 do
-              (let* ((on (= r (menu-sel mb))) (en (item-enabled it))
-                     (ia (cond ((and on en) (role :focused)) (en (role :menu)) (t (role :menu-disabled)))))
-                (loop for k below mw do (%put-cell (+ dx k) (+ dy r) #\Space ia))
-                (%text-at (+ dx 1) (+ dy r) (item-label it) ia)
-                (when (item-accel it)
-                  (let ((a (accel-label (item-accel it))))
-                    (%text-at (+ dx mw -1 (- (length a))) (+ dy r) a ia)))))))
+            (flet ((draw-items (items items-x items-y sel)
+                     (loop for it in items for r from 0 do
+                       (let* ((on (eql r sel)) (en (item-enabled it))
+                              (ia (cond ((and on en) (role :focused)) (en (role :menu)) (t (role :menu-disabled))))
+                              (mww (menu-dropdown-width items)))
+                         (loop for k below mww do (%put-cell (+ items-x k) (+ items-y r) #\Space ia))
+                         (%text-at (+ items-x 1) (+ items-y r) (item-label it) ia)
+                         (cond ((item-submenu-p it) (%put-cell (+ items-x mww -2) (+ items-y r) #\▶ ia))
+                               ((item-accel it) (let ((a (accel-label (item-accel it))))
+                                                  (%text-at (+ items-x mww -1 (- (length a))) (+ items-y r) a ia))))))))
+              (draw-items items dx dy (menu-sel mb))
+              (when (menu-sub mb)                                      ; second-level dropdown
+                (let ((parent (nth (menu-sel mb) items)))
+                  (when (item-submenu-p parent)
+                    (draw-items (item-submenu parent) (+ dx mw) (+ dy (menu-sel mb)) (menu-sub mb))))))))
         (incf x (+ 2 (length label)))))))
 
 (defun menu-invoke-sel (mb)
+  "Open a submenu parent, or invoke a normal selected item."
   (let ((it (nth (menu-sel mb) (menu-items mb))))
-    (when (and it (item-enabled it) (item-thunk it)) (funcall (item-thunk it)))))
+    (cond ((null it) nil)
+          ((item-submenu-p it) (setf (menu-sub mb) 0) (invalidate mb))
+          ((and (item-enabled it) (item-thunk it)) (funcall (item-thunk it))))))
 
 (defmethod handle-event ((mb menu-bar) (e key-event))
   (when (menu-active mb)
     (let ((ks (event-keysym e)) (n (length (menu-menus mb))) (items (menu-items mb)))
-      (cond
-        ((eql ks :left)  (setf (menu-active mb) (mod (1- (menu-active mb)) n) (menu-sel mb) 0) (invalidate mb) (setf (handled-p e) t))
-        ((eql ks :right) (setf (menu-active mb) (mod (1+ (menu-active mb)) n) (menu-sel mb) 0) (invalidate mb) (setf (handled-p e) t))
-        ((eql ks :up)    (setf (menu-sel mb) (mod (1- (menu-sel mb)) (length items))) (invalidate mb) (setf (handled-p e) t))
-        ((eql ks :down)  (setf (menu-sel mb) (mod (1+ (menu-sel mb)) (length items))) (invalidate mb) (setf (handled-p e) t))
-        ((eql ks :enter) (menu-invoke-sel mb) (setf (handled-p e) t))))))
+      (if (menu-sub mb)                                            ; navigating an open submenu
+          (let ((subs (item-submenu (nth (menu-sel mb) items))))
+            (cond
+              ((eql ks :up)   (setf (menu-sub mb) (mod (1- (menu-sub mb)) (length subs))) (invalidate mb) (setf (handled-p e) t))
+              ((eql ks :down) (setf (menu-sub mb) (mod (1+ (menu-sub mb)) (length subs))) (invalidate mb) (setf (handled-p e) t))
+              ((member ks '(:left :esc)) (setf (menu-sub mb) nil) (invalidate mb) (setf (handled-p e) t))
+              ((eql ks :enter) (let ((it (nth (menu-sub mb) subs)))
+                                 (when (and it (item-enabled it) (item-thunk it)) (funcall (item-thunk it))))
+                               (setf (handled-p e) t))))
+          (cond
+            ((eql ks :left)  (setf (menu-active mb) (mod (1- (menu-active mb)) n) (menu-sel mb) 0 (menu-sub mb) nil) (invalidate mb) (setf (handled-p e) t))
+            ((eql ks :right) (let ((it (nth (menu-sel mb) items)))
+                               (if (item-submenu-p it) (setf (menu-sub mb) 0)
+                                   (setf (menu-active mb) (mod (1+ (menu-active mb)) n) (menu-sel mb) 0)))
+                             (invalidate mb) (setf (handled-p e) t))
+            ((eql ks :up)    (setf (menu-sel mb) (mod (1- (menu-sel mb)) (length items)) (menu-sub mb) nil) (invalidate mb) (setf (handled-p e) t))
+            ((eql ks :down)  (setf (menu-sel mb) (mod (1+ (menu-sel mb)) (length items)) (menu-sub mb) nil) (invalidate mb) (setf (handled-p e) t))
+            ((eql ks :enter) (menu-invoke-sel mb) (setf (handled-p e) t)))))))
 
 (defun menu-hotkey-index (mb ch)
   (position (char-downcase ch) (menu-menus mb) :key #'menu-hotkey))
@@ -110,7 +135,7 @@
   "Thunk for an enabled item whose accelerator is KS, anywhere in the menus."
   (loop for menu in (menu-menus mb) thereis
         (loop for it in (cdr menu)
-              when (and (item-accel it) (eql (item-accel it) ks) (item-enabled it))
+              when (and (not (item-submenu-p it)) (item-accel it) (eql (item-accel it) ks) (item-enabled it))
                 return (item-thunk it))))
 
 (defun menu-title-x (mb i)
@@ -120,25 +145,42 @@
   (when (menu-active mb)
     (values (menu-title-x mb (menu-active mb)) (menu-dropdown-width (menu-items mb)))))
 
+(defun menu-sub-cols (mb)
+  "(values SX SY0 COUNT WIDTH) of the open submenu dropdown, or NIL."
+  (when (and (menu-active mb) (menu-sub mb))
+    (let ((parent (nth (menu-sel mb) (menu-items mb))))
+      (when (item-submenu-p parent)
+        (multiple-value-bind (x0 mw) (menu-dropdown-cols mb)
+          (values (+ x0 mw) (1+ (menu-sel mb)) (length (item-submenu parent))
+                  (menu-dropdown-width (item-submenu parent))))))))
+
 (defun menu-hit-p (mb x y)
   (or (zerop y)
       (and (menu-active mb) (plusp y) (<= y (length (menu-items mb)))
            (multiple-value-bind (x0 mw) (menu-dropdown-cols mb)
-             (and x0 (>= x x0) (< x (+ x0 mw)))))))
+             (and x0 (>= x x0) (< x (+ x0 mw)))))
+      (multiple-value-bind (sx sy0 cnt smw) (menu-sub-cols mb)   ; open submenu region
+        (and sx (>= x sx) (< x (+ sx smw)) (>= y sy0) (< y (+ sy0 cnt))))))
 
 (defmethod handle-event ((mb menu-bar) (e mouse-down))
   (let ((col (mouse-col mb e)) (row (mouse-row mb e)))
-    (if (zerop row)                                   ; clicked a title -> open that menu
-        (let ((x 1))
-          (loop for menu in (menu-menus mb) for i from 0 do
-            (let ((tw (+ 2 (length (car menu)))))
-              (when (and (>= col x) (< col (+ x tw)))
-                (setf (menu-active mb) i (menu-sel mb) 0) (invalidate mb) (return))
-              (incf x tw))))
-        (when (menu-active mb)                        ; clicked a dropdown item -> invoke if enabled
-          (let ((idx (1- row)) (items (menu-items mb)))
-            (when (and (>= idx 0) (< idx (length items)))
-              (setf (menu-sel mb) idx) (invalidate mb) (menu-invoke-sel mb)))))
+    (multiple-value-bind (sx sy0 cnt smw) (menu-sub-cols mb)
+      (cond
+        ((and sx (>= col sx) (< col (+ sx smw)) (>= row sy0) (< row (+ sy0 cnt)))   ; submenu item
+         (let* ((idx (- row sy0)) (subs (item-submenu (nth (menu-sel mb) (menu-items mb)))) (it (nth idx subs)))
+           (setf (menu-sub mb) idx) (invalidate mb)
+           (when (and it (item-enabled it) (item-thunk it)) (funcall (item-thunk it)))))
+        ((zerop row)                                  ; clicked a title -> open that menu
+         (let ((x 1))
+           (loop for menu in (menu-menus mb) for i from 0 do
+             (let ((tw (+ 2 (length (car menu)))))
+               (when (and (>= col x) (< col (+ x tw)))
+                 (setf (menu-active mb) i (menu-sel mb) 0 (menu-sub mb) nil) (invalidate mb) (return))
+               (incf x tw)))))
+        ((menu-active mb)                             ; clicked a dropdown item -> invoke / open submenu
+         (let ((idx (1- row)) (items (menu-items mb)))
+           (when (and (>= idx 0) (< idx (length items)))
+             (setf (menu-sel mb) idx (menu-sub mb) nil) (invalidate mb) (menu-invoke-sel mb))))))
     (setf (handled-p e) t)))
 
 ;;; --- desktop ----------------------------------------------------------------
@@ -176,7 +218,8 @@
 (defun dt-refocus (dt)
   "Keep the menu live only when no window is open."
   (setf (menu-active (dt-menubar dt)) (if (dt-windows dt) nil 0)
-        (menu-sel (dt-menubar dt)) 0))
+        (menu-sel (dt-menubar dt)) 0
+        (menu-sub (dt-menubar dt)) nil))
 
 (defun dt-open (dt make-fn)
   "Open MAKE-FN's window on the desktop at a cascade offset, focused on top."
@@ -391,7 +434,14 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                 (list "Exit"         (lambda () (setf *app-done* t)) (ctrl #\q)))
           (list "Help"
                 (list "Contents"     (lambda () (dt-open dt (lambda () (make-help :general)))))
-                (list "This window"  (lambda () (dt-help dt)) :f1)))))
+                (list "This window"  (lambda () (dt-help dt)) :f1)
+                (list "Topics" :submenu                       ; a nested submenu
+                      (list "Lisp REPL"       (lambda () (dt-open dt (lambda () (make-help :repl)))))
+                      (list "Text editor"     (lambda () (dt-open dt (lambda () (make-help :editor)))))
+                      (list "Project manager" (lambda () (dt-open dt (lambda () (make-help :project)))))
+                      (list "Browsers"        (lambda () (dt-open dt (lambda () (make-help :browser)))))
+                      (list "HTML browser"    (lambda () (dt-open dt (lambda () (make-help :html)))))
+                      (list "Thread monitor"  (lambda () (dt-open dt (lambda () (make-help :threads))))))))))
 
 (defun run-desktop ()
   "Run the tv2 IDE: a Turbo-Vision-style desktop with a menu bar, a status bar,
