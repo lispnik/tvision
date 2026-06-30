@@ -18,4 +18,5 @@
                 :components ((:file "package")
                              (:file "kernel")
                              (:file "outline")
-                             (:file "widgets")))))
+                             (:file "widgets")
+                             (:file "layout")))))

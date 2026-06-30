@@ -21,8 +21,10 @@ event layers are new.")
    #:command #:command-name #:command-enabled-p #:register-command
    #:define-command #:perform
    ;; theming + focus + containers
-   #:*theme* #:role #:focusable-p #:view-focused-p
-   #:container #:subviews #:container-focus #:add-subview #:focus-next
+   #:*theme* #:role #:focusable-p #:view-focused-p #:view-name #:view-root #:find-view
+   #:container #:subviews #:container-focus #:add-subview #:focus-next #:all-focusables
+   ;; layout DSL
+   #:layout #:stack #:row #:add-laid #:rect #:ui
    ;; widgets
    #:outline #:outline-roots #:outline-focused
    #:window #:window-title #:button #:button-label #:button-command #:static-text

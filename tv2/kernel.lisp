@@ -29,11 +29,22 @@
 (defclass view ()
   ((bounds :initarg :bounds :initform nil :accessor view-bounds)
    (owner  :initarg :owner  :initform nil :accessor view-owner)
+   (name   :initarg :name   :initform nil :accessor view-name)
    (keymap :initarg :keymap :initform nil :accessor view-keymap))
   (:metaclass reactive-class))
 
 (defgeneric draw (view)
   (:documentation "Render VIEW into the screen back buffer, within its bounds."))
+
+(defgeneric layout (view rect)
+  (:documentation "Assign VIEW (and its subtree) bounds within RECT.")
+  (:method ((v view) rect) (setf (view-bounds v) rect)))
+
+;;; geometry shorthands over tvision's TRECT
+(defun rect (x0 y0 x1 y1) (tvision::make-trect x0 y0 x1 y1))
+(defun r-x0 (r) (tvision::rect-ax r))   (defun r-y0 (r) (tvision::rect-ay r))
+(defun r-x1 (r) (tvision::rect-bx r))   (defun r-y1 (r) (tvision::rect-by r))
+(defun r-w  (r) (tvision::rect-width r)) (defun r-h (r) (tvision::rect-height r))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Events as a class hierarchy -- dispatched on (view x event), no type tags.
@@ -202,29 +213,40 @@
 
 (defgeneric focusable-p (view) (:method ((v view)) nil))
 
-(defun view-focused-p (v)
-  "True when V is the focused child of its owning container."
-  (let ((o (view-owner v))) (and o (typep o 'container) (eq v (container-focus o)))))
-
 (defclass container (view)
   ((subviews :initform '() :accessor subviews)
-   (focus    :initform nil :accessor container-focus))
+   (focus    :initform nil :accessor container-focus))   ; the focused leaf, anywhere below (root only)
   (:metaclass reactive-class))
 
 (defun add-subview (c v)
   (setf (view-owner v) c
         (subviews c) (append (subviews c) (list v)))
-  (when (and (null (container-focus c)) (focusable-p v))
-    (setf (container-focus c) v))
   v)
 
-(defun focusables (c) (remove-if-not #'focusable-p (subviews c)))
+(defun view-root (v) (if (view-owner v) (view-root (view-owner v)) v))
 
-(defun focus-next (c &optional (dir 1))
-  (let ((fs (focusables c)))
+(defun find-view (root name)
+  "Depth-first search for the subview named NAME, or NIL."
+  (cond ((and name (eql (view-name root) name)) root)
+        ((typep root 'container) (some (lambda (sv) (find-view sv name)) (subviews root)))
+        (t nil)))
+
+(defun view-focused-p (v)
+  "True when V is the focused widget of its root window."
+  (let ((r (view-root v))) (and (typep r 'container) (eq v (container-focus r)))))
+
+;;; Focus is a *window-level* property over every focusable leaf in the subtree,
+;;; so nested layout containers don't each need their own focus management.
+(defun all-focusables (v)
+  (cond ((focusable-p v) (list v))
+        ((typep v 'container) (mapcan #'all-focusables (subviews v)))
+        (t nil)))
+
+(defun focus-next (root &optional (dir 1))
+  (let ((fs (all-focusables root)))
     (when fs
-      (let ((cur (or (position (container-focus c) fs) 0)))
-        (setf (container-focus c) (nth (mod (+ cur dir) (length fs)) fs))))))
+      (let ((cur (or (position (container-focus root) fs) 0)))
+        (setf (container-focus root) (nth (mod (+ cur dir) (length fs)) fs))))))
 
 (defmethod draw ((c container))
   (dolist (sv (subviews c)) (draw sv)))
@@ -233,5 +255,5 @@
   (cond
     ((eql (event-keysym e) :tab)       (focus-next c 1)  (setf (handled-p e) t))
     ((eql (event-keysym e) :shift-tab) (focus-next c -1) (setf (handled-p e) t))
-    (t (let ((f (container-focus c))) (when f (handle-event f e)))
-       (unless (handled-p e) (call-next-method)))))   ; -> container's own keymap
+    (t (let ((f (container-focus c))) (when f (handle-event f e)))   ; -> the focused leaf
+       (unless (handled-p e) (call-next-method)))))                  ; -> container's keymap

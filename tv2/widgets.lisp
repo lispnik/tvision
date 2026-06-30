@@ -56,41 +56,12 @@
 ;;; --- a command that reaches across the window to the outline ----------------
 
 (define-command collapse-all (v e)
-  (let ((ol (find-if (lambda (sv) (typep sv 'outline)) (subviews (view-owner v)))))
-    (when ol
-      (dolist (root (outline-roots ol))                ; collapse everything below each root
+  (let ((ol (find-view (view-root v) 'tree)))     ; locate the named outline anywhere in the tree
+    (when (typep ol 'outline)
+      (dolist (root (outline-roots ol))           ; collapse everything below each root
         (labels ((collapse (n)
                    (mapc #'collapse (tvision:outline-node-children n))
                    (setf (tvision:outline-node-expanded n) nil)))
           (mapc #'collapse (tvision:outline-node-children root))))
       (setf (outline-focused ol) 0)
       (invalidate ol))))
-
-;;; --- demo -------------------------------------------------------------------
-
-(defun run ()
-  "Phase-3 demo: a window hosting the outline + buttons; Tab cycles focus,
-Enter/Space fire a button's command, arrows drive the focused outline, q quits."
-  (tvision:with-screen (s)
-    (let* ((w (tvision:screen-width s)) (h (tvision:screen-height s))
-           (win (make-instance 'window :keymap *global-keys*
-                  :title " tv2 — windows · focus (Tab) · commands (no integer cmds, no dispatch cond) "
-                  :bounds (tvision::make-trect 0 0 w h)))
-           (ol  (make-instance 'outline :roots (demo-roots) :keymap *outline-keys*
-                  :bounds (tvision::make-trect 1 1 (1- w) (- h 3))))
-           (b1  (make-instance 'button :label "Collapse all" :command 'collapse-all
-                  :bounds (tvision::make-trect 2 (- h 3) 18 (- h 2))))
-           (b2  (make-instance 'button :label "Quit" :command 'quit
-                  :bounds (tvision::make-trect 20 (- h 3) 30 (- h 2))))
-           (st  (make-instance 'static-text :role :status
-                  :text " Tab/Shift-Tab: move focus  ·  arrows/Enter: outline  ·  Enter/Space: button  ·  q: quit "
-                  :bounds (tvision::make-trect 1 (- h 2) (1- w) (1- h)))))
-      (dolist (v (list ol b1 b2 st)) (add-subview win v))
-      (setf *running* t *dirty* t)
-      (loop while *running* do
-        (when *dirty* (draw win) (tvision:flush-screen s) (setf *dirty* nil))
-        (tvision::pump-input s 0.05)
-        (let ((tev (tvision::screen-next-event s)))
-          (when tev
-            (let ((e (translate tev)))
-              (when e (handle-event win e)))))))))
