@@ -112,7 +112,7 @@ the tree, preserving the filter."
           (setf (outline-roots ol)
                 (if (or (null filter) (zerop (length filter))) (pw-tree-node win)
                     (mapcar (lambda (r) (tvision:make-outline-node (%pm-short win r) nil r))
-                            (fuzzy-filter filter rels)))
+                            (fuzzy-filter filter rels :key (lambda (r) (%pm-short win r)))))
                 (outline-focused ol) 0 (outline-top ol) 0))
         (invalidate ol)))))
 
@@ -125,25 +125,28 @@ the tree, preserving the filter."
       (setf (te-cy te) (max 0 (1- line)) (te-cx te) 0 (te-anchor te) nil)
       (te-clamp te) (te-ensure-visible te))))
 
+(defun %open-file-at (path &optional line)
+  "Open PATH in a tv2 editor at LINE, reusing an already-open editor for the same
+file; opens on *DESKTOP* when hosted, else full-screen.  Shared by the project
+manager and source navigation so they never spawn a divergent second buffer."
+  (when (and path (probe-file path))
+    (let ((existing (and *desktop*
+                         (find-if (lambda (w)
+                                    (and (typep w 'editor-window)
+                                         (let ((te (find-view w 'edit)))
+                                           (and te (te-filename te)
+                                                (equal (namestring (te-filename te)) (namestring path))))))
+                                  (dt-windows *desktop*)))))
+      (cond
+        ((null *desktop*) (multiple-value-bind (w f) (make-editor path) (declare (ignore f)) (run-view w)))
+        (existing (dt-raise *desktop* existing) (dt-refocus *desktop*)
+                  (%pm-goto existing line) (invalidate *desktop*))
+        (t (dt-open *desktop* (lambda () (make-editor path)))
+           (%pm-goto (dt-top *desktop*) line) (invalidate *desktop*))))))
+
 (defun %pm-open-file (win relpath &optional line)
-  "Open RELPATH (resolved under WIN's project dir) in a tv2 editor, at LINE if
-given.  Reuses an already-open editor for the same file; opens on *DESKTOP* when
-hosted, else full-screen."
-  (let ((path (merge-pathnames relpath (pw-dir win))))
-    (when (probe-file path)
-      (let ((existing (and *desktop*
-                           (find-if (lambda (w)
-                                      (and (typep w 'editor-window)
-                                           (let ((te (find-view w 'edit)))
-                                             (and te (te-filename te)
-                                                  (equal (namestring (te-filename te)) (namestring path))))))
-                                    (dt-windows *desktop*)))))
-        (cond
-          ((null *desktop*) (run-editor path))
-          (existing (dt-raise *desktop* existing) (dt-refocus *desktop*)
-                    (%pm-goto existing line) (invalidate *desktop*))
-          (t (dt-open *desktop* (lambda () (make-editor path)))
-             (%pm-goto (dt-top *desktop*) line) (invalidate *desktop*)))))))
+  "Open RELPATH (resolved under WIN's project dir) in a tv2 editor, at LINE."
+  (%open-file-at (merge-pathnames relpath (pw-dir win)) line))
 
 (defun %pm-open-current (win)
   "Toggle the current directory node, or open the current file in an editor."
@@ -225,16 +228,28 @@ chosen match at its line."
     (when (and n (not (tvision:outline-node-expandable-p n)) (tvision:outline-node-data n))
       (merge-pathnames (princ-to-string (tvision:outline-node-data n)) (pw-dir win)))))
 
+(defun %split-name-type (s)
+  "(values NAME TYPE) for filename S.  TYPE is :UNSPECIFIC when S has no extension,
+so MAKE-PATHNAME won't inherit a type from anything it is merged against."
+  (let ((dot (position #\. s :from-end t)))
+    (if (and dot (> dot 0) (< dot (1- (length s))))
+        (values (subseq s 0 dot) (subseq s (1+ dot)))
+        (values s :unspecific))))
+
 (defun %pm-new-file (win)
-  (let ((name (prompt-string " New file " "Path (relative to project):")))
+  (let ((name (prompt-string " New file " "Name (under the selected folder / root):")))
     (when (and name (plusp (length (string-trim " " name))))
-      (let ((path (merge-pathnames (string-trim " " name) (pw-dir win))))
+      ;; create relative to the selected file's directory (so it lands in the right
+      ;; root with multiple roots), falling back to the primary root
+      (let* ((sel (%pm-selected-file win))
+             (base (if sel (uiop:pathname-directory-pathname sel) (pw-dir win)))
+             (path (merge-pathnames (string-trim " " name) base)))
         (handler-case
             (progn (ensure-directories-exist path)
                    (unless (probe-file path)
                      (with-open-file (s path :direction :output :if-does-not-exist :create)))
                    (%pm-rebuild win)
-                   (%pm-open-file win (enough-namestring path (pw-dir win))))
+                   (%open-file-at path))
           (error (e) (%pm-echo win (format nil " ~a " e))))))))
 
 (defun %pm-rename-file (win)
@@ -244,8 +259,12 @@ chosen match at its line."
         (let ((new (prompt-string " Rename " (format nil "New name for ~a:" (file-namestring path)))))
           (when (and new (plusp (length (string-trim " " new))))
             (handler-case
-                (let ((dest (merge-pathnames (string-trim " " new) (uiop:pathname-directory-pathname path))))
-                  (rename-file path dest) (%pm-rebuild win) (%pm-echo win (format nil " renamed -> ~a " (file-namestring dest))))
+                (multiple-value-bind (nm ty) (%split-name-type (string-trim " " new))
+                  ;; build the destination with an explicit name + type so rename-file
+                  ;; can't default the missing type from the source (notes.lisp -> README)
+                  (let ((dest (make-pathname :name nm :type ty :defaults (uiop:pathname-directory-pathname path))))
+                    (rename-file path dest) (%pm-rebuild win)
+                    (%pm-echo win (format nil " renamed -> ~a " (file-namestring dest)))))
               (error (e) (%pm-echo win (format nil " ~a " e)))))))))
 
 (defun %pm-delete-file (win)
@@ -296,7 +315,7 @@ chosen match at its line."
                                                      (setf (outline-roots ol)
                                                            (if (zerop (length q)) (pw-tree-node w)
                                                                (mapcar (lambda (r) (tvision:make-outline-node (%pm-short w r) nil r))
-                                                                       (fuzzy-filter q (pw-rels w))))
+                                                                       (fuzzy-filter q (pw-rels w) :key (lambda (r) (%pm-short w r)))))
                                                            (outline-focused ol) 0 (outline-top ol) 0)
                                                      (invalidate ol)))))))
                      (:fill (outline :name 'tree :keymap *proj-keys*))

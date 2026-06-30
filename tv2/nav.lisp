@@ -18,12 +18,8 @@
       1))
 
 (defun open-source-at (path line)
-  "Open PATH in an editor at LINE (on the desktop when hosted, else full-screen)."
-  (when (and path (probe-file path))
-    (if *desktop*
-        (progn (dt-open *desktop* (lambda () (make-editor path)))
-               (%pm-goto (dt-top *desktop*) line) (invalidate *desktop*))
-        (multiple-value-bind (w f) (make-editor path) (declare (ignore f)) (run-view w)))))
+  "Open PATH in an editor at LINE, reusing an already-open editor for that file."
+  (%open-file-at path line))
 
 (defun %show-locations (title rows)
   "ROWS = list of (LABEL PATH LINE); a table window whose Enter opens the source."

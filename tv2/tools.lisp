@@ -117,23 +117,28 @@ exact call-count / time report."
     (when (and pkgname (plusp (length (string-trim " " pkgname))))
       (let ((form-s (prompt-string " Deterministic profile " "Form to run:")))
         (when (and form-s (plusp (length (string-trim " " form-s))))
-          (let* ((pkg  (or (find-package (string-upcase (string-trim " " pkgname))) (%active-package)))
-                 (form (ignore-errors (let ((*package* (%active-package))) (read-from-string form-s))))
-                 (txt  nil))
-            (handler-case
-                (progn
-                  (sb-profile:reset)
-                  (eval (list 'sb-profile:profile (package-name pkg)))
-                  (unwind-protect
-                       (progn (let ((*package* pkg)) (eval form))
-                              (setf txt (with-output-to-string (s)
-                                          (let ((*standard-output* s) (*trace-output* s)) (sb-profile:report)))))
-                    (eval (list 'sb-profile:unprofile (package-name pkg)))
-                    (sb-profile:reset))
-                  (%open-output (format nil " Deterministic profile: ~a " pkgname)
-                                (if (and txt (plusp (length (string-trim '(#\Space #\Newline) txt)))) txt
-                                    "No calls were recorded.")))
-              (error (e) (%open-output " Deterministic profile " (princ-to-string e))))))))))
+          (let ((pkg  (or (find-package (string-upcase (string-trim " " pkgname))) (%active-package)))
+                (form (ignore-errors (let ((*package* (%active-package))) (read-from-string form-s)))))
+            ;; run on a worker thread so a long form doesn't freeze the IDE, and
+            ;; only reset when nothing else is profiled (don't wipe the user's
+            ;; separately-instrumented counters)
+            (sb-thread:make-thread
+             (lambda ()
+               (handler-case
+                   (let ((others (sb-profile:profile)) (txt nil))
+                     (when (null others) (sb-profile:reset))
+                     (eval (list 'sb-profile:profile (package-name pkg)))
+                     (unwind-protect
+                          (progn (let ((*standard-output* (make-string-output-stream)) (*package* pkg)) (eval form))
+                                 (setf txt (with-output-to-string (s)
+                                             (let ((*standard-output* s) (*trace-output* s)) (sb-profile:report)))))
+                       (eval (list 'sb-profile:unprofile (package-name pkg)))
+                       (when (null others) (sb-profile:reset)))
+                     (run-on-ui (lambda () (%open-output (format nil " Deterministic profile: ~a " pkgname)
+                                                         (if (and txt (plusp (length (string-trim '(#\Space #\Newline) txt)))) txt
+                                                             "No calls were recorded.")))))
+                 (error (e) (run-on-ui (lambda () (%open-output " Deterministic profile " (princ-to-string e)))))))
+             :name "tv2-det-profile")))))))
 
 ;;; --- stepping / break (through the REPL + tv2's debugger) -------------------
 

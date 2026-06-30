@@ -447,9 +447,10 @@ session (including unsaved work) is restored."
                                       (and (eq k :editor)
                                            (let ((te (find-view w 'edit)))
                                              (when te
+                                               ;; save text only for an unsaved scratch buffer; a named
+                                               ;; file is reloaded from disk on restore (never clobbered)
                                                (list (and (te-filename te) (namestring (te-filename te)))
-                                                     (when (or (te-modified te) (null (te-filename te)))
-                                                       (te-text te)))))))))))
+                                                     (when (null (te-filename te)) (te-text te)))))))))))
     (ignore-errors
      (with-open-file (s path :direction :output :if-exists :supersede :if-does-not-exist :create)
        (prin1 layout s)))
@@ -467,7 +468,10 @@ editor buffer text."
                (let ((fn (if (consp extra) (first extra) extra))
                      (txt (and (consp extra) (second extra))))
                  (multiple-value-bind (w f) (make-editor fn)
-                   (when txt (let ((te (find-view w 'edit))) (when te (te-set-text te txt) (setf (te-modified te) t))))
+                   ;; restore saved text only for a scratch buffer (no filename); a
+                   ;; named file was reloaded fresh by make-editor -- never overwrite it
+                   (when (and txt (null fn))
+                     (let ((te (find-view w 'edit))) (when te (te-set-text te txt) (setf (te-modified te) t))))
                    (values w f nil)))
                (let ((b (cdr (assoc kind *window-builders*)))) (when b (funcall b))))
          (when win (dt-add dt win focus open kind (rect x0 y0 x1 y1)))))))

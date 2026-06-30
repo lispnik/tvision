@@ -18,10 +18,16 @@
   (let ((te (%focused-editor)))
     (when (and te *editor-eval-fn*) (funcall *editor-eval-fn* te))))
 
+(defun %code-submit (r input)
+  "Submit INPUT to the REPL, telling the user when it can't run (REPL busy)."
+  (if (repl-busy r)
+      (%tool-note "REPL is busy — interrupt or wait for the current evaluation")
+      (repl-submit-string r input)))
+
 (defun do-load-buffer ()
   "Evaluate every form in the focused editor's buffer in the REPL."
   (let ((te (%focused-editor)) (r (%code-repl)))
-    (when (and te r) (repl-submit-string r (te-text te)))))
+    (when (and te r) (%code-submit r (te-text te)))))
 
 (defun do-compile-buffer ()
   "COMPILE-FILE the focused editor's file (saving first), streaming compiler
@@ -31,8 +37,10 @@ warnings/notes into the REPL."
       (cond
         ((null (te-filename te))
          (%open-output " Compile buffer " "Save the buffer to a file first (compile-file needs a path)."))
-        (t (when (te-modified te) (te-save te))
-           (repl-submit-string r (format nil "(compile-file ~s)" (namestring (te-filename te)))))))))
+        (t (handler-case (when (te-modified te) (te-save te))
+             (error (e) (return-from do-compile-buffer
+                          (%open-output " Compile buffer " (format nil "Could not save the buffer:~%~a" e)))))
+           (%code-submit r (format nil "(compile-file ~s)" (namestring (te-filename te)))))))))
 
 (defun do-interrupt-eval ()
   "Abort a running REPL evaluation by signalling the worker into repl-abort."

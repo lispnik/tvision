@@ -62,11 +62,16 @@
     (let ((sel (te-selected-string te)))
       (if (or (null sel) (zerop (length (string-trim '(#\Space #\Tab #\Newline) sel))))
           (%open-output " Pretty-print " "Select a form to pretty-print first.")
-          (let ((form (ignore-errors (let ((*package* (%active-package))) (read-from-string sel)))))
-            (when form
+          (let ((forms (ignore-errors
+                         (let ((*package* (%active-package)))
+                           (with-input-from-string (in sel)
+                             (loop for f = (read in nil in) until (eq f in) collect f))))))
+            (when forms
               (let ((pp (with-output-to-string (o)
                           (let ((*print-pretty* t) (*print-right-margin* 78) (*package* (%active-package)))
-                            (write form :stream o :pretty t :case :downcase)))))
+                            (loop for (f . more) on forms
+                                  do (write f :stream o :pretty t :case :downcase)
+                                     (when more (terpri o) (terpri o)))))))
                 (te-insert te pp) (te-ensure-visible te) (invalidate te))))))))
 
 ;;; --- an Edit menu -----------------------------------------------------------
