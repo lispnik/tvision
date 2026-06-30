@@ -27,6 +27,7 @@
    (redo     :initform '() :accessor te-redo)
    (colorizer :initform nil :initarg :colorizer :accessor te-colorizer)   ; (line in-string) -> (values attrs end)
    (indenter  :initform nil :initarg :indenter  :accessor te-indenter)    ; (te) -> indent column for a new line
+   (auto-close :initform nil :accessor te-auto-close)                     ; auto-insert closing )/]/"
    (last-find :initform "" :accessor te-last-find))                       ; remembered search query
   (:metaclass reactive-class))
 
@@ -190,6 +191,21 @@ selection / an empty selection."
   (te-save-undo te)
   (or (te-delete-selection te) (setf (te-anchor te) nil))
   (te-replace-region te (te-cy te) (te-cx te) (te-cy te) (te-cx te) string))
+
+(defun te-type-char (te ch)
+  "Insert a typed character, honouring auto-close: an opener inserts its matching
+close and sits between them; a close typed in front of the matching close steps
+over it."
+  (cond
+    ((not (te-auto-close te)) (te-insert-char te ch))
+    ((and (member ch '(#\) #\] #\"))                      ; step over an existing close
+          (< (te-cx te) (length (te-cur te)))
+          (char= (char (te-cur te) (te-cx te)) ch))
+     (incf (te-cx te)))
+    ((member ch '(#\( #\[ #\"))                           ; insert the matching close
+     (te-insert te (coerce (list ch (case ch (#\( #\)) (#\[ #\]) (t #\"))) 'string))
+     (decf (te-cx te)))
+    (t (te-insert-char te ch))))
 
 (defun te-insert-char (te ch)
   (te-save-undo te)
@@ -468,9 +484,9 @@ or a regex per line when REGEX).  Return the number of replacements."
            (#\a (te-select-all te) (te-ensure-visible te) (done))
            (#\w (setf (te-wrap te) (not (te-wrap te)) (te-left te) 0) (te-ensure-visible te) (done))
            (t (call-next-method))))
-        ;; printable insert
+        ;; printable insert (with optional auto-close of brackets/quotes)
         ((and (characterp ks) (graphic-char-p ks))
-         (te-insert-char te ks) (te-ensure-visible te) (done))
+         (te-type-char te ks) (te-ensure-visible te) (done))
         ;; editing
         ((eql ks :enter) (te-newline te) (te-ensure-visible te) (done))
         ((eql ks :back)  (te-backspace te) (te-ensure-visible te) (done))
