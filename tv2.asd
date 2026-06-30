@@ -22,4 +22,6 @@
                              (:file "widgets")
                              (:file "layout")
                              (:file "modal")
-                             (:file "threadmon")))))
+                             (:file "threadmon")
+                             (:file "browser")
+                             (:file "project")))))

@@ -36,5 +36,6 @@ event layers are new.")
    #:window #:window-title #:button #:button-label #:button-command #:static-text
    #:input-line #:input-text #:input-caret #:input-on-change
    #:list-box #:list-items #:list-selected #:list-on-activate
-   ;; demo
-   #:run #:run-threadmon))
+   ;; demo + ported real windows
+   #:run #:run-threadmon
+   #:run-browser #:run-packages #:run-systems #:run-project))
