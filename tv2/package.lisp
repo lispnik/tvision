@@ -25,6 +25,10 @@ event layers are new.")
    #:container #:subviews #:container-focus #:add-subview #:focus-next #:all-focusables
    ;; layout DSL
    #:layout #:stack #:row #:add-laid #:rect #:ui
+   ;; persistence + worker->UI bridge
+   #:serialize #:deserialize #:persistent-class #:save-object #:load-object
+   #:session #:session-filter #:session-line #:session-file
+   #:run-on-ui #:drain-ui-callbacks #:*ui-thread*
    ;; modal dialogs + validation
    #:dialog #:dialog-result #:exec-view #:validation-error #:validation-message #:fail-validation
    ;; widgets

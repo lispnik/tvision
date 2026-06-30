@@ -17,6 +17,7 @@
                 :serial t
                 :components ((:file "package")
                              (:file "kernel")
+                             (:file "runtime")
                              (:file "outline")
                              (:file "widgets")
                              (:file "layout")

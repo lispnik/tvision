@@ -80,41 +80,68 @@
 
 ;;; --- demo built entirely with the DSL ---------------------------------------
 
+(defun %echo-filter (il)
+  "ON-CHANGE handler: live-echo the filter text into the named echo widget."
+  (let ((echo (find-view (view-root il) 'echo)))
+    (when echo
+      (setf (static-text-text echo)
+            (format nil " filter ~s  (live via on-change -> reactive repaint) " (input-text il))))))
+
 (defun run ()
-  "Phase-4 demo: the same window/outline/buttons/status, built declaratively with
-the UI macro + box layout (no hand-computed bounds).  Tab cycles focus, Enter/
-Space fire a button's command, arrows drive the focused outline, q quits."
+  "Phase-7 demo: everything from phases 0-6, plus the session (filter + outline
+line) restored from ~/.tv2-session on start and saved on exit (MOP persistence),
+and a background thread driving the clock through the worker->UI bridge."
   (tvision:with-screen (s)
-    (let ((win (ui (window (:title " tv2 — input-line · data entry · reactive on-change handler "
+    (let ((win (ui (window (:title " tv2 — MOP persistence (session) + worker->UI bridge (clock) "
                             :keymap *global-keys*)
                      (stack
                        (1 (row
                             (9     (static-text :role :label :text " Filter: "))
-                            (:fill (input-line :name 'find
-                                     :on-change (lambda (il)
-                                                  (let ((echo (find-view (view-root il) 'echo)))
-                                                    (when echo
-                                                      (setf (static-text-text echo)
-                                                            (format nil " typed ~s  (live via on-change -> reactive repaint) "
-                                                                    (input-text il))))))))))
+                            (:fill (input-line :name 'find :on-change #'%echo-filter))
+                            (16    (static-text :name 'clock :role :status :text " bg: starting "))))
                        (:fill (outline :name 'tree :roots (demo-roots) :keymap *outline-keys*))
                        (1 (row
                             (18    (button :label "Go to line…" :command 'go-to-line))
                             (16    (button :label "Collapse all" :command 'collapse-all))
                             (8     (button :label "Quit"         :command 'quit))
-                            (:fill (static-text :name 'echo :role :status :text " (type in the Filter field) "))))
+                            (:fill (static-text :name 'echo :role :status :text " (type in Filter; it persists across runs) "))))
                        (1 (static-text :role :status
-                            :text " Tab: focus · type in Filter · Go to line… opens a modal dialog · Esc/Quit: exit ")))))))
+                            :text " session restored from ~/.tv2-session · clock driven from a bg thread via run-on-ui · Esc: save & exit "))))))
+          (sess (or (load-object (session-file)) (make-instance 'session))))
       (layout win (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
+      ;; restore the persisted session (filter text + outline line)
+      (let ((inp (find-view win 'find)) (ol (find-view win 'tree)))
+        (setf (input-text inp) (session-filter sess))
+        (input-notify inp)
+        (let ((nvis (length (ov-visible (outline-roots ol)))))
+          (when (plusp nvis)
+            (setf (outline-focused ol) (max 0 (min (1- (session-line sess)) (1- nvis)))))))
       (setf *root* win
             (container-focus win) (first (all-focusables win))
-            *running* t *dirty* t)
+            *ui-thread* sb-thread:*current-thread* *running* t *dirty* t)
+      ;; a background thread updates the clock via the worker->UI bridge
+      (let ((start (get-universal-time)))
+        (sb-thread:make-thread
+         (lambda ()
+           (loop while *running* do
+             (sleep 1)
+             (run-on-ui (lambda ()
+                          (let ((c (find-view *root* 'clock)))
+                            (when c (setf (static-text-text c)
+                                          (format nil " bg-thread: ~ds " (- (get-universal-time) start)))))))))
+         :name "tv2-bg-clock"))
       (loop while *running* do
+        (drain-ui-callbacks)                           ; run thunks posted by other threads
         (when *dirty*
-          (tvision:hide-cursor s)              ; a focused input-line re-shows it
+          (tvision:hide-cursor s)
           (draw win) (tvision:flush-screen s) (setf *dirty* nil))
         (tvision::pump-input s 0.05)
         (let ((tev (tvision::screen-next-event s)))
           (when tev
             (let ((e (translate tev)))
-              (when e (handle-event win e)))))))))
+              (when e (handle-event win e))))))
+      ;; persist the session on the way out
+      (save-object (make-instance 'session
+                                  :filter (input-text (find-view win 'find))
+                                  :line   (1+ (outline-focused (find-view win 'tree))))
+                   (session-file)))))

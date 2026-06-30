@@ -47,6 +47,7 @@ finishes; return its result value, or :CANCEL."
     (setf (container-focus dialog) (first (all-focusables dialog))
           (dialog-done dialog) nil)
     (loop until (dialog-done dialog) do
+      (drain-ui-callbacks)                 ; keep background threads (the clock) live
       (tvision:hide-cursor s)
       (when *root* (draw *root*))          ; background
       (draw dialog)                        ; modal on top (centred, smaller)
