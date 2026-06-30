@@ -183,6 +183,25 @@
                        (setf (handled-p e) t))
       (t (call-next-method)))))
 
+;;; --- mouse: click to focus/select/press, wheel to scroll -------------------
+
+(defmethod handle-event ((b button) (e mouse-down))
+  (perform (button-command b) b e) (setf (handled-p e) t))
+
+(defmethod handle-event ((il input-line) (e mouse-down))
+  (setf (input-caret il) (max 0 (min (length (input-text il))
+                                     (+ (input-scroll il) (mouse-col il e)))))
+  (input-scroll-fix il) (setf (handled-p e) t))
+
+(defmethod handle-event ((lb list-box) (e mouse-down))
+  (let ((row (+ (list-top lb) (mouse-row lb e))))
+    (when (and (>= row 0) (< row (length (list-items lb))))
+      (setf (list-selected lb) row) (list-scroll-fix lb) (list-notify lb)))
+  (setf (handled-p e) t))
+
+(defmethod handle-event ((lb list-box) (e wheel-event))
+  (list-move lb (* 3 (event-delta e))) (setf (handled-p e) t))
+
 ;;; --- a command that reaches across the window to the outline ----------------
 
 (define-command collapse-all (v e)

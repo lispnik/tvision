@@ -426,6 +426,24 @@ and jumping to the first.  Match columns are virtual columns = on-screen columns
                                              (tvision:make-attr 15 4)    ; current: white on red
                                              (tvision:make-attr 0 6))))))))))))  ; others: black on cyan
 
+(defun hv-link-at (v li col)
+  "The link id at visual (LI,COL), or NIL."
+  (when (and (>= li 0) (< li (hv-nlines v)))
+    (let ((c 0))
+      (dolist (run (aref (hv-lines v) li))
+        (let ((len (length (html-run-text run))))
+          (when (and (html-run-link run) (>= col c) (< col (+ c len)))
+            (return-from hv-link-at (html-run-link run)))
+          (incf c len))))))
+
+(defmethod handle-event ((v html-view) (e mouse-down))
+  (let ((id (hv-link-at v (+ (hv-top v) (mouse-row v e)) (mouse-col v e))))
+    (when id (setf (hv-focus v) id) (invalidate v) (hv-activate v)))
+  (setf (handled-p e) t))
+
+(defmethod handle-event ((v html-view) (e wheel-event))
+  (hv-scroll v (* 3 (event-delta e))) (setf (handled-p e) t))
+
 (defmethod handle-event ((v html-view) (e key-event))
   (let ((ks (event-keysym e)) (page (max 1 (1- (r-h (view-bounds v))))))
     (cond

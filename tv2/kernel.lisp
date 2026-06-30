@@ -59,6 +59,8 @@
   ((where   :initarg :where   :reader event-where)
    (buttons :initarg :buttons :initform 0 :reader event-buttons)))
 (defclass mouse-down (mouse-event) ((double :initarg :double :initform nil :reader event-double)))
+(defclass mouse-up   (mouse-event) ())
+(defclass mouse-move (mouse-event) ())
 (defclass wheel-event (mouse-event) ((delta :initarg :delta :reader event-delta)))
 (defclass command-event (event) ((command :initarg :command :reader event-command)))
 (defclass broadcast-event (event)
@@ -174,9 +176,19 @@
          (and ks (make-instance 'key-event :keysym ks
                                 :modifiers (tvision::event-modifiers tev)))))
       ((= ty tvision:+ev-mouse-wheel+)
-       (make-instance 'wheel-event :delta (tvision::event-wheel tev)
-                      :where (tvision::event-mouse-where tev)))
+       (make-instance 'wheel-event :delta (tvision::event-wheel tev) :where (%where tev)))
+      ((= ty tvision::+ev-mouse-down+)
+       (make-instance 'mouse-down :where (%where tev) :buttons (tvision::event-mouse-buttons tev)))
+      ((= ty tvision::+ev-mouse-up+)
+       (make-instance 'mouse-up :where (%where tev) :buttons (tvision::event-mouse-buttons tev)))
+      ((member ty (list tvision::+ev-mouse-move+ tvision::+ev-mouse-auto+))
+       (make-instance 'mouse-move :where (%where tev) :buttons (tvision::event-mouse-buttons tev)))
       (t nil))))
+
+(defun %where (tev)
+  "Mouse position of TEV as a (X . Y) cons in screen coordinates."
+  (let ((p (tvision::event-mouse-where tev)))
+    (cons (tvision::point-x p) (tvision::point-y p))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Theming: colours are named roles resolved through *THEME* (a plist), instead
@@ -265,3 +277,33 @@
     ((eql (event-keysym e) :shift-tab) (focus-next c -1) (setf (handled-p e) t))
     (t (let ((f (container-focus c))) (when f (handle-event f e)))   ; -> the focused leaf
        (unless (handled-p e) (call-next-method)))))                  ; -> container's keymap
+
+;;; ---------------------------------------------------------------------------
+;;; Mouse: events carry a screen point; dispatch hit-tests the view tree top-down
+;;; to the deepest view under the pointer, and a click also focuses it.
+;;; ---------------------------------------------------------------------------
+
+(defun point-in-rect-p (x y r)
+  (and r (<= (tvision::rect-ax r) x) (< x (tvision::rect-bx r))
+       (<= (tvision::rect-ay r) y) (< y (tvision::rect-by r))))
+
+(defun view-at (root x y)
+  "The deepest view in ROOT's subtree whose bounds contain (X,Y), or NIL.
+Children are tested front-to-back (last added paints on top)."
+  (when (point-in-rect-p x y (view-bounds root))
+    (or (and (typep root 'container)
+             (loop for sv in (reverse (subviews root))
+                   for hit = (view-at sv x y) when hit return hit))
+        root)))
+
+(defun mouse-col (view e) (- (car (event-where e)) (tvision::rect-ax (view-bounds view))))
+(defun mouse-row (view e) (- (cdr (event-where e)) (tvision::rect-ay (view-bounds view))))
+
+(defmethod handle-event ((v view) (e mouse-event)) nil)         ; default: ignore
+
+(defmethod handle-event ((c container) (e mouse-event))
+  (let* ((w (event-where e)) (hit (and w (view-at c (car w) (cdr w)))))
+    (when (and hit (not (eq hit c)))
+      (when (and (typep e 'mouse-down) (focusable-p hit))
+        (setf (container-focus (view-root hit)) hit))             ; click focuses
+      (handle-event hit e))))

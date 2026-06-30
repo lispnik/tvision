@@ -91,6 +91,9 @@ through a pty. Entry points:
 ## Status & non-goals
 
 tv2 is a research kernel: it demonstrates the architecture end-to-end, not a
-hardened release. Deliberately deferred (the classic `tvision` system has them):
-mouse support throughout, regex search/replace, the editor's per-language
-indenters, and the debugger's view-source / restart-frame ops.
+hardened release.  **Mouse** is supported — clicks hit-test the view tree to
+focus/select/press (menus, rows, buttons, links, caret placement) and the wheel
+scrolls the view under the pointer.  Still deferred relative to the classic
+`tvision` system: movable/overlapping windows, scrollbars, menu hotkeys, cluster
+controls (checkbox/radio) and the standard file/help/color dialogs, regex
+search/replace, and the editor's per-language indenters.

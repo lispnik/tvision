@@ -61,6 +61,41 @@
         ((eql ks :down)  (setf (menu-sel mb) (mod (1+ (menu-sel mb)) (length items))) (invalidate mb) (setf (handled-p e) t))
         ((eql ks :enter) (let ((thunk (cdr (nth (menu-sel mb) items)))) (when thunk (funcall thunk))) (setf (handled-p e) t))))))
 
+(defun menu-title-x (mb i)
+  "Screen column (menu-bar-local) of menu I's title (matches DRAW)."
+  (let ((x 1))
+    (dotimes (k i x) (incf x (+ 2 (length (car (nth k (menu-menus mb)))))))))
+
+(defun menu-dropdown-cols (mb)
+  "(values X0 WIDTH) of the open dropdown, or NIL."
+  (when (menu-active mb)
+    (let* ((items (menu-items mb)) (x0 (menu-title-x mb (menu-active mb)))
+           (mw (+ 3 (reduce #'max items :key (lambda (it) (length (car it))) :initial-value 8))))
+      (values x0 mw))))
+
+(defun menu-hit-p (mb x y)
+  "True when screen point (X,Y) is on the bar (row 0) or the open dropdown."
+  (or (zerop y)
+      (and (menu-active mb) (plusp y) (<= y (length (menu-items mb)))
+           (multiple-value-bind (x0 mw) (menu-dropdown-cols mb)
+             (and x0 (>= x x0) (< x (+ x0 mw)))))))
+
+(defmethod handle-event ((mb menu-bar) (e mouse-down))
+  (let ((col (mouse-col mb e)) (row (mouse-row mb e)))
+    (if (zerop row)                                   ; clicked a title -> open that menu
+        (let ((x 1))
+          (loop for menu in (menu-menus mb) for i from 0 do
+            (let ((tw (+ 2 (length (car menu)))))
+              (when (and (>= col x) (< col (+ x tw)))
+                (setf (menu-active mb) i (menu-sel mb) 0) (invalidate mb) (return))
+              (incf x tw))))
+        (when (menu-active mb)                        ; clicked a dropdown item -> invoke
+          (let ((idx (1- row)) (items (menu-items mb)))
+            (when (and (>= idx 0) (< idx (length items)))
+              (setf (menu-sel mb) idx) (invalidate mb)
+              (let ((thunk (cdr (nth idx items)))) (when thunk (funcall thunk)))))))
+    (setf (handled-p e) t)))
+
 ;;; --- desktop ----------------------------------------------------------------
 
 (defclass desktop (view)
@@ -117,6 +152,19 @@
                  (unless *running* (dt-close dt))))
       (handle-event (dt-menubar dt) e)))                     ; bare desktop: the menu drives
 
+(defmethod handle-event ((dt desktop) (e mouse-event))
+  "Route mouse to the menu bar (its row or open dropdown) or the hosted window;
+clicking a window's quit/close path still closes it."
+  (let* ((w (event-where e)) (x (car w)) (y (cdr w)) (mb (dt-menubar dt)))
+    (cond
+      ((menu-hit-p mb x y) (handle-event mb e))
+      ((dt-win dt)
+       (when (point-in-rect-p x y (view-bounds (dt-win dt)))
+         (setf *running* t)
+         (handle-event (dt-win dt) e)
+         (unless *running* (dt-close dt))))
+      (t nil))))
+
 ;;; --- entry point ------------------------------------------------------------
 
 (defun %desktop-menus (dt)
@@ -138,7 +186,7 @@ hosting the ported windows.  Returns when the user picks File→Exit."
     (let ((dt (make-instance 'desktop)))
       (setf (dt-menubar dt)   (make-instance 'menu-bar :menus (%desktop-menus dt))
             (dt-statusbar dt)  (make-instance 'status-bar
-                                 :text " ↑/↓ select · ←/→ menu · Enter open window · (in a window) Esc closes it · File→Exit quits "))
+                                 :text " ↑/↓·←/→·Enter — or click menus, rows & links · wheel scrolls · Esc closes a window · File→Exit quits "))
       (layout dt (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
       (setf *root* dt *ui-thread* sb-thread:*current-thread* *app-done* nil *dirty* t)
       (loop until *app-done* do

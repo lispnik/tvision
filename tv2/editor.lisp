@@ -331,6 +331,17 @@ selection / an empty selection."
   "Run movement FN, managing selection (Shift) and viewport."
   (te-mark te e) (funcall fn) (te-clamp te) (te-ensure-visible te))
 
+(defmethod handle-event ((te text-edit) (e mouse-down))
+  (setf (te-cy te) (max 0 (min (1- (te-nlines te)) (+ (te-top te) (mouse-row te e))))
+        (te-cx te) (max 0 (min (length (te-cur te)) (+ (te-left te) (mouse-col te e))))
+        (te-anchor te) nil)
+  (te-ensure-visible te) (setf (handled-p e) t))
+
+(defmethod handle-event ((te text-edit) (e wheel-event))
+  (setf (te-anchor te) nil)
+  (incf (te-cy te) (* 3 (event-delta e)))
+  (te-clamp te) (te-ensure-visible te) (setf (handled-p e) t))
+
 (defmethod handle-event ((te text-edit) (e key-event))
   (let* ((ks (event-keysym e)) (cc (and (characterp ks) (char-code ks))))
     (macrolet ((done () '(setf (handled-p e) t)))

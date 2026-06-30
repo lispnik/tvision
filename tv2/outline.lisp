@@ -72,6 +72,15 @@
       (setf (outline-focused ol) (min (max 0 (+ (outline-focused ol) delta)) (1- n)))
       (ov-scroll-to-focus ol))))
 
+(defmethod handle-event ((ol outline) (e mouse-down))
+  (let ((row (+ (outline-top ol) (mouse-row ol e))))
+    (when (and (>= row 0) (< row (length (ov-visible (outline-roots ol)))))
+      (setf (outline-focused ol) row) (ov-scroll-to-focus ol) (invalidate ol)))
+  (setf (handled-p e) t))
+
+(defmethod handle-event ((ol outline) (e wheel-event))
+  (ov-move ol (* 3 (event-delta e))) (setf (handled-p e) t))
+
 ;;; --- commands + keymap ------------------------------------------------------
 
 (define-command quit (v e) (setf *running* nil))

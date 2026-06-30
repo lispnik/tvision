@@ -63,6 +63,9 @@ transcript, holding any trailing partial line in PENDING for the next chunk."
         (fill-row sb 0 row w attr)
         (when (< i total) (draw-text sb 0 row (sb-row sb i) attr))))))
 
+(defmethod handle-event ((sb scrollback) (e wheel-event))
+  (sb-scroll sb (* 3 (event-delta e))) (setf (handled-p e) t))
+
 (defmethod handle-event ((sb scrollback) (e key-event))
   (let* ((ks (event-keysym e)) (page (max 1 (1- (r-h (view-bounds sb))))))
     (cond
