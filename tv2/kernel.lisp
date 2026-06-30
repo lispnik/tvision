@@ -160,7 +160,8 @@
         (cons tvision:+kb-enter+ :enter) (cons tvision:+kb-esc+ :esc)
         (cons tvision:+kb-home+ :home) (cons tvision:+kb-end+ :end)
         (cons tvision:+kb-pgup+ :pgup) (cons tvision:+kb-pgdn+ :pgdn)
-        (cons tvision:+kb-tab+ :tab)   (cons tvision:+kb-shift-tab+ :shift-tab)))
+        (cons tvision:+kb-tab+ :tab)   (cons tvision:+kb-shift-tab+ :shift-tab)
+        (cons tvision::+kb-back+ :back) (cons tvision::+kb-del+ :del)))
 
 (defun translate (tev)
   "Translate a tvision event struct into a tv2 event object, or NIL to ignore."
@@ -187,7 +188,10 @@
         :frame          (tvision:make-attr 15 1)    ; bright white on blue
         :status         (tvision:make-attr 0 6)     ; black on cyan
         :button         (tvision:make-attr 0 7)     ; black on grey
-        :button-focused (tvision:make-attr 15 4))   ; white on magenta
+        :button-focused (tvision:make-attr 15 4)     ; white on magenta
+        :label          (tvision:make-attr 14 1)     ; yellow on blue
+        :input          (tvision:make-attr 7 0)      ; grey on black (a field)
+        :input-focused  (tvision:make-attr 15 0))    ; white on black
   "Role -> packed attribute.")
 
 (defun role (key) (or (getf *theme* key) (tvision:make-attr 7 0)))

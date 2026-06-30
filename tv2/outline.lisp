@@ -92,7 +92,8 @@
         (ov-move v -1))))
 
 (defkeymap *global-keys* ()
-  (#\q quit))
+  (#\q quit)
+  (:esc quit))   ; an escape hatch that works even while a text field is focused
 
 (defkeymap *outline-keys* (*global-keys*)
   (:up    cursor-up)

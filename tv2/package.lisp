@@ -28,5 +28,6 @@ event layers are new.")
    ;; widgets
    #:outline #:outline-roots #:outline-focused
    #:window #:window-title #:button #:button-label #:button-command #:static-text
+   #:input-line #:input-text #:input-caret #:input-on-change
    ;; demo
    #:run))

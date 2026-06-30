@@ -70,7 +70,7 @@
                        (error "tv2 ui: ~(~a~) child must be (SIZE FORM), got ~s" (car form) entry))
                   collect `(add-laid c ,(expand-ui (second entry)) ,(first entry)))
           c))
-      ((outline button static-text)
+      ((outline button static-text input-line)
        `(make-instance ',(car form) ,@(cdr form)))
       (t (error "tv2 ui: unknown widget/form ~s" (car form))))))
 
@@ -85,16 +85,25 @@
 the UI macro + box layout (no hand-computed bounds).  Tab cycles focus, Enter/
 Space fire a button's command, arrows drive the focused outline, q quits."
   (tvision:with-screen (s)
-    (let ((win (ui (window (:title " tv2 — declarative layout DSL · Tab focus · named commands "
+    (let ((win (ui (window (:title " tv2 — input-line · data entry · reactive on-change handler "
                             :keymap *global-keys*)
                      (stack
+                       (1 (row
+                            (9     (static-text :role :label :text " Filter: "))
+                            (:fill (input-line :name 'find
+                                     :on-change (lambda (il)
+                                                  (let ((echo (find-view (view-root il) 'echo)))
+                                                    (when echo
+                                                      (setf (static-text-text echo)
+                                                            (format nil " typed ~s  (live via on-change -> reactive repaint) "
+                                                                    (input-text il))))))))))
                        (:fill (outline :name 'tree :roots (demo-roots) :keymap *outline-keys*))
                        (1 (row
                             (16    (button :label "Collapse all" :command 'collapse-all))
                             (8     (button :label "Quit"         :command 'quit))
-                            (:fill (static-text :role :status :text ""))))
+                            (:fill (static-text :name 'echo :role :status :text " (type in the Filter field) "))))
                        (1 (static-text :role :status
-                            :text " Tab: focus · arrows/Enter: outline · Enter/Space: button · q: quit ")))))))
+                            :text " Tab: focus · type in Filter · arrows/Enter: outline · Esc or Quit: exit ")))))))
       (layout win (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
       (setf (container-focus win) (first (all-focusables win))
             *running* t *dirty* t)
