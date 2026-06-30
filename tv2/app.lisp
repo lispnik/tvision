@@ -48,8 +48,6 @@ NIL when the user quits."
     (cdr choice)))
 
 (defun run-app ()
-  "Run the tv2-based tvlisp IDE: a launcher menu that opens each ported window
-and returns to the menu when the window closes."
-  (loop for thunk = (run-menu)
-        while thunk
-        do (ignore-errors (funcall thunk))))
+  "Run the tv2-based tvlisp IDE.  This is now the full Turbo-Vision-style desktop
+shell (menu bar + status bar + hosted windows); see RUN-DESKTOP."
+  (run-desktop))

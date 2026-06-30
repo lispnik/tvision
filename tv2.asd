@@ -22,6 +22,7 @@
                              (:file "widgets")
                              (:file "scrollback")
                              (:file "layout")
+                             (:file "host")
                              (:file "modal")
                              (:file "threadmon")
                              (:file "browser")
@@ -31,4 +32,5 @@
                              (:file "syntax")
                              (:file "editor")
                              (:file "html")
+                             (:file "desktop")
                              (:file "app")))))

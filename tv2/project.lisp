@@ -81,37 +81,29 @@ get a lazy loader; files are leaves whose DATA is their relpath."
 (defkeymap *proj-keys* (*outline-keys*)
   (:enter proj-open))                    ; override Enter; arrows/Right/Left inherit from *outline-keys*
 
+(defun make-project (&optional (dir "/Users/mkennedy/Projects/common-lisp/tvision/"))
+  "Build a project-manager window for DIR.  Return (values WINDOW FOCUS)."
+  (multiple-value-bind (tree rels) (%git-root dir)
+    (let ((win (ui (window (:title " tv2 — Project manager (a real tvlisp window, ported) "
+                            :keymap *global-keys*)
+                     (stack
+                       (1 (row (9 (static-text :role :label :text " Filter: "))
+                               (:fill (input-line :name 'q
+                                        :on-change (lambda (il)
+                                                     (let* ((q (input-text il)) (ol (find-view (view-root il) 'tree)))
+                                                       (setf (outline-roots ol)
+                                                             (if (zerop (length q)) (list tree)
+                                                                 (loop for r in rels
+                                                                       when (search q r :test #'char-equal)
+                                                                         collect (tvision:make-outline-node r nil r)))
+                                                             (outline-focused ol) 0 (outline-top ol) 0)
+                                                       (invalidate ol)))))))
+                       (:fill (outline :name 'tree :roots (list tree) :keymap *proj-keys*))
+                       (1 (static-text :name 'echo :role :status :text " Right/Enter: expand (lazy) · Enter on a file: open "))
+                       (1 (static-text :role :status
+                            :text " Tab/arrows · type to filter to a flat match list · Esc: close ")))))))
+      (values win (find-view win 'q)))))
+
 (defun run-project (&optional (dir "/Users/mkennedy/Projects/common-lisp/tvision/"))
   "Browse a git project as a lazy tree with a flat-match filter."
-  (tvision:with-screen (s)
-    (multiple-value-bind (tree rels) (%git-root dir)
-      (let ((win (ui (window (:title " tv2 — Project manager (a real tvlisp window, ported) "
-                              :keymap *global-keys*)
-                       (stack
-                         (1 (row (9 (static-text :role :label :text " Filter: "))
-                                 (:fill (input-line :name 'q
-                                          :on-change (lambda (il)
-                                                       (let* ((q (input-text il)) (ol (find-view *root* 'tree)))
-                                                         (setf (outline-roots ol)
-                                                               (if (zerop (length q)) (list tree)
-                                                                   (loop for r in rels
-                                                                         when (search q r :test #'char-equal)
-                                                                           collect (tvision:make-outline-node r nil r)))
-                                                               (outline-focused ol) 0 (outline-top ol) 0)
-                                                         (invalidate ol)))))))
-                         (:fill (outline :name 'tree :roots (list tree) :keymap *proj-keys*))
-                         (1 (static-text :name 'echo :role :status :text " Right/Enter: expand (lazy) · Enter on a file: open "))
-                         (1 (static-text :role :status
-                              :text " Tab/arrows · type to filter to a flat match list · Esc: quit ")))))))
-        (layout win (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
-        (setf *root* win
-              (container-focus win) (first (all-focusables win))
-              *ui-thread* sb-thread:*current-thread* *running* t *dirty* t)
-        (loop while *running* do
-          (drain-ui-callbacks)
-          (when *dirty*
-            (tvision:hide-cursor s)
-            (draw win) (tvision:flush-screen s) (setf *dirty* nil))
-          (tvision::pump-input s 0.05)
-          (let ((tev (tvision::screen-next-event s)))
-            (when tev (let ((ev (translate tev))) (when ev (handle-event win ev))))))))))
+  (multiple-value-bind (w f) (make-project dir) (run-view w :focus f)))

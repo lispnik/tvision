@@ -480,33 +480,27 @@ ported onto tv2 &mdash; after the thread monitor, project manager, browser,
 REPL and editor.</p>
 <p><a href=\"index\">&larr; Back to the index</a></p></body></html>")))
 
+(defun make-html (&optional (page "index"))
+  "Build an HTML-browser window over the built-in demo site.  Return (values
+WINDOW FOCUS)."
+  (let* ((win (ui (window (:title " tv2 — HTML browser (a real tvlisp window, ported) " :keymap *global-keys*)
+                    (stack
+                      (:fill (html-view :name 'doc))
+                      (1 (static-text :name 'status :role :status :text ""))))))
+         (doc (find-view win 'doc)) (status (find-view win 'status)))
+    (labels ((echo (msg) (setf (static-text-text status) msg) (invalidate status))
+             (show (name)
+               (let ((html (cdr (assoc name *html-demo-pages* :test #'string=))))
+                 (if html
+                     (progn (set-html doc html) (hv-next-link doc 1)
+                            (echo (format nil " page: ~a   ~d link~:p   n/p: links · Enter: follow · /: find · arrows: scroll · Esc: close "
+                                          name (hv-nlinks doc))))
+                     (echo (format nil " external link: ~a   (a real browser would navigate here) " name))))))
+      (setf (hv-on-link doc) (lambda (href) (show href))   ; SHOW renders a known page or echoes an external href
+            (hv-on-status doc) #'echo)
+      (show page))
+    (values win doc)))
+
 (defun run-html (&optional (page "index"))
-  "Run the ported HTML browser on a small built-in demo site until Esc."
-  (tvision:with-screen (s)
-    (let ((win (ui (window (:title " tv2 — HTML browser (a real tvlisp window, ported) " :keymap *global-keys*)
-                     (stack
-                       (:fill (html-view :name 'doc))
-                       (1 (static-text :name 'status :role :status :text "")))))))
-      (layout win (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
-      (let ((doc (find-view win 'doc)) (status (find-view win 'status)))
-        (labels ((echo (msg) (setf (static-text-text status) msg) (invalidate status))
-                 (show (name)
-                   (let ((html (cdr (assoc name *html-demo-pages* :test #'string=))))
-                     (if html
-                         (progn (set-html doc html) (hv-next-link doc 1)
-                                (echo (format nil " page: ~a   ~d link~:p   n/p: links · Enter: follow · /: find · arrows: scroll · Esc: quit "
-                                              name (hv-nlinks doc))))
-                         (echo (format nil " external link: ~a   (a real browser would navigate here) " name))))))
-          (setf (hv-on-link doc) (lambda (href) (show href))   ; SHOW renders a known page or echoes an external href
-                (hv-on-status doc) #'echo)
-          (show page)
-          (setf *root* win
-                (container-focus win) doc
-                *running* t *dirty* t)
-          (loop while *running* do
-            (when *dirty*
-              (tvision:hide-cursor s)
-              (draw win) (tvision:flush-screen s) (setf *dirty* nil))
-            (tvision::pump-input s 0.05)
-            (let ((tev (tvision::screen-next-event s)))
-              (when tev (let ((ev (translate tev))) (when ev (handle-event win ev)))))))))))
+  "Run the ported HTML browser full-screen until Esc."
+  (multiple-value-bind (w f) (make-html page) (run-view w :focus f)))

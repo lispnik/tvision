@@ -185,35 +185,29 @@ the cross-thread debugger (HANDLER-BIND keeps the stack live for the restart)."
 
 ;;; --- entry point ------------------------------------------------------------
 
+(defun make-repl (&optional (package :cl-user))
+  "Build a Lisp REPL window.  Return (values WINDOW FOCUS OPEN); OPEN's cleanup
+stops the per-listener worker thread when the window closes."
+  (let* ((win  (make-instance 'repl-window
+                              :title " tv2 — Lisp REPL (a real tvlisp window, ported) "
+                              :keymap *global-keys*
+                              :package (or (find-package package) (find-package :cl-user))))
+         (body (ui (stack
+                     (:fill (scrollback :name 'transcript))
+                     (1 (row (12 (static-text :name 'prompt :role :label :text " CL-USER> "))
+                             (:fill (input-line :name 'input :keymap *repl-input-keys*))))
+                     (1 (static-text :role :status
+                          :text " Enter: eval (on a worker thread) · ↑/↓: history · Tab: scroll transcript · Esc: close "))))))
+    (add-subview win body)
+    (scrollback-append (find-view win 'transcript)
+                       (format nil "tv2 REPL — ~a ~a~%evaluation runs on a background worker; the UI stays live (output streams in).~%~%"
+                               (lisp-implementation-type) (lisp-implementation-version)))
+    (%repl-update-prompt win)
+    (values win (find-view win 'input)
+            (lambda (s) (declare (ignore s))
+              (lambda () (when (and (repl-worker win) (sb-thread:thread-alive-p (repl-worker win)))
+                           (sb-concurrency:send-message (repl-mailbox win) (cons :quit nil))))))))
+
 (defun run-repl (&optional (package :cl-user))
-  "Run the ported Lisp REPL on the terminal until Esc."
-  (tvision:with-screen (s)
-    (let* ((win  (make-instance 'repl-window
-                                :title " tv2 — Lisp REPL (a real tvlisp window, ported) "
-                                :keymap *global-keys*
-                                :package (or (find-package package) (find-package :cl-user))))
-           (body (ui (stack
-                       (:fill (scrollback :name 'transcript))
-                       (1 (row (12 (static-text :name 'prompt :role :label :text " CL-USER> "))
-                               (:fill (input-line :name 'input :keymap *repl-input-keys*))))
-                       (1 (static-text :role :status
-                            :text " Enter: eval (on a worker thread) · ↑/↓: history · Tab: scroll transcript · Esc: quit "))))))
-      (add-subview win body)
-      (layout win (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
-      (let ((sb (find-view win 'transcript)))
-        (scrollback-append sb (format nil "tv2 REPL — ~a ~a~%evaluation runs on a background worker; the UI stays live (output streams in).~%~%"
-                                      (lisp-implementation-type) (lisp-implementation-version))))
-      (%repl-update-prompt win)
-      (setf *root* win
-            (container-focus win) (find-view win 'input)
-            *ui-thread* sb-thread:*current-thread* *running* t *dirty* t)
-      (loop while *running* do
-        (drain-ui-callbacks)                            ; run thunks the worker posted
-        (when *dirty*
-          (draw win) (tvision:flush-screen s) (setf *dirty* nil))   ; input-line owns the cursor; don't hide it
-        (tvision::pump-input s 0.05)
-        (let ((tev (tvision::screen-next-event s)))
-          (when tev (let ((ev (translate tev))) (when ev (handle-event win ev))))))
-      ;; stop the worker on the way out
-      (when (and (repl-worker win) (sb-thread:thread-alive-p (repl-worker win)))
-        (sb-concurrency:send-message (repl-mailbox win) (cons :quit nil))))))
+  "Run the ported Lisp REPL full-screen until Esc."
+  (multiple-value-bind (w f o) (make-repl package) (run-view w :focus f :open o)))

@@ -193,7 +193,9 @@
         :label          (tvision:make-attr 14 1)     ; yellow on blue
         :input          (tvision:make-attr 7 0)      ; grey on black (a field)
         :input-focused  (tvision:make-attr 15 0)     ; white on black
-        :error          (tvision:make-attr 15 4))    ; white on red
+        :error          (tvision:make-attr 15 4)     ; white on red
+        :menu           (tvision:make-attr 0 7)      ; black on grey (menu dropdown)
+        :desktop        (tvision:make-attr 8 1))     ; dim ░ pattern on blue (the desktop)
   "Role -> packed attribute.")
 
 (defun role (key) (or (getf *theme* key) (tvision:make-attr 7 0)))

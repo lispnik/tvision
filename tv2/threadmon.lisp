@@ -51,37 +51,32 @@
   (let ((lb (%tm-list (view-root v)))) (when lb (tm-refresh lb)))
   (%tm-echo (view-root v) " refreshed "))
 
+(defun make-threadmon ()
+  "Build a thread-monitor window.  Return (values WINDOW FOCUS OPEN); OPEN starts
+the background refresher (keyed off the window, not *root*, so it works hosted)
+and returns a cleanup thunk that stops it when the window closes."
+  (let ((win (ui (window (:title " tv2 — Thread monitor (a real tvlisp window, ported) "
+                          :keymap *global-keys*)
+                   (stack
+                     (1 (static-text :role :label :text " Live SBCL threads (auto-refreshing every 1.5s): "))
+                     (:fill (list-box :name 'threads :items (mapcar #'%thread-label (sb-thread:list-all-threads))))
+                     (1 (row (16 (button :label "Spawn worker" :command 'tm-spawn))
+                             (8  (button :label "Kill"         :command 'tm-kill))
+                             (12 (button :label "Refresh"      :command 'tm-refresh-cmd))
+                             (:fill (static-text :name 'echo :role :status :text ""))))
+                     (1 (static-text :role :status
+                          :text " Tab/arrows · Spawn a worker, select it, Kill · live via run-on-ui · Esc: close ")))))))
+    (setf *tm-threads* (sb-thread:list-all-threads))
+    (values win (find-view win 'threads)
+            (lambda (s) (declare (ignore s))
+              (let ((alive t))
+                (sb-thread:make-thread
+                 (lambda () (loop while alive do
+                              (sleep 1.5)
+                              (run-on-ui (lambda () (let ((lb (%tm-list win))) (when lb (tm-refresh lb)))))))
+                 :name "tv2-thread-refresher")
+                (lambda () (setf alive nil)))))))   ; cleanup: stop the refresher
+
 (defun run-threadmon ()
-  "Run the ported thread monitor on the terminal until q/Esc."
-  (tvision:with-screen (s)
-    (let ((win (ui (window (:title " tv2 — Thread monitor (a real tvlisp window, ported) "
-                            :keymap *global-keys*)
-                     (stack
-                       (1 (static-text :role :label :text " Live SBCL threads (auto-refreshing every 1.5s): "))
-                       (:fill (list-box :name 'threads :items (mapcar #'%thread-label (sb-thread:list-all-threads))))
-                       (1 (row (16 (button :label "Spawn worker" :command 'tm-spawn))
-                               (8  (button :label "Kill"         :command 'tm-kill))
-                               (12 (button :label "Refresh"      :command 'tm-refresh-cmd))
-                               (8  (button :label "Quit"         :command 'quit))
-                               (:fill (static-text :name 'echo :role :status :text ""))))
-                       (1 (static-text :role :status
-                            :text " Tab/arrows · Spawn a worker, select it, Kill · list updates live via run-on-ui · Esc: quit ")))))))
-      (layout win (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
-      (setf *tm-threads* (sb-thread:list-all-threads)
-            *root* win
-            (container-focus win) (first (all-focusables win))
-            *ui-thread* sb-thread:*current-thread* *running* t *dirty* t)
-      ;; background refresher: real changing data through the worker->UI bridge
-      (sb-thread:make-thread
-       (lambda () (loop while *running* do
-                    (sleep 1.5)
-                    (run-on-ui (lambda () (let ((lb (%tm-list *root*))) (when lb (tm-refresh lb)))))))
-       :name "tv2-thread-refresher")
-      (loop while *running* do
-        (drain-ui-callbacks)
-        (when *dirty*
-          (tvision:hide-cursor s)
-          (draw win) (tvision:flush-screen s) (setf *dirty* nil))
-        (tvision::pump-input s 0.05)
-        (let ((tev (tvision::screen-next-event s)))
-          (when tev (let ((ev (translate tev))) (when ev (handle-event win ev)))))))))
+  "Run the ported thread monitor full-screen until q/Esc."
+  (multiple-value-bind (w f o) (make-threadmon) (run-view w :focus f :open o)))

@@ -385,29 +385,27 @@ selection / an empty selection."
                     (te-selected-string te) (te-wrap te)))
       (invalidate st))))
 
+(defclass editor-window (window) () (:metaclass reactive-class))
+(defmethod draw :before ((w editor-window)) (%editor-status w))   ; keep the status line live each repaint
+
+(defun make-editor (&optional path)
+  "Build a text-editor window for PATH (or a scratch buffer).  Return (values
+WINDOW FOCUS)."
+  (let* ((win (make-instance 'editor-window
+                             :title " tv2 — Text editor (a real tvlisp window, ported) " :keymap *global-keys*))
+         (body (ui (stack
+                     (:fill (text-edit :name 'edit))
+                     (1 (static-text :name 'status :role :status :text ""))))))
+    (add-subview win body)
+    (let ((te (find-view win 'edit)))
+      (if (and path (probe-file path))
+          (te-load te path)
+          (te-set-text te (format nil ";; tv2 scratch buffer~%;; type freely — Shift+arrows select, C-c/C-x/C-v copy/cut/paste, C-z/C-y undo/redo.~%~%(defun hello (name)~%  (format t \"hello, ~~a!~~%\" name))~%")))
+      (when (or (null path) (member (pathname-type path) '("lisp" "asd" "cl") :test #'equal))
+        (setf (te-colorizer te) #'lisp-colorize)))
+    (%editor-status win)
+    (values win (find-view win 'edit))))
+
 (defun run-editor (&optional path)
-  "Run the ported text editor on the terminal until Esc."
-  (tvision:with-screen (s)
-    (let ((win (ui (window (:title " tv2 — Text editor (a real tvlisp window, ported) " :keymap *global-keys*)
-                     (stack
-                       (:fill (text-edit :name 'edit))
-                       (1 (static-text :name 'status :role :status :text "")))))))
-      (layout win (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
-      (let ((te (find-view win 'edit)))
-        (if (and path (probe-file path))
-            (te-load te path)
-            (te-set-text te (format nil ";; tv2 scratch buffer~%;; type freely — Shift+arrows select, C-c/C-x/C-v copy/cut/paste, C-z/C-y undo/redo.~%~%(defun hello (name)~%  (format t \"hello, ~~a!~~%\" name))~%")))
-        ;; syntax-highlight Lisp buffers (and the Lisp scratch buffer)
-        (when (or (null path) (member (pathname-type path) '("lisp" "asd" "cl") :test #'equal))
-          (setf (te-colorizer te) #'lisp-colorize)))
-      (%editor-status win)
-      (setf *root* win
-            (container-focus win) (find-view win 'edit)
-            *running* t *dirty* t)
-      (loop while *running* do
-        (when *dirty*
-          (%editor-status win)
-          (draw win) (tvision:flush-screen s) (setf *dirty* nil))   ; text-edit owns the cursor
-        (tvision::pump-input s 0.05)
-        (let ((tev (tvision::screen-next-event s)))
-          (when tev (let ((ev (translate tev))) (when ev (handle-event win ev)))))))))
+  "Run the ported text editor full-screen until Esc."
+  (multiple-value-bind (w f) (make-editor path) (run-view w :focus f)))
