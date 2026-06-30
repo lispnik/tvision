@@ -19,10 +19,7 @@ writes the detail line.  Return (values WINDOW FOCUS)."
                                         :on-change (lambda (il)
                                                      (let* ((query (input-text il))
                                                             (lb (find-view (view-root il) 'items))
-                                                            (items (if (zerop (length query)) all-items
-                                                                       (remove-if-not
-                                                                        (lambda (x) (search query x :test #'char-equal))
-                                                                        all-items))))
+                                                            (items (fuzzy-filter query all-items)))
                                                        (setf (list-items lb) items
                                                              (list-selected lb) 0 (list-top lb) 0)))))))
                        (:fill (list-box :name 'items :items all-items

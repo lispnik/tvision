@@ -43,6 +43,7 @@ event layers are new.")
    #:make-file-dialog #:make-color-dialog #:make-help #:*help-pages*
    #:text-edit #:te-load #:te-save #:te-text #:te-set-text #:te-filename #:te-modified #:te-colorizer
    #:lisp-colorize
+   #:flex-score #:fuzzy-filter
    ;; demo + ported real windows
    #:run #:run-threadmon
    #:run-browser #:run-packages #:run-systems #:run-project

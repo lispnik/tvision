@@ -96,9 +96,8 @@ get a lazy loader; files are leaves whose DATA is their relpath."
                                                      (let* ((q (input-text il)) (ol (find-view (view-root il) 'tree)))
                                                        (setf (outline-roots ol)
                                                              (if (zerop (length q)) (list tree)
-                                                                 (loop for r in rels
-                                                                       when (search q r :test #'char-equal)
-                                                                         collect (tvision:make-outline-node r nil r)))
+                                                                 (mapcar (lambda (r) (tvision:make-outline-node r nil r))
+                                                                         (fuzzy-filter q rels)))
                                                              (outline-focused ol) 0 (outline-top ol) 0)
                                                        (invalidate ol)))))))
                        (:fill (outline :name 'tree :roots (list tree) :keymap *proj-keys*))
