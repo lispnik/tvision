@@ -47,4 +47,5 @@
                              (:file "nav")
                              (:file "compile")
                              (:file "editing")
+                             (:file "docs")
                              (:file "app")))))

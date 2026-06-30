@@ -525,3 +525,58 @@ WINDOW FOCUS)."
 (defun run-html (&optional (page "index"))
   "Run the ported HTML browser full-screen until Esc."
   (multiple-value-bind (w f o) (make-html page) (run-view w :focus f :open o)))
+
+;;; --- a fetch-capable document browser (HyperSpec / manuals) -----------------
+;;; When *URL-FETCH-FN* is bound (tvlisp-tv2 -> curl), the HTML browser becomes a
+;;; real one: link clicks fetch and render the target page.
+
+(defvar *url-fetch-fn* nil "(url) -> HTML string, or NIL.")
+
+(defun %collapse-dots (url)
+  "Collapse ./ and ../ segments in URL's path."
+  (let ((p (search "://" url)))
+    (if (null p) url
+        (let* ((rest (+ p 3)) (slash (position #\/ url :start rest))
+               (prefix (if slash (subseq url 0 slash) url))
+               (path (if slash (subseq url slash) "/")) (segs '()))
+          (dolist (s (uiop:split-string path :separator "/"))
+            (cond ((string= s "..") (when segs (pop segs)))
+                  ((or (string= s ".") (string= s "")))
+                  (t (push s segs))))
+          (concatenate 'string prefix "/" (format nil "~{~a~^/~}" (reverse segs)))))))
+
+(defun %resolve-url (base href)
+  "Resolve HREF (possibly relative) against the BASE page URL."
+  (cond ((or (null href) (zerop (length href))) base)
+        ((search "://" href) href)
+        ((null base) href)
+        ((char= (char href 0) #\#) base)                      ; same-page anchor
+        (t (let* ((q (or (position #\# href) (length href)))  ; drop any #anchor
+                  (href (subseq href 0 q))
+                  (cut (position #\/ base :from-end t))
+                  (dir (if cut (subseq base 0 (1+ cut)) (concatenate 'string base "/"))))
+             (%collapse-dots (concatenate 'string dir href))))))
+
+(defun make-doc-browser (title html &optional base-url)
+  "An HTML browser over arbitrary HTML; with *URL-FETCH-FN* set, clicking a link
+fetches and renders the target.  Return (values WINDOW FOCUS OPEN)."
+  (let* ((cur (list base-url))
+         (win (ui (window (:title title :keymap *global-keys*)
+                    (stack (:fill (html-view :name 'doc))
+                           (1 (static-text :name 'status :role :status :text ""))))))
+         (doc (find-view win 'doc)) (status (find-view win 'status)))
+    (labels ((echo (m) (setf (static-text-text status) m) (invalidate status))
+             (render (h url)
+               (setf (first cur) url) (set-html doc h) (hv-next-link doc 1)
+               (echo (format nil " ~a   ~d link~:p · n/p · Enter: follow · /: find · Esc: close "
+                             (or url "") (hv-nlinks doc)))))
+      (setf (hv-on-link doc)
+            (lambda (href)
+              (let ((target (%resolve-url (first cur) href)))
+                (if (and *url-fetch-fn* target)
+                    (let ((h (funcall *url-fetch-fn* target)))
+                      (if h (render h target) (echo (format nil " could not fetch ~a " target))))
+                    (echo (format nil " link: ~a " href)))))
+            (hv-on-status doc) #'echo)
+      (setf (window-scroll-target win) doc (window-help win) :html)
+      (values win doc (lambda (s) (declare (ignore s)) (render html base-url) nil)))))

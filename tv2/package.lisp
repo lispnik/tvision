@@ -50,6 +50,6 @@ event layers are new.")
    #:*object->outline-fn* #:make-inspector #:*profile-fn* #:make-table-window #:*paredit-fn*
    #:run-repl #:repl-window #:repl-package #:*repl-eval-fn* #:repl-hist-vars #:repl-busy #:repl-submit-string
    #:run-editor #:*editor-eval-fn* #:*editor-completions-fn* #:*paren-matcher*
-   #:html-view #:set-html #:run-html
+   #:html-view #:set-html #:run-html #:make-doc-browser #:*url-fetch-fn* #:*hyperspec-url-fn*
    #:run-app #:run-menu #:*app-windows* #:*desktop* #:ensure-repl
    #:run-desktop #:desktop #:menu-bar #:status-bar))
