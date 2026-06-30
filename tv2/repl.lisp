@@ -24,7 +24,8 @@
    (hist-pos :initform nil  :accessor repl-hist-pos)    ; index into history while recalling
    (busy     :initform nil  :accessor repl-busy)        ; evaluating? (input ignored while t)
    (worker   :initform nil  :accessor repl-worker)
-   (mailbox  :initform nil  :accessor repl-mailbox))
+   (mailbox  :initform nil  :accessor repl-mailbox)
+   (hist-vars :initform nil :accessor repl-hist-vars))   ; per-listener CL history-var state (for a backend)
   (:metaclass reactive-class))
 
 (defun repl-prompt-string (win)
@@ -129,6 +130,11 @@ the cross-thread debugger (HANDLER-BIND keeps the stack live for the restart)."
                    (setf (repl-package win) pkg (repl-busy win) nil)
                    (%repl-update-prompt win))))))
 
+;;; The worker calls this to evaluate INPUT for WIN.  Defaults to tv2's own
+;;; streaming evaluator; an embedding app (tvlisp-tv2) can rebind it to reuse a
+;;; different eval backend (e.g. tvlisp's repl-backend-eval).
+(defvar *repl-eval-fn* '%repl-eval)
+
 (defun repl-ensure-worker (win)
   (unless (repl-mailbox win) (setf (repl-mailbox win) (sb-concurrency:make-mailbox)))
   (unless (and (repl-worker win) (sb-thread:thread-alive-p (repl-worker win)))
@@ -138,7 +144,7 @@ the cross-thread debugger (HANDLER-BIND keeps the stack live for the restart)."
              (loop for job = (sb-concurrency:receive-message (repl-mailbox win))
                    do (case (car job)
                         (:quit (return))
-                        (:eval (%repl-eval win (cdr job))))))
+                        (:eval (funcall *repl-eval-fn* win (cdr job))))))
            :name "tv2-repl-worker"))))
 
 ;;; --- commands (bound on the input-line's keymap) ----------------------------

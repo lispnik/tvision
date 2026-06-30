@@ -47,7 +47,7 @@ event layers are new.")
    ;; demo + ported real windows
    #:run #:run-threadmon
    #:run-browser #:run-packages #:run-systems #:run-project
-   #:run-repl #:repl-window #:repl-package
+   #:run-repl #:repl-window #:repl-package #:*repl-eval-fn* #:repl-hist-vars #:repl-busy
    #:run-editor
    #:html-view #:set-html #:run-html
    #:run-app #:run-menu #:*app-windows*
