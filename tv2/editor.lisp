@@ -222,6 +222,31 @@ selection / an empty selection."
 ;;; an embedding app (e.g. tvlisp-tv2) can rebind it to a smarter engine.
 (defvar *lisp-indenter* #'lisp-auto-indent)
 
+;;; --- structural ops: completion + bracket matching --------------------------
+;;; Both reuse an embedding app's language logic via a hook.  When unset, the
+;;; editor simply doesn't offer the chip/key.
+
+;;; (funcall fn TE TOKEN) -> list of completion strings for the symbol prefix
+;;; TOKEN at the cursor (tvlisp-tv2 wires this to its package-aware completer).
+(defvar *editor-completions-fn* nil)
+;;; (funcall fn TEXT OFFSET) -> the matching paren's offset in TEXT, or NIL
+;;; (TEXT[OFFSET] is a paren; tvlisp-tv2 wires this to %PAREN-MATCH-OFFSET).
+(defvar *paren-matcher* nil)
+
+(defun te-offset (te line col)
+  "Char offset where (LINE,COL) sits in TE's buffer (each newline is one char)."
+  (+ (loop for i below line sum (1+ (length (te-line te i)))) col))
+
+(defun te-pos-at-offset (te off)
+  "(values LINE COL) for char OFFSET in TE's buffer."
+  (let ((line 0))
+    (loop for len = (1+ (length (te-line te line)))
+          while (and (>= off len) (< line (1- (te-nlines te))))
+          do (decf off len) (incf line))
+    (values line (min (max 0 off) (length (te-line te line))))))
+
+(defun %lisp-token-char-p (ch) (or (alphanumericp ch) (find ch "+-*/@$%^&_=<>.~!?:")))
+
 ;;; --- search -----------------------------------------------------------------
 
 (defun te-find (te query &key (from-line (te-cy te)) (from-col 0))
@@ -469,6 +494,56 @@ or a regex per line when REGEX).  Return the number of replacements."
                                                    (if (te-wrap te) (dotimes (i n) (te-vmove te 1)) (incf (te-cy te) n))))) (done))
         (t (call-next-method))))))               ; Esc / q bubble to the window
 
+;;; --- symbol completion + paren matching (commands) --------------------------
+
+(defun %editor-token-before (te)
+  "Return (values TOKEN START) for the symbol prefix ending at the cursor."
+  (let* ((line (te-cur te)) (col (min (te-cx te) (length line))) (start col))
+    (loop while (and (plusp start) (%lisp-token-char-p (char line (1- start)))) do (decf start))
+    (values (subseq line start col) start)))
+
+(defun popup-choose (items &key (title " Select "))
+  "Modal list picker centred over *ROOT*; return the chosen string or NIL."
+  (let* ((d (ui (dialog (:title title :keymap *dialog-keys*
+                         :value-fn (lambda (d) (let ((lb (find-view d 'lb)))
+                                                 (nth (list-selected lb) (list-items lb)))))
+                  (stack
+                    (:fill (list-box :name 'lb :items items
+                             :on-activate (lambda (lb item) (declare (ignore item)) (perform 'accept lb nil))))
+                    (1 (static-text :role :status :text " ↑/↓ select · Enter: choose · Esc: cancel "))))))
+         (h (min 18 (+ 4 (length items)))))
+    (let ((r (exec-view d :width 40 :height h)))
+      (if (eq r :cancel) nil r))))
+
+(defun %editor-complete (te)
+  "Complete the symbol prefix at the cursor via *EDITOR-COMPLETIONS-FN*: insert the
+sole candidate, or pop up a chooser when there are several."
+  (when *editor-completions-fn*
+    (multiple-value-bind (token start) (%editor-token-before te)
+      (when (plusp (length token))
+        (let ((cands (funcall *editor-completions-fn* te token)))
+          (let ((chosen (cond ((null cands) nil)
+                              ((null (cdr cands)) (first cands))
+                              (t (popup-choose cands :title " Complete ")))))
+            (when chosen
+              (te-save-undo te)
+              (te-replace-region te (te-cy te) start (te-cy te) (te-cx te) chosen)
+              (te-ensure-visible te) (invalidate te))))))))
+
+(defun %editor-match-paren (te)
+  "Jump the cursor to the paren matching the one at/just-before it, via
+*PAREN-MATCHER*.  Return T when it moved."
+  (when *paren-matcher*
+    (let* ((line (te-cur te)) (cx (te-cx te))
+           (target (cond ((and (< cx (length line)) (find (char line cx) "()")) (te-offset te (te-cy te) cx))
+                         ((and (plusp cx) (find (char line (1- cx)) "()")) (te-offset te (te-cy te) (1- cx))))))
+      (when target
+        (let ((m (funcall *paren-matcher* (te-text te) target)))
+          (when m
+            (multiple-value-bind (l c) (te-pos-at-offset te m)
+              (setf (te-cy te) l (te-cx te) c (te-anchor te) nil)
+              (te-ensure-visible te) (invalidate te) t)))))))
+
 ;;; --- the editor window ------------------------------------------------------
 
 (defun %editor-status (win)
@@ -517,6 +592,8 @@ or a regex per line when REGEX).  Return the number of replacements."
 (defmethod status-hints ((te text-edit))   ; chips the desktop shows while the editor is focused
   (append
    (when *editor-eval-fn* (list (cons "Eval" (lambda () (funcall *editor-eval-fn* te)))))
+   (when *editor-completions-fn* (list (cons "Complete" (lambda () (%editor-complete te)))))
+   (when *paren-matcher* (list (cons "Match)" (lambda () (%editor-match-paren te)))))
    (list
         (cons "Find" (lambda () (%editor-find te)))
         (cons "Next" (lambda () (te-find-next te)))
@@ -528,6 +605,14 @@ or a regex per line when REGEX).  Return the number of replacements."
 
 (defclass editor-window (window) () (:metaclass reactive-class))
 (defmethod draw :before ((w editor-window)) (%editor-status w))   ; keep the status line live each repaint
+
+;; The container would otherwise grab Tab for focus-next; intercept it here so
+;; Tab completes the symbol at point (the editor pane is the only focusable).
+(defmethod handle-event ((w editor-window) (e key-event))
+  (let ((te (find-view w 'edit)))
+    (if (and (eql (event-keysym e) :tab) *editor-completions-fn* te (view-focused-p te))
+        (progn (%editor-complete te) (setf (handled-p e) t))
+        (call-next-method))))
 
 (defun make-editor (&optional path)
   "Build a text-editor window for PATH (or a scratch buffer).  Return (values

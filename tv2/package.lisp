@@ -48,7 +48,7 @@ event layers are new.")
    #:run #:run-threadmon
    #:run-browser #:run-packages #:run-systems #:run-project
    #:run-repl #:repl-window #:repl-package #:*repl-eval-fn* #:repl-hist-vars #:repl-busy #:repl-submit-string
-   #:run-editor #:*editor-eval-fn*
+   #:run-editor #:*editor-eval-fn* #:*editor-completions-fn* #:*paren-matcher*
    #:html-view #:set-html #:run-html
    #:run-app #:run-menu #:*app-windows* #:*desktop* #:ensure-repl
    #:run-desktop #:desktop #:menu-bar #:status-bar))
