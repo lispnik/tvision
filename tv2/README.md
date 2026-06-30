@@ -12,8 +12,16 @@ new. Every real tvlisp window has been rebuilt on it as a working demo.
 
 ```lisp
 (asdf:load-system "tv2")
-(tv2:run-repl)        ; or run-editor, run-project, run-html, run-threadmon, …
+(tv2:run-desktop)     ; the IDE: a menu bar + status bar + desktop hosting the windows
+;; or run a single window full-screen:
+(tv2:run-repl)        ; run-editor, run-project, run-html, run-threadmon, run-packages, …
 ```
+
+The IDE shell — a Turbo-Vision-style **menu bar**, **status bar**, and a desktop
+that hosts the ported windows (REPL with the SLDB debugger, the syntax-
+highlighting editor, the git project tree, the HTML browser with find-in-page):
+
+![The tv2 IDE: menu bar, desktop, and the ported windows in action](../media/tv2-ide.gif)
 
 ## What's different from classic Turbo Vision
 

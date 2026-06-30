@@ -360,9 +360,10 @@ and jumping to the first.  Match columns are virtual columns = on-screen columns
     (invalidate v)))
 
 (defun hv-line-into-view (v ln)
-  (let ((h (r-h (view-bounds v))) (top (hv-top v)))
-    (cond ((< ln top) (setf (hv-top v) ln))
-          ((>= ln (+ top h)) (setf (hv-top v) (max 0 (1+ (- ln h))))))))
+  (when (view-bounds v)                          ; no-op before the view is laid out
+    (let ((h (r-h (view-bounds v))) (top (hv-top v)))
+      (cond ((< ln top) (setf (hv-top v) ln))
+            ((>= ln (+ top h)) (setf (hv-top v) (max 0 (1+ (- ln h)))))))))
 
 (defun hv-focus-link (v id)
   (when (and id (>= id 0) (< id (hv-nlinks v)))
@@ -498,9 +499,10 @@ WINDOW FOCUS)."
                      (echo (format nil " external link: ~a   (a real browser would navigate here) " name))))))
       (setf (hv-on-link doc) (lambda (href) (show href))   ; SHOW renders a known page or echoes an external href
             (hv-on-status doc) #'echo)
-      (show page))
-    (values win doc)))
+      ;; render AFTER the window is laid out (OPEN runs post-layout), so the
+      ;; document wraps to the real width and link-scrolling has bounds
+      (values win doc (lambda (s) (declare (ignore s)) (show page) nil)))))
 
 (defun run-html (&optional (page "index"))
   "Run the ported HTML browser full-screen until Esc."
-  (multiple-value-bind (w f) (make-html page) (run-view w :focus f)))
+  (multiple-value-bind (w f o) (make-html page) (run-view w :focus f :open o)))
