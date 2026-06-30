@@ -84,8 +84,24 @@ badges on changed files (via *PROJECT-STATUS-FN* when bound)."
     (values root rels)))
 
 (defclass project-window (window)
-  ((dir :initarg :dir :accessor pw-dir))          ; the project root (a directory pathname)
+  ((dir       :initarg :dir :accessor pw-dir)     ; the project root (a directory pathname)
+   (tree-node :initform nil :accessor pw-tree-node)   ; the full tree's root outline-node
+   (rels      :initform nil :accessor pw-rels))       ; relative paths (for the filter)
   (:metaclass reactive-class))
+
+(defun %pm-rebuild (win)
+  "Rescan WIN's project from disk (new/removed files + fresh git status) and
+refresh the tree, preserving the filter."
+  (multiple-value-bind (tree rels) (%git-root (pw-dir win))
+    (setf (pw-tree-node win) tree (pw-rels win) rels)
+    (let ((ol (find-view win 'tree)) (q (find-view win 'q)))
+      (when ol
+        (let ((filter (and q (input-text q))))
+          (setf (outline-roots ol)
+                (if (or (null filter) (zerop (length filter))) (list tree)
+                    (mapcar (lambda (r) (tvision:make-outline-node r nil r)) (fuzzy-filter filter rels)))
+                (outline-focused ol) 0 (outline-top ol) 0))
+        (invalidate ol)))))
 
 ;;; --- opening files in an editor on the desktop ------------------------------
 
@@ -167,7 +183,63 @@ chosen match at its line."
 (defmethod status-hints ((win project-window))   ; chips shown while a PM window is focused
   (append
    (list (cons "Open" (lambda () (%pm-open-current win))))
-   (when *project-grep-fn* (list (cons "Find in files" (lambda () (%pm-find-in-files win)))))))
+   (when *project-grep-fn* (list (cons "Find in files" (lambda () (%pm-find-in-files win)))))
+   (list (cons "New"     (lambda () (%pm-new-file win)))
+         (cons "Rename"  (lambda () (%pm-rename-file win)))
+         (cons "Delete"  (lambda () (%pm-delete-file win)))
+         (cons "Refresh" (lambda () (%pm-rebuild win))))))
+
+;;; --- file operations --------------------------------------------------------
+
+(defun %confirm (message)
+  "A modal Yes/No dialog; return T on Yes."
+  (let ((d (ui (dialog (:title " Confirm " :keymap *dialog-keys* :value-fn (constantly t))
+                 (stack (1 (static-text :role :label :text message))
+                        (:fill (static-text :text ""))
+                        (1 (row (:fill (static-text :text ""))
+                                (9  (button :label "Yes" :command 'accept))
+                                (9  (button :label "No"  :command 'cancel)))))))))
+    (not (eq (exec-view d :width 54 :height 7) :cancel))))
+
+(defun %pm-echo (win msg)
+  (let ((e (find-view win 'echo))) (when e (setf (static-text-text e) msg) (invalidate e))))
+
+(defun %pm-selected-file (win)
+  "Absolute pathname of the selected file leaf, or NIL when a dir/none is focused."
+  (let* ((ol (find-view win 'tree)) (n (and ol (ov-current ol))))
+    (when (and n (not (tvision:outline-node-expandable-p n)) (tvision:outline-node-data n))
+      (merge-pathnames (princ-to-string (tvision:outline-node-data n)) (pw-dir win)))))
+
+(defun %pm-new-file (win)
+  (let ((name (prompt-string " New file " "Path (relative to project):")))
+    (when (and name (plusp (length (string-trim " " name))))
+      (let ((path (merge-pathnames (string-trim " " name) (pw-dir win))))
+        (handler-case
+            (progn (ensure-directories-exist path)
+                   (unless (probe-file path)
+                     (with-open-file (s path :direction :output :if-does-not-exist :create)))
+                   (%pm-rebuild win)
+                   (%pm-open-file win (enough-namestring path (pw-dir win))))
+          (error (e) (%pm-echo win (format nil " ~a " e))))))))
+
+(defun %pm-rename-file (win)
+  (let ((path (%pm-selected-file win)))
+    (if (null path)
+        (%pm-echo win " select a file to rename ")
+        (let ((new (prompt-string " Rename " (format nil "New name for ~a:" (file-namestring path)))))
+          (when (and new (plusp (length (string-trim " " new))))
+            (handler-case
+                (let ((dest (merge-pathnames (string-trim " " new) (uiop:pathname-directory-pathname path))))
+                  (rename-file path dest) (%pm-rebuild win) (%pm-echo win (format nil " renamed -> ~a " (file-namestring dest))))
+              (error (e) (%pm-echo win (format nil " ~a " e)))))))))
+
+(defun %pm-delete-file (win)
+  (let ((path (%pm-selected-file win)))
+    (if (null path)
+        (%pm-echo win " select a file to delete ")
+        (when (%confirm (format nil " Delete ~a? " (file-namestring path)))
+          (handler-case (progn (delete-file path) (%pm-rebuild win) (%pm-echo win " deleted "))
+            (error (e) (%pm-echo win (format nil " ~a " e))))))))
 
 (defkeymap *proj-keys* (*outline-keys*)
   (:enter proj-open))                    ; override Enter; arrows/Right/Left inherit from *outline-keys*
@@ -177,29 +249,29 @@ chosen match at its line."
 
 (defun make-project (&optional (dir *project-dir*))
   "Build a project-manager window for DIR.  Return (values WINDOW FOCUS)."
-  (multiple-value-bind (tree rels) (%git-root dir)
-    (let* ((win (make-instance 'project-window
-                               :dir (uiop:ensure-directory-pathname dir)
-                               :title " tv2 — Project manager (a real tvlisp window, ported) "
-                               :keymap *global-keys*))
-           (body (ui (stack
-                       (1 (row (9 (static-text :role :label :text " Filter: "))
-                               (:fill (input-line :name 'q
-                                        :on-change (lambda (il)
-                                                     (let* ((q (input-text il)) (ol (find-view (view-root il) 'tree)))
-                                                       (setf (outline-roots ol)
-                                                             (if (zerop (length q)) (list tree)
-                                                                 (mapcar (lambda (r) (tvision:make-outline-node r nil r))
-                                                                         (fuzzy-filter q rels)))
-                                                             (outline-focused ol) 0 (outline-top ol) 0)
-                                                       (invalidate ol)))))))
-                       (:fill (outline :name 'tree :roots (list tree) :keymap *proj-keys*))
-                       (1 (static-text :name 'echo :role :status :text " Enter on a file: open in editor · [M]/[A] = git modified/added "))
-                       (1 (static-text :role :status
-                            :text " type to filter · Open / Find-in-files chips · Esc: close "))))))
-      (add-subview win body)
-      (setf (window-scroll-target win) (find-view win 'tree) (window-help win) :project)
-      (values win (find-view win 'q)))))
+  (let* ((win (make-instance 'project-window
+                             :dir (uiop:ensure-directory-pathname dir)
+                             :title " tv2 — Project manager (a real tvlisp window, ported) "
+                             :keymap *global-keys*))
+         (body (ui (stack
+                     (1 (row (9 (static-text :role :label :text " Filter: "))
+                             (:fill (input-line :name 'q
+                                      :on-change (lambda (il)
+                                                   (let* ((q (input-text il)) (w (view-root il)) (ol (find-view w 'tree)))
+                                                     (setf (outline-roots ol)
+                                                           (if (zerop (length q)) (list (pw-tree-node w))
+                                                               (mapcar (lambda (r) (tvision:make-outline-node r nil r))
+                                                                       (fuzzy-filter q (pw-rels w))))
+                                                           (outline-focused ol) 0 (outline-top ol) 0)
+                                                     (invalidate ol)))))))
+                     (:fill (outline :name 'tree :keymap *proj-keys*))
+                     (1 (static-text :name 'echo :role :status :text " Enter on a file: open · [M]/[A] = git modified/added "))
+                     (1 (static-text :role :status
+                          :text " filter · Open / Find / New / Rename / Delete / Refresh chips · Esc: close "))))))
+    (add-subview win body)
+    (%pm-rebuild win)
+    (setf (window-scroll-target win) (find-view win 'tree) (window-help win) :project)
+    (values win (find-view win 'q))))
 
 (defun run-project (&optional (dir "/Users/mkennedy/Projects/common-lisp/tvision/"))
   "Browse a git project as a lazy tree with a flat-match filter."
