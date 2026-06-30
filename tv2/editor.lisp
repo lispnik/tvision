@@ -218,6 +218,10 @@ selection / an empty selection."
                (net  (- (count #\( prev) (count #\) prev))))
           (max 0 (+ lead (if (plusp net) 2 0)))))))
 
+;;; The indenter used for Lisp buffers.  Defaults to the simple heuristic above;
+;;; an embedding app (e.g. tvlisp-tv2) can rebind it to a smarter engine.
+(defvar *lisp-indenter* #'lisp-auto-indent)
+
 ;;; --- search -----------------------------------------------------------------
 
 (defun te-find (te query &key (from-line (te-cy te)) (from-col 0))
@@ -532,7 +536,7 @@ WINDOW FOCUS)."
           (te-load te path)
           (te-set-text te (format nil ";; tv2 scratch buffer~%;; type freely — Shift+arrows select, C-c/C-x/C-v copy/cut/paste, C-z/C-y undo/redo.~%~%(defun hello (name)~%  (format t \"hello, ~~a!~~%\" name))~%")))
       (when (or (null path) (member (pathname-type path) '("lisp" "asd" "cl") :test #'equal))
-        (setf (te-colorizer te) #'lisp-colorize (te-indenter te) #'lisp-auto-indent)))
+        (setf (te-colorizer te) #'lisp-colorize (te-indenter te) *lisp-indenter*)))
     (%editor-status win)
     (setf (window-scroll-target win) (find-view win 'edit) (window-help win) :editor)
     (values win (find-view win 'edit))))

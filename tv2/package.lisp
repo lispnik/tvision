@@ -42,7 +42,7 @@ event layers are new.")
    #:filter-validator #:range-validator #:picture-validator #:digits-validator #:input-validator #:input-history-id
    #:make-file-dialog #:make-color-dialog #:make-help #:*help-pages*
    #:text-edit #:te-load #:te-save #:te-text #:te-set-text #:te-filename #:te-modified #:te-colorizer #:te-find #:te-find-regex #:te-replace-all
-   #:lisp-colorize
+   #:lisp-colorize #:*lisp-indenter*
    #:flex-score #:fuzzy-filter
    ;; demo + ported real windows
    #:run #:run-threadmon
