@@ -21,4 +21,5 @@
                              (:file "outline")
                              (:file "widgets")
                              (:file "layout")
-                             (:file "modal")))))
+                             (:file "modal")
+                             (:file "threadmon")))))

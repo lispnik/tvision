@@ -37,4 +37,4 @@ event layers are new.")
    #:input-line #:input-text #:input-caret #:input-on-change
    #:list-box #:list-items #:list-selected #:list-on-activate
    ;; demo
-   #:run))
+   #:run #:run-threadmon))
