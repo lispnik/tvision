@@ -28,5 +28,6 @@
                              (:file "project")
                              (:file "debugger")
                              (:file "repl")
+                             (:file "syntax")
                              (:file "editor")
                              (:file "html")))))
