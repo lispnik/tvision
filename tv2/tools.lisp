@@ -108,6 +108,33 @@ WINDOW FOCUS)."
                    rows))
               (error (e) (%open-output " Profile — error " (princ-to-string e)))))))))
 
+;;; --- deterministic profiling (sb-profile) -----------------------------------
+
+(defun do-profile-deterministic ()
+  "Instrument every function in a package (sb-profile), run a form, and show the
+exact call-count / time report."
+  (let ((pkgname (prompt-string " Deterministic profile " "Profile functions in package:")))
+    (when (and pkgname (plusp (length (string-trim " " pkgname))))
+      (let ((form-s (prompt-string " Deterministic profile " "Form to run:")))
+        (when (and form-s (plusp (length (string-trim " " form-s))))
+          (let* ((pkg  (or (find-package (string-upcase (string-trim " " pkgname))) (%active-package)))
+                 (form (ignore-errors (let ((*package* (%active-package))) (read-from-string form-s))))
+                 (txt  nil))
+            (handler-case
+                (progn
+                  (sb-profile:reset)
+                  (eval (list 'sb-profile:profile (package-name pkg)))
+                  (unwind-protect
+                       (progn (let ((*package* pkg)) (eval form))
+                              (setf txt (with-output-to-string (s)
+                                          (let ((*standard-output* s) (*trace-output* s)) (sb-profile:report)))))
+                    (eval (list 'sb-profile:unprofile (package-name pkg)))
+                    (sb-profile:reset))
+                  (%open-output (format nil " Deterministic profile: ~a " pkgname)
+                                (if (and txt (plusp (length (string-trim '(#\Space #\Newline) txt)))) txt
+                                    "No calls were recorded.")))
+              (error (e) (%open-output " Deterministic profile " (princ-to-string e))))))))))
+
 ;;; --- stepping / break (through the REPL + tv2's debugger) -------------------
 
 (defun do-step ()
@@ -136,6 +163,7 @@ tv2's debugger (Step-next / Step-into / Step-out / Continue restarts)."
               (list "Break on entry…"  (lambda () (do-break-on-entry)))
               (list "Untrace all"      (lambda () (do-untrace-all)))
               (list "Traced functions" (lambda () (do-traced-list)))
-              (list "Profile…"         (lambda () (do-profile)))
-              (list "Step…"            (lambda () (do-step)))))
+              (list "Profile…"               (lambda () (do-profile)))
+              (list "Deterministic profile…" (lambda () (do-profile-deterministic)))
+              (list "Step…"                  (lambda () (do-step)))))
       *extra-menus*)

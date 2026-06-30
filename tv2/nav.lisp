@@ -89,12 +89,44 @@
         (%show-locations (format nil " Who ~a ~a " label name)
                          (and sym (symbolp sym) (%xref kind sym)))))))
 
+;;; --- method browser ---------------------------------------------------------
+
+(defun %method-label (m)
+  "A printed signature for method M (qualifiers + specializers)."
+  (let ((quals (sb-mop:method-qualifiers m))
+        (specs (mapcar (lambda (s)
+                         (if (typep s 'class) (class-name s)
+                             (ignore-errors (list 'eql (sb-mop:eql-specializer-object s)))))
+                       (sb-mop:method-specializers m))))
+    (string-trim " " (format nil "~{~(~a~)~^ ~} (~{~a~^ ~})" quals specs))))
+
+(defun %gf-methods (gf)
+  "List of (LABEL PATH LINE) for the methods of generic function GF."
+  (let ((out '()))
+    (dolist (m (ignore-errors (sb-mop:generic-function-methods gf)))
+      (let* ((src (ignore-errors (sb-introspect:find-definition-source (sb-mop:method-function m))))
+             (path (and src (sb-introspect:definition-source-pathname src)))
+             (off  (and src (sb-introspect:definition-source-character-offset src))))
+        (push (list (%method-label m) (and path (namestring path))
+                    (if path (%offset-to-line (namestring path) off) 0))
+              out)))
+    (nreverse out)))
+
+(defun do-method-browser ()
+  (let ((name (prompt-string " Method browser " "Generic function:")))
+    (when (and name (plusp (length (string-trim " " name))))
+      (let* ((sym (%read-in-active name)) (fn (and sym (symbolp sym) (fboundp sym) (fdefinition sym))))
+        (if (typep fn 'generic-function)
+            (%show-locations (format nil " Methods of ~a " name) (%gf-methods fn))
+            (%open-output " Method browser " (format nil "~a is not a generic function." name)))))))
+
 ;;; --- a Navigate menu --------------------------------------------------------
 
 (push (lambda (dt)
         (declare (ignore dt))
         (list "Navigate"
               (list "Go to definition…" (lambda () (do-goto-definition)))
+              (list "Method browser…"   (lambda () (do-method-browser)))
               (list "Who calls…"        (lambda () (do-xref :calls "calls")))
               (list "Who references…"   (lambda () (do-xref :references "references")))
               (list "Who binds…"        (lambda () (do-xref :binds "binds")))
