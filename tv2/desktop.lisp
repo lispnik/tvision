@@ -75,24 +75,25 @@
 
 (defmethod draw ((mb menu-bar))
   (let* ((b (view-bounds mb)) (w (r-w b)) (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b))
-         (bar (role :status)) (hot (role :menu-hotkey)) (x 1))
+         (bar (role :menu-bar)) (hot (role :menu-hotkey)) (x 1))
     (fill-row mb 0 0 w bar)
     (loop for menu in (menu-menus mb) for i from 0 do
-      (let* ((label (car menu)) (open (eql i (menu-active mb))) (attr (if open (role :button-focused) bar)))
+      (let* ((label (car menu)) (open (eql i (menu-active mb))) (attr (if open (role :menu-selected) bar)))
         (%text-at (+ ax x) ay (format nil " ~a " label) attr)
         (%put-cell (+ ax x 1) ay (char label 0) (if open attr hot))   ; highlight the hotkey letter
         (when open
           (let* ((items (cdr menu)) (dx (+ ax x)) (dy (1+ ay)) (mw (menu-dropdown-width items)))
             (flet ((draw-items (items items-x items-y sel)
-                     (loop for it in items for r from 0 do
+                     (let ((mww (menu-dropdown-width items)))
+                       (%drop-shadow items-x items-y (+ items-x mww -1) (+ items-y (length items) -1))
+                       (loop for it in items for r from 0 do
                        (let* ((on (eql r sel)) (en (item-enabled it))
-                              (ia (cond ((and on en) (role :focused)) (en (role :menu)) (t (role :menu-disabled))))
-                              (mww (menu-dropdown-width items)))
+                              (ia (cond ((and on en) (role :menu-selected)) (en (role :menu)) (t (role :menu-disabled)))))
                          (loop for k below mww do (%put-cell (+ items-x k) (+ items-y r) #\Space ia))
                          (%text-at (+ items-x 1) (+ items-y r) (item-label it) ia)
                          (cond ((item-submenu-p it) (%put-cell (+ items-x mww -2) (+ items-y r) #\▶ ia))
                                ((item-accel it) (let ((a (accel-label (item-accel it))))
-                                                  (%text-at (+ items-x mww -1 (- (length a))) (+ items-y r) a ia))))))))
+                                                  (%text-at (+ items-x mww -1 (- (length a))) (+ items-y r) a ia)))))))))
               (draw-items items dx dy (menu-sel mb))
               (when (menu-sub mb)                                      ; second-level dropdown
                 (let ((parent (nth (menu-sel mb) items)))

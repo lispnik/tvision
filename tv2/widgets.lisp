@@ -20,9 +20,10 @@
          (x0 (tvision::rect-ax b)) (y0 (tvision::rect-ay b))
          (x1 (1- (tvision::rect-bx b))) (y1 (1- (tvision::rect-by b)))
          (frame (if (window-active w) (role :frame) (role :frame-inactive))))
+    (when (window-managed w) (%drop-shadow x0 y0 x1 y1))   ; TV-style drop shadow (under desktop windows)
     (loop for y from y0 to y1 do                       ; clear interior
       (loop for x from x0 to x1 do (%put-cell x y #\Space (role :normal))))
-    (%box x0 y0 x1 y1 frame)
+    (%box x0 y0 x1 y1 frame (window-active w))          ; double-line frame when active, single when not
     (%text-at (+ x0 (max 1 (floor (- (tvision::rect-width b) (length (window-title w))) 2)))
               y0 (window-title w) frame)
     (dolist (sv (subviews w)) (draw sv))               ; children paint over the interior

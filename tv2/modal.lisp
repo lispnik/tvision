@@ -17,6 +17,14 @@
    (value-fn  :initarg :value-fn  :initform nil :accessor dialog-value-fn))   ; (dialog) -> result value
   (:metaclass reactive-class))
 
+;; Draw dialogs (and their children) in the classic grey palette, with a shadow.
+(defmethod draw :around ((d dialog))
+  (let ((*theme* *dialog-theme*)) (call-next-method))
+  (let ((b (view-bounds d)))
+    (when b
+      (%drop-shadow (tvision::rect-ax b) (tvision::rect-ay b)
+                    (1- (tvision::rect-bx b)) (1- (tvision::rect-by b))))))
+
 (defun %dialog-input-lines (d)
   (let ((out '()))
     (labels ((walk (v) (when (typep v 'input-line) (push v out))

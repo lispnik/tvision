@@ -196,25 +196,53 @@
 ;;; of byte palettes walked up the owner chain.
 ;;; ---------------------------------------------------------------------------
 
+;;; The classic Turbo Vision "blue window / grey dialog" palette (VGA 16-colour,
+;;; IRGB order: 0 blk 1 blu 2 grn 3 cyn 4 red 5 mag 6 brn 7 lgray …).
 (defparameter *theme*
-  (list :normal         (tvision:make-attr 7 1)     ; light grey on blue
-        :focused        (tvision:make-attr 15 3)    ; white on cyan
-        :frame          (tvision:make-attr 15 1)    ; bright white on blue (active window)
-        :frame-inactive (tvision:make-attr 7 1)      ; grey on blue (background window)
-        :status         (tvision:make-attr 0 6)     ; black on cyan
-        :button         (tvision:make-attr 0 7)     ; black on grey
-        :button-focused (tvision:make-attr 15 4)     ; white on magenta
-        :label          (tvision:make-attr 14 1)     ; yellow on blue
-        :input          (tvision:make-attr 7 0)      ; grey on black (a field)
-        :input-focused  (tvision:make-attr 15 0)     ; white on black
-        :error          (tvision:make-attr 15 4)     ; white on red
-        :menu           (tvision:make-attr 0 7)      ; black on grey (menu dropdown)
-        :desktop        (tvision:make-attr 8 1)      ; dim ░ pattern on blue (the desktop)
-        :scrollbar      (tvision:make-attr 7 1)      ; scrollbar track
-        :scrollbar-thumb (tvision:make-attr 15 1)     ; arrows + thumb
-        :menu-hotkey    (tvision:make-attr 4 6)      ; red on cyan (the Alt-hotkey letter)
-        :menu-disabled  (tvision:make-attr 8 7))     ; dim grey on grey (disabled item)
+  (list :normal          (tvision:make-attr 7 1)     ; light grey on blue (window text)
+        :focused         (tvision:make-attr 15 3)    ; white on cyan (selected row)
+        :frame           (tvision:make-attr 15 1)    ; bright white on blue (active window)
+        :frame-inactive  (tvision:make-attr 7 1)     ; light grey on blue (background window)
+        :menu-bar        (tvision:make-attr 0 7)     ; black on light-grey (the menu bar)
+        :menu            (tvision:make-attr 0 7)     ; black on light-grey (dropdown)
+        :menu-selected   (tvision:make-attr 15 2)    ; white on green (highlighted item)
+        :menu-hotkey     (tvision:make-attr 4 7)     ; red on light-grey (Alt-hotkey letter)
+        :menu-disabled   (tvision:make-attr 8 7)     ; dim grey on light-grey
+        :status          (tvision:make-attr 0 3)     ; black on cyan (status line)
+        :button          (tvision:make-attr 15 2)    ; white on green (button)
+        :button-focused  (tvision:make-attr 14 2)    ; yellow on green (focused/default button)
+        :label           (tvision:make-attr 14 1)    ; yellow on blue
+        :input           (tvision:make-attr 0 3)     ; black on cyan (input field)
+        :input-focused   (tvision:make-attr 15 3)    ; white on cyan
+        :error           (tvision:make-attr 15 4)    ; white on red
+        :desktop         (tvision:make-attr 8 1)     ; dim ░ pattern on blue (the desktop)
+        :scrollbar       (tvision:make-attr 7 1)     ; scrollbar track
+        :scrollbar-thumb (tvision:make-attr 15 1))   ; arrows + thumb
   "Role -> packed attribute.")
+
+;;; The classic "grey dialog" palette, bound over *THEME* while a dialog and its
+;;; children draw, so dialogs read grey instead of the blue window scheme.
+(defparameter *dialog-theme*
+  (list :normal          (tvision:make-attr 0 7)     ; black on light-grey
+        :focused         (tvision:make-attr 15 3)    ; white on cyan
+        :frame           (tvision:make-attr 0 7)     ; black on light-grey (active)
+        :frame-inactive  (tvision:make-attr 8 7)     ; dim grey on light-grey
+        :menu-bar        (tvision:make-attr 0 7)
+        :menu            (tvision:make-attr 0 7)
+        :menu-selected   (tvision:make-attr 15 2)
+        :menu-hotkey     (tvision:make-attr 4 7)
+        :menu-disabled   (tvision:make-attr 8 7)
+        :status          (tvision:make-attr 0 7)     ; dialog help text on grey
+        :button          (tvision:make-attr 15 2)    ; green button
+        :button-focused  (tvision:make-attr 14 2)    ; yellow on green (default)
+        :label           (tvision:make-attr 0 7)     ; black on light-grey
+        :input           (tvision:make-attr 0 3)     ; black on cyan (input field)
+        :input-focused   (tvision:make-attr 15 3)    ; white on cyan
+        :error           (tvision:make-attr 15 4)    ; white on red
+        :desktop         (tvision:make-attr 8 1)
+        :scrollbar       (tvision:make-attr 8 7)
+        :scrollbar-thumb (tvision:make-attr 0 7))
+  "Role -> attribute while a DIALOG draws (the grey-dialog palette).")
 
 (defun role (key) (or (getf *theme* key) (tvision:make-attr 7 0)))
 
@@ -222,11 +250,28 @@
 ;;; Chrome helpers (box, centred text).
 ;;; ---------------------------------------------------------------------------
 
-(defun %box (x0 y0 x1 y1 attr)
-  (%put-cell x0 y0 #\┌ attr) (%put-cell x1 y0 #\┐ attr)
-  (%put-cell x0 y1 #\└ attr) (%put-cell x1 y1 #\┘ attr)
-  (loop for x from (1+ x0) below x1 do (%put-cell x y0 #\─ attr) (%put-cell x y1 #\─ attr))
-  (loop for y from (1+ y0) below y1 do (%put-cell x0 y #\│ attr) (%put-cell x1 y #\│ attr)))
+(defun %box (x0 y0 x1 y1 attr &optional double)
+  "Draw a box; DOUBLE uses the ═║╔╗╚╝ line set (classic active window), else ─│┌┐."
+  (multiple-value-bind (tl hz tr vt bl br)
+      (if double (values #\╔ #\═ #\╗ #\║ #\╚ #\╝) (values #\┌ #\─ #\┐ #\│ #\└ #\┘))
+    (%put-cell x0 y0 tl attr) (%put-cell x1 y0 tr attr)
+    (%put-cell x0 y1 bl attr) (%put-cell x1 y1 br attr)
+    (loop for x from (1+ x0) below x1 do (%put-cell x y0 hz attr) (%put-cell x y1 hz attr))
+    (loop for y from (1+ y0) below y1 do (%put-cell x0 y vt attr) (%put-cell x1 y vt attr))))
+
+(defun %darken-cell (x y)
+  "Darken the back-buffer cell at (X,Y), keeping its glyph -- one drop-shadow cell."
+  (let ((s tvision:*screen*))
+    (when (and s (>= x 0) (< x (tvision:screen-width s)) (>= y 0) (< y (tvision:screen-height s)))
+      (let* ((back (tvision::screen-back s)) (idx (+ x (* y (tvision:screen-width s)))))
+        (setf (aref back idx)
+              (tvision::cell-make-code (tvision::cell-char-code (aref back idx)) (tvision:make-attr 8 0)))))))
+
+(defun %drop-shadow (x0 y0 x1 y1)
+  "Paint a Turbo-Vision drop shadow: two columns down the right edge, one row
+along the bottom, offset one cell past the (X0,Y0)-(X1,Y1) box."
+  (loop for y from (1+ y0) to (1+ y1) do (%darken-cell (1+ x1) y) (%darken-cell (+ x1 2) y))
+  (loop for x from (+ x0 2) to (+ x1 2) do (%darken-cell x (1+ y1))))
 
 (defun %text-at (x y string attr)
   (loop for i below (length string) do (%put-cell (+ x i) y (char string i) attr)))
