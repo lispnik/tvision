@@ -211,7 +211,9 @@
         :menu           (tvision:make-attr 0 7)      ; black on grey (menu dropdown)
         :desktop        (tvision:make-attr 8 1)      ; dim ░ pattern on blue (the desktop)
         :scrollbar      (tvision:make-attr 7 1)      ; scrollbar track
-        :scrollbar-thumb (tvision:make-attr 15 1))   ; arrows + thumb
+        :scrollbar-thumb (tvision:make-attr 15 1)     ; arrows + thumb
+        :menu-hotkey    (tvision:make-attr 4 6)      ; red on cyan (the Alt-hotkey letter)
+        :menu-disabled  (tvision:make-attr 8 7))     ; dim grey on grey (disabled item)
   "Role -> packed attribute.")
 
 (defun role (key) (or (getf *theme* key) (tvision:make-attr 7 0)))

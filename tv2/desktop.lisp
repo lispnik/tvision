@@ -38,33 +38,60 @@
       (when (and (>= col (first r)) (< col (second r))) (funcall (third r)) (return))))
   (setf (handled-p e) t))
 
-;;; --- menu bar (pull-down menus) ---------------------------------------------
+;;; --- menu bar (pull-down menus with hotkeys / accelerators) -----------------
+;;; A menu is (LABEL . ITEMS); its hotkey (Alt-X) is the label's first letter.
+;;; An item is (LABEL THUNK &optional ACCEL ENABLED): ACCEL is a global-shortcut
+;;; keysym (e.g. (ctrl #\o)); ENABLED a thunk -> generalized boolean (or NIL).
 
 (defclass menu-bar (view)
-  ((menus  :initarg :menus :initform '() :accessor menu-menus)   ; ((LABEL (ITEM . THUNK) ...) ...)
-   (active :initform 0 :accessor menu-active)                    ; open menu index, or NIL (inactive)
-   (sel    :initform 0 :accessor menu-sel))                      ; selected item in the open menu
+  ((menus  :initarg :menus :initform '() :accessor menu-menus)
+   (active :initform 0 :accessor menu-active)                    ; open menu index, or NIL
+   (sel    :initform 0 :accessor menu-sel))
   (:metaclass reactive-class))
 
-(defun menu-items (mb) (cdr (nth (menu-active mb) (menu-menus mb))))
+(defun ctrl (ch) (code-char (logand (char-code (char-upcase ch)) #x1f)))   ; (ctrl #\o) -> ^O keysym
+(defun item-label   (it) (first it))
+(defun item-thunk   (it) (second it))
+(defun item-accel   (it) (third it))
+(defun item-enabled (it) (let ((f (fourth it))) (or (null f) (funcall f))))
+(defun menu-items   (mb) (cdr (nth (menu-active mb) (menu-menus mb))))
+(defun menu-hotkey  (m)  (and (plusp (length (car m))) (char-downcase (char (car m) 0))))
+
+(defun accel-label (ks)
+  (cond ((null ks) "")
+        ((and (characterp ks) (< (char-code ks) 32)) (format nil "^~a" (code-char (+ 64 (char-code ks)))))
+        ((eql ks :f1) "F1")
+        ((characterp ks) (string ks))
+        (t (string-downcase (string ks)))))
+
+(defun menu-dropdown-width (items)
+  (+ 4 (reduce #'max items :initial-value 8
+               :key (lambda (it) (+ (length (item-label it))
+                                    (if (item-accel it) (+ 2 (length (accel-label (item-accel it)))) 0))))))
 
 (defmethod draw ((mb menu-bar))
-  (let* ((b (view-bounds mb)) (w (r-w b))
-         (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b))
-         (bar (role :status)) (x 1))
+  (let* ((b (view-bounds mb)) (w (r-w b)) (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b))
+         (bar (role :status)) (hot (role :menu-hotkey)) (x 1))
     (fill-row mb 0 0 w bar)
     (loop for menu in (menu-menus mb) for i from 0 do
-      (let* ((title (format nil " ~a " (car menu)))
-             (open (and (menu-active mb) (= i (menu-active mb)))))
-        (%text-at (+ ax x) ay title (if open (role :button-focused) bar))
+      (let* ((label (car menu)) (open (eql i (menu-active mb))) (attr (if open (role :button-focused) bar)))
+        (%text-at (+ ax x) ay (format nil " ~a " label) attr)
+        (%put-cell (+ ax x 1) ay (char label 0) (if open attr hot))   ; highlight the hotkey letter
         (when open
-          (let* ((items (cdr menu)) (dx (+ ax x)) (dy (1+ ay))
-                 (mw (+ 3 (reduce #'max items :key (lambda (it) (length (car it))) :initial-value 8))))
+          (let* ((items (cdr menu)) (dx (+ ax x)) (dy (1+ ay)) (mw (menu-dropdown-width items)))
             (loop for it in items for r from 0 do
-              (let ((ia (if (= r (menu-sel mb)) (role :focused) (role :menu))))
+              (let* ((on (= r (menu-sel mb))) (en (item-enabled it))
+                     (ia (cond ((and on en) (role :focused)) (en (role :menu)) (t (role :menu-disabled)))))
                 (loop for k below mw do (%put-cell (+ dx k) (+ dy r) #\Space ia))
-                (%text-at (+ dx 1) (+ dy r) (car it) ia)))))
-        (incf x (length title))))))
+                (%text-at (+ dx 1) (+ dy r) (item-label it) ia)
+                (when (item-accel it)
+                  (let ((a (accel-label (item-accel it))))
+                    (%text-at (+ dx mw -1 (- (length a))) (+ dy r) a ia)))))))
+        (incf x (+ 2 (length label)))))))
+
+(defun menu-invoke-sel (mb)
+  (let ((it (nth (menu-sel mb) (menu-items mb))))
+    (when (and it (item-enabled it) (item-thunk it)) (funcall (item-thunk it)))))
 
 (defmethod handle-event ((mb menu-bar) (e key-event))
   (when (menu-active mb)
@@ -74,22 +101,26 @@
         ((eql ks :right) (setf (menu-active mb) (mod (1+ (menu-active mb)) n) (menu-sel mb) 0) (invalidate mb) (setf (handled-p e) t))
         ((eql ks :up)    (setf (menu-sel mb) (mod (1- (menu-sel mb)) (length items))) (invalidate mb) (setf (handled-p e) t))
         ((eql ks :down)  (setf (menu-sel mb) (mod (1+ (menu-sel mb)) (length items))) (invalidate mb) (setf (handled-p e) t))
-        ((eql ks :enter) (let ((thunk (cdr (nth (menu-sel mb) items)))) (when thunk (funcall thunk))) (setf (handled-p e) t))))))
+        ((eql ks :enter) (menu-invoke-sel mb) (setf (handled-p e) t))))))
+
+(defun menu-hotkey-index (mb ch)
+  (position (char-downcase ch) (menu-menus mb) :key #'menu-hotkey))
+
+(defun menu-accel-thunk (mb ks)
+  "Thunk for an enabled item whose accelerator is KS, anywhere in the menus."
+  (loop for menu in (menu-menus mb) thereis
+        (loop for it in (cdr menu)
+              when (and (item-accel it) (eql (item-accel it) ks) (item-enabled it))
+                return (item-thunk it))))
 
 (defun menu-title-x (mb i)
-  "Screen column (menu-bar-local) of menu I's title (matches DRAW)."
-  (let ((x 1))
-    (dotimes (k i x) (incf x (+ 2 (length (car (nth k (menu-menus mb)))))))))
+  (let ((x 1)) (dotimes (k i x) (incf x (+ 2 (length (car (nth k (menu-menus mb)))))))))
 
 (defun menu-dropdown-cols (mb)
-  "(values X0 WIDTH) of the open dropdown, or NIL."
   (when (menu-active mb)
-    (let* ((items (menu-items mb)) (x0 (menu-title-x mb (menu-active mb)))
-           (mw (+ 3 (reduce #'max items :key (lambda (it) (length (car it))) :initial-value 8))))
-      (values x0 mw))))
+    (values (menu-title-x mb (menu-active mb)) (menu-dropdown-width (menu-items mb)))))
 
 (defun menu-hit-p (mb x y)
-  "True when screen point (X,Y) is on the bar (row 0) or the open dropdown."
   (or (zerop y)
       (and (menu-active mb) (plusp y) (<= y (length (menu-items mb)))
            (multiple-value-bind (x0 mw) (menu-dropdown-cols mb)
@@ -104,11 +135,10 @@
               (when (and (>= col x) (< col (+ x tw)))
                 (setf (menu-active mb) i (menu-sel mb) 0) (invalidate mb) (return))
               (incf x tw))))
-        (when (menu-active mb)                        ; clicked a dropdown item -> invoke
+        (when (menu-active mb)                        ; clicked a dropdown item -> invoke if enabled
           (let ((idx (1- row)) (items (menu-items mb)))
             (when (and (>= idx 0) (< idx (length items)))
-              (setf (menu-sel mb) idx) (invalidate mb)
-              (let ((thunk (cdr (nth idx items)))) (when thunk (funcall thunk)))))))
+              (setf (menu-sel mb) idx) (invalidate mb) (menu-invoke-sel mb)))))
     (setf (handled-p e) t)))
 
 ;;; --- desktop ----------------------------------------------------------------
@@ -197,13 +227,23 @@
     (dt-open dt (lambda () (make-help topic)))))
 
 (defmethod handle-event ((dt desktop) (e key-event))
-  (let ((top (dt-top dt)))
+  (let* ((mb (dt-menubar dt)) (top (dt-top dt)) (ks (event-keysym e))
+         (alt (logtest (event-modifiers e) tvision::+md-alt+)))
     (cond
-      ((eql (event-keysym e) :f1) (dt-help dt))            ; F1: contextual help
-      (top (if (eql (event-keysym e) :esc) (dt-close-window dt top)   ; Esc closes the top window
-               (progn (setf *running* t) (handle-event top e)
-                      (unless *running* (dt-close-window dt top)))))
-      (t (handle-event (dt-menubar dt) e)))))               ; no windows: the menu drives
+      ((and alt (characterp ks) (menu-hotkey-index mb ks))   ; Alt-<hotkey> opens that menu
+       (setf (menu-active mb) (menu-hotkey-index mb ks) (menu-sel mb) 0) (invalidate mb))
+      ((eql ks :f1) (dt-help dt))                            ; F1: contextual help
+      (top
+       (cond
+         ((and (eql ks :esc) (menu-active mb)) (setf (menu-active mb) nil) (invalidate mb))  ; close an open menu
+         ((eql ks :esc) (dt-close-window dt top))            ; else Esc closes the top window
+         ((menu-active mb) (handle-event mb e))              ; a menu is open over the window -> it drives
+         (t (setf *running* t) (handle-event top e)          ; otherwise the focused widget gets the key
+            (cond ((not *running*) (dt-close-window dt top))
+                  ((not (handled-p e))                       ; ignored -> try a global accelerator
+                   (let ((th (menu-accel-thunk mb ks))) (when th (funcall th))))))))
+      (t (let ((th (menu-accel-thunk mb ks)))                ; no window: accelerators first, then the menu
+           (if th (funcall th) (handle-event mb e)))))))
 
 (defun dt-window-at (dt x y)
   (loop for w in (reverse (dt-windows dt)) when (point-in-rect-p x y (view-bounds w)) return w))
@@ -289,30 +329,31 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
 ;;; --- entry point ------------------------------------------------------------
 
 (defun %desktop-menus (dt)
-  (list (list "Windows"
-              (cons "Lisp REPL"        (lambda () (dt-open dt #'make-repl)))
-              (cons "Text editor"      (lambda () (dt-open dt (lambda () (make-editor)))))
-              (cons "Project manager"  (lambda () (dt-open dt (lambda () (make-project)))))
-              (cons "Package browser"  (lambda () (dt-open dt #'make-packages)))
-              (cons "ASDF systems"     (lambda () (dt-open dt #'make-systems)))
-              (cons "Thread monitor"   (lambda () (dt-open dt #'make-threadmon)))
-              (cons "HTML browser"     (lambda () (dt-open dt (lambda () (make-html)))))
-              (cons "Options"          (lambda () (dt-open dt #'make-options))))
-        (list "Window"
-              (cons "Next"             (lambda () (dt-next dt) (dt-refocus dt)))
-              (cons "Tile"             (lambda () (dt-tile dt) (dt-refocus dt)))
-              (cons "Cascade"          (lambda () (dt-cascade dt) (dt-refocus dt)))
-              (cons "Close"            (lambda () (let ((top (dt-top dt))) (when top (dt-close-window dt top))))))
-        (list "File"
-              (cons "Open file…"   (lambda () (let ((p (make-file-dialog :dir *project-dir* :title " Open file ")))
-                                                (when p (dt-open dt (lambda () (make-editor p)))))))
-              (cons "Change dir…"  (lambda () (let ((p (make-file-dialog :dir *project-dir* :dirs-only t :title " Change dir ")))
-                                                (when p (setf *project-dir* (uiop:ensure-directory-pathname p))))))
-              (cons "Colours…"     (lambda () (make-color-dialog)))
-              (cons "Exit"         (lambda () (setf *app-done* t))))
-        (list "Help"
-              (cons "Contents"     (lambda () (dt-open dt (lambda () (make-help :general)))))
-              (cons "This window"  (lambda () (dt-help dt))))))
+  (flet ((any-win () (lambda () (dt-top dt))))            ; ENABLED predicate: a window is open
+    (list (list "Windows"
+                (list "Lisp REPL"        (lambda () (dt-open dt #'make-repl)) (ctrl #\r))
+                (list "Text editor"      (lambda () (dt-open dt (lambda () (make-editor)))))
+                (list "Project manager"  (lambda () (dt-open dt (lambda () (make-project)))))
+                (list "Package browser"  (lambda () (dt-open dt #'make-packages)))
+                (list "ASDF systems"     (lambda () (dt-open dt #'make-systems)))
+                (list "Thread monitor"   (lambda () (dt-open dt #'make-threadmon)))
+                (list "HTML browser"     (lambda () (dt-open dt (lambda () (make-html)))))
+                (list "Options"          (lambda () (dt-open dt #'make-options))))
+          (list "Arrange"                                  ; window management (dimmed with no windows)
+                (list "Next"             (lambda () (dt-next dt) (dt-refocus dt)) nil (any-win))
+                (list "Tile"             (lambda () (dt-tile dt) (dt-refocus dt)) nil (any-win))
+                (list "Cascade"          (lambda () (dt-cascade dt) (dt-refocus dt)) nil (any-win))
+                (list "Close"            (lambda () (let ((top (dt-top dt))) (when top (dt-close-window dt top)))) nil (any-win)))
+          (list "File"
+                (list "Open file…"   (lambda () (let ((p (make-file-dialog :dir *project-dir* :title " Open file ")))
+                                                  (when p (dt-open dt (lambda () (make-editor p)))))) (ctrl #\o))
+                (list "Change dir…"  (lambda () (let ((p (make-file-dialog :dir *project-dir* :dirs-only t :title " Change dir ")))
+                                                  (when p (setf *project-dir* (uiop:ensure-directory-pathname p))))))
+                (list "Colours…"     (lambda () (make-color-dialog)))
+                (list "Exit"         (lambda () (setf *app-done* t)) (ctrl #\q)))
+          (list "Help"
+                (list "Contents"     (lambda () (dt-open dt (lambda () (make-help :general)))))
+                (list "This window"  (lambda () (dt-help dt)) :f1)))))
 
 (defun run-desktop ()
   "Run the tv2 IDE: a Turbo-Vision-style desktop with a menu bar, a status bar,

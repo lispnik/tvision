@@ -105,5 +105,7 @@ menu) and a live colour customiser that edits `*theme*` with instant preview.
 **F1** (or the Help menu) opens context-sensitive help for the focused window,
 rendered with the HTML view and cross-linked between topics.  The editor also has
 incremental **find** (Find/Next chips), **auto-indent**, and **mouse drag-select**.
-Still deferred relative to the classic `tvision` system: menu hotkeys/
-accelerators, and regex search & replace.
+The menu bar has **Alt-hotkeys** (the highlighted letter), global **accelerators**
+(e.g. `^O` Open, `^Q` Exit, `^R` REPL), and dimmed disabled items.  Still deferred
+relative to the classic `tvision` system: nested submenus, regex search & replace,
+the table/grid viewer, input validators, and a history dropdown.
