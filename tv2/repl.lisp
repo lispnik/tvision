@@ -107,9 +107,13 @@ lines + new package + cleared busy flag back to the UI thread.  Errors route to
 the cross-thread debugger (HANDLER-BIND keeps the stack live for the restart)."
   (let ((out (make-instance 'repl-stream :win win)) (msgs '()) (new-pkg nil))
     (let ((*standard-output* out) (*error-output* out) (*trace-output* out)
-          (*package* (repl-package win)) (*read-eval* t))
+          (*package* (repl-package win)) (*read-eval* t)
+          ;; route break / single-step (any non-error debugger entry) to tv2's
+          ;; cross-thread debugger too, so TRACE :break and (step ...) work in-UI
+          (*debugger-hook* (lambda (c hook) (declare (ignore hook)) (%repl-debug win c))))
       (restart-case
-          (handler-bind ((error (lambda (e) (%repl-debug win e))))
+          (handler-bind ((sb-ext:step-condition (lambda (c) (%repl-debug win c)))   ; single-stepper -> tv2 debugger
+                         (error (lambda (e) (%repl-debug win e))))
             (with-input-from-string (in input)
               (loop for form = (read in nil :eof) until (eq form :eof)
                     do (setf - form)

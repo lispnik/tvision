@@ -42,4 +42,5 @@
                              (:file "help")
                              (:file "desktop")
                              (:file "inspect")
+                             (:file "tools")
                              (:file "app")))))
