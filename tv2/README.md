@@ -112,7 +112,8 @@ viewer** (columns + fixed header + scrollbar; see the Package-table window) is
 available, and input fields support **validators** (filter / range / picture; see
 File → Validators…) and **Up/Down history** recall.  The type-to-filter inputs
 (browser, project) rank results with **fzf-style fuzzy matching**, and menus
-support **nested submenus** (see Help → Topics).  At this point tv2 covers the
-classic `tvision` system's interaction model; the main thing it doesn't replicate
-is `TStream`-style whole-desktop serialization (tv2 persists session state via the
-MOP instead).
+support **nested submenus** (see Help → Topics).  The **whole desktop persists** —
+the open windows (kind, position, size, Z-order; editor filenames) are saved to
+`~/.tv2-desktop` on exit and restored on launch (also File → Save / Restore
+layout).  At this point tv2 covers the classic `tvision` system's interaction
+model end to end.

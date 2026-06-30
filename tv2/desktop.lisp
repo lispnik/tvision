@@ -221,19 +221,33 @@
         (menu-sel (dt-menubar dt)) 0
         (menu-sub (dt-menubar dt)) nil))
 
-(defun dt-open (dt make-fn)
-  "Open MAKE-FN's window on the desktop at a cascade offset, focused on top."
-  (multiple-value-bind (win focus open) (funcall make-fn)
-    (let* ((c (dt-content dt)) (n (length (dt-windows dt)))
-           (cw (max 40 (floor (* (r-w c) 4) 5))) (ch (max 8 (floor (* (r-h c) 4) 5)))
-           (ox (+ (tvision::rect-ax c) (* (mod n 6) 3)))
-           (oy (+ (tvision::rect-ay c) (* (mod n 6) 2))))
-      (layout win (rect ox oy (min (+ ox cw) (tvision::rect-bx c)) (min (+ oy ch) (tvision::rect-by c))))
-      (setf (window-managed win) t
-            (container-focus win) (or focus (first (all-focusables win)))
-            (window-cleanup win) (and open (funcall open tvision:*screen*)))
-      (dt-raise dt win))
-    (dt-refocus dt) (invalidate dt)))
+(defvar *window-builders* nil "Keyword -> 0-arg make-* builder (populated below); drives layout restore.")
+
+(defun dt-cascade-rect (dt)
+  "A cascade-offset window rectangle for the Nth open window."
+  (let* ((c (dt-content dt)) (n (length (dt-windows dt)))
+         (cw (max 40 (floor (* (r-w c) 4) 5))) (ch (max 8 (floor (* (r-h c) 4) 5)))
+         (ox (+ (tvision::rect-ax c) (* (mod n 6) 3))) (oy (+ (tvision::rect-ay c) (* (mod n 6) 2))))
+    (rect ox oy (min (+ ox cw) (tvision::rect-bx c)) (min (+ oy ch) (tvision::rect-by c)))))
+
+(defun dt-add (dt win focus open kind bounds)
+  "Host WIN at BOUNDS, recording its KIND (a keyword or NIL) for save/restore."
+  (layout win bounds)
+  (setf (window-managed win) t (window-kind win) kind
+        (container-focus win) (or focus (first (all-focusables win)))
+        (window-cleanup win) (and open (funcall open tvision:*screen*)))
+  (setf (dt-windows dt) (append (dt-windows dt) (list win))))
+
+(defun dt-open (dt kind-or-fn)
+  "Open a window: KIND-OR-FN is a builder keyword (looked up in *WINDOW-BUILDERS*
+and recorded so the layout can be saved/restored) or a builder function (used
+directly, not persisted).  Cascade-positioned, focused on top."
+  (let ((bounds (dt-cascade-rect dt)))
+    (multiple-value-bind (win focus open)
+        (funcall (if (functionp kind-or-fn) kind-or-fn (cdr (assoc kind-or-fn *window-builders*))))
+      (when win
+        (dt-add dt win focus open (and (keywordp kind-or-fn) kind-or-fn) bounds)
+        (dt-refocus dt) (invalidate dt)))))
 
 (defun dt-close-window (dt win)
   (when (window-cleanup win) (ignore-errors (funcall (window-cleanup win))))
@@ -405,20 +419,60 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                       (1 (static-text :role :status :text " Space/click toggles · Tab switches groups · Esc closes ")))))))
     (values win (find-view win 'features))))
 
+;;; --- desktop layout persistence (whole-desktop save / restore) --------------
+
+(setf *window-builders*                                  ; keyword -> 0-arg builder (now that make-* exist)
+      (list (cons :repl    #'make-repl)
+            (cons :editor  (lambda () (make-editor)))
+            (cons :project (lambda () (make-project)))
+            (cons :packages #'make-packages)
+            (cons :systems  #'make-systems)
+            (cons :threads  #'make-threadmon)
+            (cons :html     (lambda () (make-html)))
+            (cons :ptable   #'make-package-table)
+            (cons :options  #'make-options)))
+
+(defun %desktop-file () (merge-pathnames ".tv2-desktop" (user-homedir-pathname)))
+
+(defun dt-save-layout (dt &optional (path (%desktop-file)))
+  "Write the open windows (kind + bounds, Z-order; editor filename) to PATH."
+  (let ((layout (loop for w in (dt-windows dt) for k = (window-kind w) when k
+                      collect (let ((b (view-bounds w)))
+                                (list k (tvision::rect-ax b) (tvision::rect-ay b)
+                                      (tvision::rect-bx b) (tvision::rect-by b)
+                                      (and (eq k :editor)
+                                           (let ((te (find-view w 'edit)))
+                                             (and te (te-filename te) (namestring (te-filename te))))))))))
+    (ignore-errors
+     (with-open-file (s path :direction :output :if-exists :supersede :if-does-not-exist :create)
+       (prin1 layout s)))
+    layout))
+
+(defun dt-load-layout (dt &optional (path (%desktop-file)))
+  "Reopen the windows recorded in PATH at their saved positions."
+  (dolist (entry (ignore-errors (with-open-file (s path :if-does-not-exist nil) (and s (read s nil nil)))))
+    (ignore-errors
+     (destructuring-bind (kind x0 y0 x1 y1 &optional extra) entry
+       (multiple-value-bind (win focus open)
+           (if (eq kind :editor) (make-editor extra)
+               (let ((b (cdr (assoc kind *window-builders*)))) (when b (funcall b))))
+         (when win (dt-add dt win focus open kind (rect x0 y0 x1 y1)))))))
+  (dt-refocus dt) (invalidate dt))
+
 ;;; --- entry point ------------------------------------------------------------
 
 (defun %desktop-menus (dt)
   (flet ((any-win () (lambda () (dt-top dt))))            ; ENABLED predicate: a window is open
     (list (list "Windows"
-                (list "Lisp REPL"        (lambda () (dt-open dt #'make-repl)) (ctrl #\r))
-                (list "Text editor"      (lambda () (dt-open dt (lambda () (make-editor)))))
-                (list "Project manager"  (lambda () (dt-open dt (lambda () (make-project)))))
-                (list "Package browser"  (lambda () (dt-open dt #'make-packages)))
-                (list "ASDF systems"     (lambda () (dt-open dt #'make-systems)))
-                (list "Thread monitor"   (lambda () (dt-open dt #'make-threadmon)))
-                (list "HTML browser"     (lambda () (dt-open dt (lambda () (make-html)))))
-                (list "Package table"    (lambda () (dt-open dt #'make-package-table)))
-                (list "Options"          (lambda () (dt-open dt #'make-options))))
+                (list "Lisp REPL"        (lambda () (dt-open dt :repl)) (ctrl #\r))
+                (list "Text editor"      (lambda () (dt-open dt :editor)))
+                (list "Project manager"  (lambda () (dt-open dt :project)))
+                (list "Package browser"  (lambda () (dt-open dt :packages)))
+                (list "ASDF systems"     (lambda () (dt-open dt :systems)))
+                (list "Thread monitor"   (lambda () (dt-open dt :threads)))
+                (list "HTML browser"     (lambda () (dt-open dt :html)))
+                (list "Package table"    (lambda () (dt-open dt :ptable)))
+                (list "Options"          (lambda () (dt-open dt :options))))
           (list "Arrange"                                  ; window management (dimmed with no windows)
                 (list "Next"             (lambda () (dt-next dt) (dt-refocus dt)) nil (any-win))
                 (list "Tile"             (lambda () (dt-tile dt) (dt-refocus dt)) nil (any-win))
@@ -431,6 +485,9 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                                                   (when p (setf *project-dir* (uiop:ensure-directory-pathname p))))))
                 (list "Colours…"     (lambda () (make-color-dialog)))
                 (list "Validators…" (lambda () (%validators-dialog)))
+                (list "Save layout"  (lambda () (dt-save-layout dt)))
+                (list "Restore layout" (lambda () (mapc (lambda (w) (dt-close-window dt w)) (copy-list (dt-windows dt)))
+                                         (dt-load-layout dt)) nil (lambda () t))
                 (list "Exit"         (lambda () (setf *app-done* t)) (ctrl #\q)))
           (list "Help"
                 (list "Contents"     (lambda () (dt-open dt (lambda () (make-help :general)))))
@@ -453,6 +510,7 @@ grip, click [✕] to close; Window menu tiles/cascades).  Returns on File→Exit
             (dt-statusbar dt)  (make-instance 'status-bar :provider (lambda () (dt-status-items dt))))
       (layout dt (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
       (setf *root* dt *ui-thread* sb-thread:*current-thread* *app-done* nil *dirty* t)
+      (dt-load-layout dt)                                    ; restore the previous session's windows
       (loop until *app-done* do
         (drain-ui-callbacks)
         (when *dirty*
@@ -461,5 +519,6 @@ grip, click [✕] to close; Window menu tiles/cascades).  Returns on File→Exit
         (tvision::pump-input s 0.05)
         (let ((tev (tvision::screen-next-event s)))
           (when tev (let ((ev (translate tev))) (when ev (handle-event dt ev))))))
+      (dt-save-layout dt)                                    ; persist the desktop for next launch
       (dolist (win (dt-windows dt))                          ; stop any open windows' threads
         (when (window-cleanup win) (ignore-errors (funcall (window-cleanup win))))))))
