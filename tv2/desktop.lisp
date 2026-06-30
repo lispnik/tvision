@@ -191,13 +191,19 @@
               do (layout win (rect x0 y0 (+ x0 cw) (+ y0 ch))))
         (invalidate dt)))))
 
+(defun dt-help (dt)
+  "Open help for the focused window's topic (or the contents page)."
+  (let ((topic (if (dt-top dt) (window-help (dt-top dt)) :general)))
+    (dt-open dt (lambda () (make-help topic)))))
+
 (defmethod handle-event ((dt desktop) (e key-event))
   (let ((top (dt-top dt)))
-    (if top
-        (if (eql (event-keysym e) :esc) (dt-close-window dt top)   ; Esc closes the top window
-            (progn (setf *running* t) (handle-event top e)
-                   (unless *running* (dt-close-window dt top))))
-        (handle-event (dt-menubar dt) e))))                  ; no windows: the menu drives
+    (cond
+      ((eql (event-keysym e) :f1) (dt-help dt))            ; F1: contextual help
+      (top (if (eql (event-keysym e) :esc) (dt-close-window dt top)   ; Esc closes the top window
+               (progn (setf *running* t) (handle-event top e)
+                      (unless *running* (dt-close-window dt top)))))
+      (t (handle-event (dt-menubar dt) e)))))               ; no windows: the menu drives
 
 (defun dt-window-at (dt x y)
   (loop for w in (reverse (dt-windows dt)) when (point-in-rect-p x y (view-bounds w)) return w))
@@ -257,6 +263,7 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
          (chips (list (cons "≡ Windows" (lambda () (setf (menu-active mb) 0 (menu-sel mb) 0) (invalidate dt)))
                       (cons "Tile"      (lambda () (dt-tile dt)))
                       (cons "Cascade"   (lambda () (dt-cascade dt)))
+                      (cons "Help"      (lambda () (dt-help dt)))
                       (cons "Exit"      (lambda () (setf *app-done* t))))))
     (when top
       (setf chips (append (list (cons "Close" (lambda () (dt-close-window dt top)))) chips
@@ -302,7 +309,10 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
               (cons "Change dir…"  (lambda () (let ((p (make-file-dialog :dir *project-dir* :dirs-only t :title " Change dir ")))
                                                 (when p (setf *project-dir* (uiop:ensure-directory-pathname p))))))
               (cons "Colours…"     (lambda () (make-color-dialog)))
-              (cons "Exit"         (lambda () (setf *app-done* t))))))
+              (cons "Exit"         (lambda () (setf *app-done* t))))
+        (list "Help"
+              (cons "Contents"     (lambda () (dt-open dt (lambda () (make-help :general)))))
+              (cons "This window"  (lambda () (dt-help dt))))))
 
 (defun run-desktop ()
   "Run the tv2 IDE: a Turbo-Vision-style desktop with a menu bar, a status bar,

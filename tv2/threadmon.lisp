@@ -66,7 +66,7 @@ and returns a cleanup thunk that stops it when the window closes."
                              (:fill (static-text :name 'echo :role :status :text ""))))
                      (1 (static-text :role :status
                           :text " Tab/arrows · Spawn a worker, select it, Kill · live via run-on-ui · Esc: close ")))))))
-    (setf *tm-threads* (sb-thread:list-all-threads))
+    (setf *tm-threads* (sb-thread:list-all-threads) (window-help win) :threads)
     (values win (find-view win 'threads)
             (lambda (s) (declare (ignore s))
               (let ((alive t))

@@ -421,7 +421,7 @@ WINDOW FOCUS)."
       (when (or (null path) (member (pathname-type path) '("lisp" "asd" "cl") :test #'equal))
         (setf (te-colorizer te) #'lisp-colorize)))
     (%editor-status win)
-    (setf (window-scroll-target win) (find-view win 'edit))
+    (setf (window-scroll-target win) (find-view win 'edit) (window-help win) :editor)
     (values win (find-view win 'edit))))
 
 (defun run-editor (&optional path)

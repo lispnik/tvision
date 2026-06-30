@@ -10,7 +10,8 @@
    (managed :initform nil :accessor window-managed)    ; hosted in a desktop (show close/resize affordances)
    (active  :initform t   :accessor window-active)      ; topmost/focused window (brighter frame)
    (cleanup :initform nil :accessor window-cleanup)     ; thunk run when the desktop closes it
-   (scroll-target :initform nil :accessor window-scroll-target))  ; scrollable view -> frame scrollbar
+   (scroll-target :initform nil :accessor window-scroll-target)   ; scrollable view -> frame scrollbar
+   (help    :initform :general :accessor window-help))  ; help topic for F1 / the Help menu
   (:metaclass reactive-class))
 
 (defmethod draw ((w window))

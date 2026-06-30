@@ -203,7 +203,7 @@ stops the per-listener worker thread when the window closes."
                        (format nil "tv2 REPL — ~a ~a~%evaluation runs on a background worker; the UI stays live (output streams in).~%~%"
                                (lisp-implementation-type) (lisp-implementation-version)))
     (%repl-update-prompt win)
-    (setf (window-scroll-target win) (find-view win 'transcript))
+    (setf (window-scroll-target win) (find-view win 'transcript) (window-help win) :repl)
     (values win (find-view win 'input)
             (lambda (s) (declare (ignore s))
               (lambda () (when (and (repl-worker win) (sb-thread:thread-alive-p (repl-worker win)))
