@@ -45,4 +45,5 @@
                              (:file "tools")
                              (:file "paredit")
                              (:file "nav")
+                             (:file "compile")
                              (:file "app")))))
