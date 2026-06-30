@@ -55,8 +55,9 @@ git status badge from STATUS (a relpath -> keyword hash, or NIL)."
         (let* ((es (nreverse (gethash head groups)))
                (file (and (= (length es) 1) (null (rest (car (first es)))) (first es))))
           (if file
-              (push (tvision:make-outline-node
-                     (concatenate 'string head (%pm-badge status (cdr file))) nil (cdr file))
+              (push (tvision:make-outline-node          ; DATA is the absolute path (works across roots)
+                     (concatenate 'string head (%pm-badge status (cdr file)))
+                     nil (namestring (merge-pathnames head dir)))
                     nodes)
               (let* ((sub (uiop:ensure-directory-pathname (merge-pathnames head dir)))
                      (sub-entries (mapcar (lambda (e) (cons (rest (car e)) (cdr e))) es))
@@ -81,25 +82,37 @@ badges on changed files (via *PROJECT-STATUS-FN* when bound)."
                         (and changed (plusp changed) changed))
                 (%fs-nodes entries dir status))))
     (setf (tvision:outline-node-expanded root) t)
-    (values root rels)))
+    (values root (mapcar (lambda (r) (namestring (merge-pathnames r dir))) rels))))   ; abspaths
 
 (defclass project-window (window)
-  ((dir       :initarg :dir :accessor pw-dir)     ; the project root (a directory pathname)
-   (tree-node :initform nil :accessor pw-tree-node)   ; the full tree's root outline-node
-   (rels      :initform nil :accessor pw-rels))       ; relative paths (for the filter)
+  ((dir        :initarg :dir :accessor pw-dir)      ; the primary project root (a directory pathname)
+   (extra-dirs :initform nil :accessor pw-extra-dirs)  ; additional roots (each its own top-level tree)
+   (tree-node  :initform nil :accessor pw-tree-node)   ; list of per-root root outline-nodes
+   (rels       :initform nil :accessor pw-rels))       ; absolute paths of every file (for the filter)
   (:metaclass reactive-class))
 
+(defun pw-dirs (win) (cons (pw-dir win) (reverse (pw-extra-dirs win))))
+
+(defun %pm-short (win abspath)
+  "ABSPATH shown relative to whichever root contains it (else the full path)."
+  (dolist (d (pw-dirs win) abspath)
+    (let ((rel (ignore-errors (enough-namestring abspath d))))
+      (when (and rel (string/= rel abspath)) (return rel)))))
+
 (defun %pm-rebuild (win)
-  "Rescan WIN's project from disk (new/removed files + fresh git status) and
-refresh the tree, preserving the filter."
-  (multiple-value-bind (tree rels) (%git-root (pw-dir win))
-    (setf (pw-tree-node win) tree (pw-rels win) rels)
+  "Rescan WIN's roots from disk (new/removed files + fresh git status) and refresh
+the tree, preserving the filter."
+  (let ((roots '()) (rels '()))
+    (dolist (d (pw-dirs win))
+      (multiple-value-bind (tree rs) (%git-root d) (push tree roots) (setf rels (append rels rs))))
+    (setf (pw-tree-node win) (nreverse roots) (pw-rels win) rels)
     (let ((ol (find-view win 'tree)) (q (find-view win 'q)))
       (when ol
         (let ((filter (and q (input-text q))))
           (setf (outline-roots ol)
-                (if (or (null filter) (zerop (length filter))) (list tree)
-                    (mapcar (lambda (r) (tvision:make-outline-node r nil r)) (fuzzy-filter filter rels)))
+                (if (or (null filter) (zerop (length filter))) (pw-tree-node win)
+                    (mapcar (lambda (r) (tvision:make-outline-node (%pm-short win r) nil r))
+                            (fuzzy-filter filter rels)))
                 (outline-focused ol) 0 (outline-top ol) 0))
         (invalidate ol)))))
 
@@ -183,10 +196,12 @@ chosen match at its line."
 (defmethod status-hints ((win project-window))   ; chips shown while a PM window is focused
   (append
    (list (cons "Open" (lambda () (%pm-open-current win))))
-   (when *project-grep-fn* (list (cons "Find in files" (lambda () (%pm-find-in-files win)))))
+   (when *project-grep-fn* (list (cons "Find" (lambda () (%pm-find-in-files win)))))
    (list (cons "New"     (lambda () (%pm-new-file win)))
          (cons "Rename"  (lambda () (%pm-rename-file win)))
          (cons "Delete"  (lambda () (%pm-delete-file win)))
+         (cons "Reveal"  (lambda () (%pm-reveal win)))
+         (cons "+Root"   (lambda () (%pm-add-root win)))
          (cons "Refresh" (lambda () (%pm-rebuild win))))))
 
 ;;; --- file operations --------------------------------------------------------
@@ -241,6 +256,26 @@ chosen match at its line."
           (handler-case (progn (delete-file path) (%pm-rebuild win) (%pm-echo win " deleted "))
             (error (e) (%pm-echo win (format nil " ~a " e))))))))
 
+(defun %pm-add-root (win)
+  "Add another project root (its own top-level tree)."
+  (let ((d (prompt-string " Add root " "Directory:")))
+    (when (and d (plusp (length (string-trim " " d))))
+      (let ((dir (ignore-errors (uiop:ensure-directory-pathname (string-trim " " d)))))
+        (if (and dir (probe-file dir))
+            (progn (pushnew (truename dir) (pw-extra-dirs win) :test #'equal) (%pm-rebuild win))
+            (%pm-echo win (format nil " no such directory: ~a " d)))))))
+
+(defun %pm-reveal (win)
+  "Reveal the active editor's file: filter the tree down to it."
+  (let* ((ew (and *desktop* (find-if (lambda (w) (typep w 'editor-window)) (reverse (dt-windows *desktop*)))))
+         (te (and ew (find-view ew 'edit)))
+         (path (and te (te-filename te))))
+    (if (null path)
+        (%pm-echo win " no editor file to reveal ")
+        (let ((q (find-view win 'q)) (name (file-namestring path)))
+          (when q (setf (input-text q) name (input-caret q) (length name)) (input-notify q))
+          (%pm-echo win (format nil " revealing ~a " name))))))
+
 (defkeymap *proj-keys* (*outline-keys*)
   (:enter proj-open))                    ; override Enter; arrows/Right/Left inherit from *outline-keys*
 
@@ -259,8 +294,8 @@ chosen match at its line."
                                       :on-change (lambda (il)
                                                    (let* ((q (input-text il)) (w (view-root il)) (ol (find-view w 'tree)))
                                                      (setf (outline-roots ol)
-                                                           (if (zerop (length q)) (list (pw-tree-node w))
-                                                               (mapcar (lambda (r) (tvision:make-outline-node r nil r))
+                                                           (if (zerop (length q)) (pw-tree-node w)
+                                                               (mapcar (lambda (r) (tvision:make-outline-node (%pm-short w r) nil r))
                                                                        (fuzzy-filter q (pw-rels w))))
                                                            (outline-focused ol) 0 (outline-top ol) 0)
                                                      (invalidate ol)))))))

@@ -28,6 +28,7 @@
    (colorizer :initform nil :initarg :colorizer :accessor te-colorizer)   ; (line in-string) -> (values attrs end)
    (indenter  :initform nil :initarg :indenter  :accessor te-indenter)    ; (te) -> indent column for a new line
    (auto-close :initform nil :accessor te-auto-close)                     ; auto-insert closing )/]/"
+   (line-numbers :initform nil :accessor te-line-numbers)                 ; show a line-number gutter (flat mode)
    (last-find :initform "" :accessor te-last-find))                       ; remembered search query
   (:metaclass reactive-class))
 
@@ -70,6 +71,11 @@
 
 ;;; visual-row model for soft-wrap: a logical line of length LEN occupies
 ;;; (1+ floor(LEN/W)) visual rows; column C sits on sub-row floor(C/W), col mod(C/W).
+(defun te-gutter-width (te)
+  "Columns reserved for the line-number gutter (0 when off / in wrap mode)."
+  (if (and (te-line-numbers te) (not (te-wrap te)))
+      (1+ (length (princ-to-string (max 1 (te-nlines te)))))    ; digits + a trailing space
+      0))
 (defun te-vw (te) (max 1 (r-w (view-bounds te))))
 (defun %segs (len w) (max 1 (1+ (floor (max 0 len) w))))
 (defun te-cum-vrows (te line w)               ; visual rows occupied by lines [0, LINE)
@@ -92,7 +98,7 @@
                   ((>= curv (+ topv h)) (setf topv (1+ (- curv h)))))
             (multiple-value-bind (l s) (te-vrow->pos te (max 0 topv) w)
               (setf (te-top te) l (te-tsub te) s (te-left te) 0)))
-          (let ((h (r-h b)) (w (r-w b)))
+          (let ((h (r-h b)) (w (max 1 (- (r-w b) (te-gutter-width te)))))
             (cond ((< (te-cy te) (te-top te)) (setf (te-top te) (te-cy te)))
                   ((>= (te-cy te) (+ (te-top te) h)) (setf (te-top te) (1+ (- (te-cy te) h)))))
             (cond ((< (te-cx te) (te-left te)) (setf (te-left te) (te-cx te)))
@@ -387,15 +393,19 @@ or a regex per line when REGEX).  Return the number of replacements."
   (if (te-wrap te) (te-draw-wrap te) (te-draw-flat te)))
 
 (defun te-draw-flat (te)
-  (let* ((b (view-bounds te)) (h (r-h b)) (w (r-w b))
+  (let* ((b (view-bounds te)) (h (r-h b)) (gw (te-gutter-width te)) (w (max 0 (- (r-w b) gw)))
          (top (te-top te)) (left (te-left te))
-         (norm (role :normal)) (selattr (role :focused))
+         (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b))
+         (norm (role :normal)) (selattr (role :focused)) (gutattr (role :label))
          (color (te-colorizer te))
          ;; recover the colorizer's carry state for the first visible line
          (carry (when color (let ((in nil)) (dotimes (i top in) (setf in (lisp-string-carry (te-line te i) in)))))))
     (dotimes (row h)
       (let* ((line-i (+ top row)) (valid (< line-i (te-nlines te)))
              (line (if valid (te-line te line-i) "")) (attrs nil))
+        (when (plusp gw)                                  ; line-number gutter
+          (let ((g (if valid (format nil "~v@a " (1- gw) (1+ line-i)) (make-string gw :initial-element #\Space))))
+            (dotimes (gx gw) (%put-cell (+ ax gx) (+ ay row) (char g gx) gutattr))))
         (when (and valid color)
           (multiple-value-bind (a end) (funcall color line carry) (setf attrs a carry end)))
         (dotimes (x w)
@@ -404,12 +414,11 @@ or a regex per line when REGEX).  Return the number of replacements."
                  (attr (cond ((and valid (te-selected-p te line-i col)) selattr)
                              ((and attrs (< col (length attrs))) (aref attrs col))
                              (t norm))))
-            (%put-cell (+ (tvision::rect-ax b) x) (+ (tvision::rect-ay b) row) ch attr)))))
+            (%put-cell (+ ax gw x) (+ ay row) ch attr)))))
     (when (and (view-focused-p te) tvision:*screen*
                (<= top (te-cy te) (1- (+ top h))) (<= left (te-cx te) (1- (+ left w))))
       (tvision:set-cursor-pos tvision:*screen*
-                              (+ (tvision::rect-ax b) (- (te-cx te) left))
-                              (+ (tvision::rect-ay b) (- (te-cy te) top)))
+                              (+ ax gw (- (te-cx te) left)) (+ ay (- (te-cy te) top)))
       (tvision:show-cursor tvision:*screen*))))
 
 (defun te-draw-wrap (te)
@@ -450,16 +459,18 @@ or a regex per line when REGEX).  Return the number of replacements."
   "Run movement FN, managing selection (Shift) and viewport."
   (te-mark te e) (funcall fn) (te-clamp te) (te-ensure-visible te))
 
+(defun te-mouse-col (te e) (max 0 (- (mouse-col te e) (te-gutter-width te))))   ; screen -> text column
+
 (defmethod handle-event ((te text-edit) (e mouse-down))
   (setf (te-cy te) (max 0 (min (1- (te-nlines te)) (+ (te-top te) (mouse-row te e))))
-        (te-cx te) (max 0 (min (length (te-cur te)) (+ (te-left te) (mouse-col te e)))))
+        (te-cx te) (max 0 (min (length (te-cur te)) (+ (te-left te) (te-mouse-col te e)))))
   (setf (te-anchor te) (cons (te-cy te) (te-cx te)))    ; anchor at the click; a drag extends from here
   (te-ensure-visible te) (setf (handled-p e) t))
 
 (defmethod handle-event ((te text-edit) (e mouse-move))
   (when (te-anchor te)                                  ; dragging since the mouse-down -> extend selection
     (setf (te-cy te) (max 0 (min (1- (te-nlines te)) (+ (te-top te) (mouse-row te e))))
-          (te-cx te) (max 0 (min (length (te-cur te)) (+ (te-left te) (mouse-col te e)))))
+          (te-cx te) (max 0 (min (length (te-cur te)) (+ (te-left te) (te-mouse-col te e)))))
     (te-ensure-visible te))
   (setf (handled-p e) t))
 
