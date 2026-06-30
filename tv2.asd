@@ -30,4 +30,5 @@
                              (:file "repl")
                              (:file "syntax")
                              (:file "editor")
-                             (:file "html")))))
+                             (:file "html")
+                             (:file "app")))))

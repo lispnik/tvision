@@ -44,4 +44,5 @@ event layers are new.")
    #:run-browser #:run-packages #:run-systems #:run-project
    #:run-repl #:repl-window #:repl-package
    #:run-editor
-   #:html-view #:set-html #:run-html))
+   #:html-view #:set-html #:run-html
+   #:run-app #:run-menu #:*app-windows*))
