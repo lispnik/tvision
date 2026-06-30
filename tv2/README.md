@@ -93,7 +93,9 @@ through a pty. Entry points:
 tv2 is a research kernel: it demonstrates the architecture end-to-end, not a
 hardened release.  **Mouse** is supported — clicks hit-test the view tree to
 focus/select/press (menus, rows, buttons, links, caret placement) and the wheel
-scrolls the view under the pointer.  Still deferred relative to the classic
-`tvision` system: movable/overlapping windows, scrollbars, menu hotkeys, cluster
-controls (checkbox/radio) and the standard file/help/color dialogs, regex
+scrolls the view under the pointer.  The desktop is a real window manager:
+**movable / resizable / overlapping windows** (drag the title to move, the ◢ grip
+to resize, `[✕]` to close; the Window menu tiles/cascades).  Still deferred
+relative to the classic `tvision` system: scrollbars, menu hotkeys/accelerators,
+cluster controls (checkbox/radio) and the standard file/help/color dialogs, regex
 search/replace, and the editor's per-language indenters.

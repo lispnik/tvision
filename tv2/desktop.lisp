@@ -101,10 +101,12 @@
 (defclass desktop (view)
   ((menubar   :accessor dt-menubar)
    (statusbar :accessor dt-statusbar)
-   (win       :initform nil :accessor dt-win)         ; the hosted window (its OWN root), or NIL
-   (cleanup   :initform nil :accessor dt-cleanup))    ; that window's cleanup thunk
+   (windows   :initform '() :accessor dt-windows)     ; back-to-front Z-order; last = topmost/focused
+   (drag      :initform nil :accessor dt-drag))       ; (:move WIN OFFX OFFY) | (:resize WIN) while dragging
   (:metaclass reactive-class))
 
+(defun dt-top (dt) (car (last (dt-windows dt))))       ; the focused window, or NIL
+(defun dt-raise (dt w) (setf (dt-windows dt) (append (remove w (dt-windows dt)) (list w))))
 (defun dt-content (dt)
   "The rectangle between the menu bar (row 0) and status bar (last row)."
   (let* ((r (view-bounds dt)) (ax (tvision::rect-ax r)) (ay (tvision::rect-ay r)) (w (r-w r)) (h (r-h r)))
@@ -114,56 +116,113 @@
   (setf (view-bounds dt) r)
   (let ((ax (tvision::rect-ax r)) (ay (tvision::rect-ay r)) (w (r-w r)) (h (r-h r)))
     (layout (dt-menubar dt)   (rect ax ay (+ ax w) (+ ay 1)))
-    (layout (dt-statusbar dt) (rect ax (+ ay (1- h)) (+ ax w) (+ ay h)))
-    (when (dt-win dt) (layout (dt-win dt) (dt-content dt)))))
+    (layout (dt-statusbar dt) (rect ax (+ ay (1- h)) (+ ax w) (+ ay h)))))
 
 (defmethod draw ((dt desktop))
   (let* ((b (view-bounds dt)) (w (r-w b)) (h (r-h b))
-         (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b)) (bg (role :desktop)))
+         (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b)) (bg (role :desktop)) (top (dt-top dt)))
     (loop for y from (1+ ay) below (+ ay (1- h)) do          ; patterned background
       (loop for x from ax below (+ ax w) do (%put-cell x y #\░ bg)))
-    (when (dt-win dt) (draw (dt-win dt)))                     ; the hosted window
+    (dolist (win (dt-windows dt))                            ; windows back-to-front
+      (setf (window-active win) (eq win top)) (draw win))
     (draw (dt-statusbar dt))
-    (draw (dt-menubar dt))))                                  ; menu + dropdown overlay everything
+    (draw (dt-menubar dt))))                                 ; menu + dropdown overlay everything
+
+(defun dt-refocus (dt)
+  "Keep the menu live only when no window is open."
+  (setf (menu-active (dt-menubar dt)) (if (dt-windows dt) nil 0)
+        (menu-sel (dt-menubar dt)) 0))
 
 (defun dt-open (dt make-fn)
-  "Open the window built by MAKE-FN inside the desktop and give it focus."
+  "Open MAKE-FN's window on the desktop at a cascade offset, focused on top."
   (multiple-value-bind (win focus open) (funcall make-fn)
-    (layout win (dt-content dt))
-    (setf (container-focus win) (or focus (first (all-focusables win)))
-          (dt-win dt) win
-          (dt-cleanup dt) (and open (funcall open tvision:*screen*))
-          (menu-active (dt-menubar dt)) nil)                 ; close the menu while the window is up
+    (let* ((c (dt-content dt)) (n (length (dt-windows dt)))
+           (cw (max 40 (floor (* (r-w c) 4) 5))) (ch (max 8 (floor (* (r-h c) 4) 5)))
+           (ox (+ (tvision::rect-ax c) (* (mod n 6) 3)))
+           (oy (+ (tvision::rect-ay c) (* (mod n 6) 2))))
+      (layout win (rect ox oy (min (+ ox cw) (tvision::rect-bx c)) (min (+ oy ch) (tvision::rect-by c))))
+      (setf (window-managed win) t
+            (container-focus win) (or focus (first (all-focusables win)))
+            (window-cleanup win) (and open (funcall open tvision:*screen*)))
+      (dt-raise dt win))
+    (dt-refocus dt) (invalidate dt)))
+
+(defun dt-close-window (dt win)
+  (when (window-cleanup win) (ignore-errors (funcall (window-cleanup win))))
+  (setf (dt-windows dt) (remove win (dt-windows dt)))
+  (dt-refocus dt) (invalidate dt))
+
+(defun dt-next (dt)                                          ; cycle focus: top goes to the bottom
+  (when (dt-windows dt)
+    (setf (dt-windows dt) (cons (dt-top dt) (butlast (dt-windows dt))))
     (invalidate dt)))
 
-(defun dt-close (dt)
-  "Close the active window (running its cleanup) and reactivate the menu."
-  (when (dt-cleanup dt) (ignore-errors (funcall (dt-cleanup dt))))
-  (setf (dt-win dt) nil (dt-cleanup dt) nil
-        (menu-active (dt-menubar dt)) 0 (menu-sel (dt-menubar dt)) 0)
-  (invalidate dt))
+(defun dt-cascade (dt)
+  (let ((c (dt-content dt)))
+    (loop for win in (dt-windows dt) for i from 0
+          for ox = (+ (tvision::rect-ax c) (* i 3)) for oy = (+ (tvision::rect-ay c) (* i 2))
+          for cw = (max 40 (floor (* (r-w c) 4) 5)) for ch = (max 8 (floor (* (r-h c) 4) 5))
+          do (layout win (rect ox oy (min (+ ox cw) (tvision::rect-bx c)) (min (+ oy ch) (tvision::rect-by c)))))
+    (invalidate dt)))
+
+(defun dt-tile (dt)
+  (let* ((c (dt-content dt)) (n (length (dt-windows dt))))
+    (when (plusp n)
+      (let* ((cols (ceiling (sqrt n))) (rows (ceiling n cols))
+             (cw (floor (r-w c) cols)) (ch (floor (r-h c) rows)))
+        (loop for win in (dt-windows dt) for i from 0
+              for cx = (mod i cols) for cy = (floor i cols)
+              for x0 = (+ (tvision::rect-ax c) (* cx cw)) for y0 = (+ (tvision::rect-ay c) (* cy ch))
+              do (layout win (rect x0 y0 (+ x0 cw) (+ y0 ch))))
+        (invalidate dt)))))
 
 (defmethod handle-event ((dt desktop) (e key-event))
-  (if (dt-win dt)
-      (if (eql (event-keysym e) :esc)                        ; Esc closes the window (it never sees Esc)
-          (dt-close dt)
-          (progn (setf *running* t)                          ; route to the window; its "quit" -> close
-                 (handle-event (dt-win dt) e)
-                 (unless *running* (dt-close dt))))
-      (handle-event (dt-menubar dt) e)))                     ; bare desktop: the menu drives
+  (let ((top (dt-top dt)))
+    (if top
+        (if (eql (event-keysym e) :esc) (dt-close-window dt top)   ; Esc closes the top window
+            (progn (setf *running* t) (handle-event top e)
+                   (unless *running* (dt-close-window dt top))))
+        (handle-event (dt-menubar dt) e))))                  ; no windows: the menu drives
+
+(defun dt-window-at (dt x y)
+  (loop for w in (reverse (dt-windows dt)) when (point-in-rect-p x y (view-bounds w)) return w))
+
+(defun dt-drag-update (dt e)
+  (let* ((d (dt-drag dt)) (win (second d)) (w (event-where e)) (mx (car w)) (my (cdr w)) (c (dt-content dt)))
+    (cond
+      ((typep e 'mouse-up) (setf (dt-drag dt) nil))
+      ((typep e 'mouse-move)
+       (let* ((b (view-bounds win)) (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b)))
+         (ecase (first d)
+           (:move
+            (let* ((ww (r-w b)) (hh (r-h b))
+                   (nx (max (tvision::rect-ax c) (min (- mx (third d)) (- (tvision::rect-bx c) ww))))
+                   (ny (max (tvision::rect-ay c) (min (- my (fourth d)) (- (tvision::rect-by c) hh)))))
+              (layout win (rect nx ny (+ nx ww) (+ ny hh)))))
+           (:resize
+            (let ((nx2 (max (+ ax 24) (min (1+ mx) (tvision::rect-bx c))))
+                  (ny2 (max (+ ay 5)  (min (1+ my) (tvision::rect-by c)))))
+              (layout win (rect ax ay nx2 ny2)))))
+         (invalidate dt))))))
+
+(defun dt-window-click (dt win e)
+  (dt-raise dt win)
+  (let* ((b (view-bounds win)) (lx (mouse-col win e)) (ly (mouse-row win e)) (w (r-w b)) (h (r-h b)))
+    (cond
+      ((not (typep e 'mouse-down)) (handle-event win e))            ; wheel etc. -> widgets
+      ((and (zerop ly) (<= 1 lx 3)) (dt-close-window dt win))       ; [✕] close box
+      ((and (= lx (1- w)) (= ly (1- h))) (setf (dt-drag dt) (list :resize win)))  ; resize grip
+      ((zerop ly) (setf (dt-drag dt) (list :move win lx ly)))       ; title bar -> move
+      (t (handle-event win e)))                                     ; interior -> widgets
+    (invalidate dt)))
 
 (defmethod handle-event ((dt desktop) (e mouse-event))
-  "Route mouse to the menu bar (its row or open dropdown) or the hosted window;
-clicking a window's quit/close path still closes it."
   (let* ((w (event-where e)) (x (car w)) (y (cdr w)) (mb (dt-menubar dt)))
     (cond
+      ((dt-drag dt) (dt-drag-update dt e))                 ; in a move/resize drag
       ((menu-hit-p mb x y) (handle-event mb e))
-      ((dt-win dt)
-       (when (point-in-rect-p x y (view-bounds (dt-win dt)))
-         (setf *running* t)
-         (handle-event (dt-win dt) e)
-         (unless *running* (dt-close dt))))
-      (t nil))))
+      (t (let ((win (dt-window-at dt x y)))
+           (when win (dt-window-click dt win e)))))))
 
 ;;; --- entry point ------------------------------------------------------------
 
@@ -176,17 +235,23 @@ clicking a window's quit/close path still closes it."
               (cons "ASDF systems"     (lambda () (dt-open dt #'make-systems)))
               (cons "Thread monitor"   (lambda () (dt-open dt #'make-threadmon)))
               (cons "HTML browser"     (lambda () (dt-open dt (lambda () (make-html))))))
+        (list "Window"
+              (cons "Next"             (lambda () (dt-next dt) (dt-refocus dt)))
+              (cons "Tile"             (lambda () (dt-tile dt) (dt-refocus dt)))
+              (cons "Cascade"          (lambda () (dt-cascade dt) (dt-refocus dt)))
+              (cons "Close"            (lambda () (let ((top (dt-top dt))) (when top (dt-close-window dt top))))))
         (list "File"
               (cons "Exit"             (lambda () (setf *app-done* t))))))
 
 (defun run-desktop ()
-  "Run the tv2 IDE: a Turbo-Vision-style desktop with a menu bar and status bar
-hosting the ported windows.  Returns when the user picks File→Exit."
+  "Run the tv2 IDE: a Turbo-Vision-style desktop with a menu bar, a status bar,
+and movable / resizable / overlapping windows (drag the title bar, drag the ◢
+grip, click [✕] to close; Window menu tiles/cascades).  Returns on File→Exit."
   (tvision:with-screen (s)
     (let ((dt (make-instance 'desktop)))
       (setf (dt-menubar dt)   (make-instance 'menu-bar :menus (%desktop-menus dt))
             (dt-statusbar dt)  (make-instance 'status-bar
-                                 :text " ↑/↓·←/→·Enter — or click menus, rows & links · wheel scrolls · Esc closes a window · File→Exit quits "))
+                                 :text " click menus/rows/links · drag title to move · drag ◢ to resize · [✕] closes · Window: tile/cascade · File→Exit "))
       (layout dt (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
       (setf *root* dt *ui-thread* sb-thread:*current-thread* *app-done* nil *dirty* t)
       (loop until *app-done* do
@@ -197,4 +262,5 @@ hosting the ported windows.  Returns when the user picks File→Exit."
         (tvision::pump-input s 0.05)
         (let ((tev (tvision::screen-next-event s)))
           (when tev (let ((ev (translate tev))) (when ev (handle-event dt ev))))))
-      (when (dt-win dt) (dt-close dt)))))                     ; stop any open window's threads
+      (dolist (win (dt-windows dt))                          ; stop any open windows' threads
+        (when (window-cleanup win) (ignore-errors (funcall (window-cleanup win))))))))

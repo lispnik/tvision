@@ -198,7 +198,8 @@
 (defparameter *theme*
   (list :normal         (tvision:make-attr 7 1)     ; light grey on blue
         :focused        (tvision:make-attr 15 3)    ; white on cyan
-        :frame          (tvision:make-attr 15 1)    ; bright white on blue
+        :frame          (tvision:make-attr 15 1)    ; bright white on blue (active window)
+        :frame-inactive (tvision:make-attr 7 1)      ; grey on blue (background window)
         :status         (tvision:make-attr 0 6)     ; black on cyan
         :button         (tvision:make-attr 0 7)     ; black on grey
         :button-focused (tvision:make-attr 15 4)     ; white on magenta

@@ -6,20 +6,26 @@
 ;;; --- window: a framed container with a title --------------------------------
 
 (defclass window (container)
-  ((title :initarg :title :initform "" :accessor window-title))
+  ((title   :initarg :title :initform "" :accessor window-title)
+   (managed :initform nil :accessor window-managed)    ; hosted in a desktop (show close/resize affordances)
+   (active  :initform t   :accessor window-active)      ; topmost/focused window (brighter frame)
+   (cleanup :initform nil :accessor window-cleanup))    ; thunk run when the desktop closes it
   (:metaclass reactive-class))
 
 (defmethod draw ((w window))
   (let* ((b (view-bounds w))
          (x0 (tvision::rect-ax b)) (y0 (tvision::rect-ay b))
          (x1 (1- (tvision::rect-bx b))) (y1 (1- (tvision::rect-by b)))
-         (frame (role :frame)))
+         (frame (if (window-active w) (role :frame) (role :frame-inactive))))
     (loop for y from y0 to y1 do                       ; clear interior
       (loop for x from x0 to x1 do (%put-cell x y #\Space (role :normal))))
     (%box x0 y0 x1 y1 frame)
     (%text-at (+ x0 (max 1 (floor (- (tvision::rect-width b) (length (window-title w))) 2)))
               y0 (window-title w) frame)
-    (dolist (sv (subviews w)) (draw sv))))             ; children paint over the interior
+    (dolist (sv (subviews w)) (draw sv))               ; children paint over the interior
+    (when (window-managed w)                           ; desktop affordances: close box + resize grip
+      (%text-at (+ x0 1) y0 "[✕]" frame)
+      (%put-cell x1 y1 #\◢ frame))))
 
 ;;; --- button: focusable, fires a command on Enter/Space ----------------------
 
