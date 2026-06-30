@@ -310,6 +310,24 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                           (status-hints (container-focus top)))))
     chips))
 
+;;; --- a window demonstrating the table viewer --------------------------------
+
+(defun make-package-table ()
+  "All packages as a column table: name · external-symbol count · packages used."
+  (let* ((rows (sort (copy-list (list-all-packages)) #'string< :key #'package-name))
+         (win (ui (window (:title " Packages (table viewer) " :keymap *global-keys*)
+                    (stack
+                      (:fill (table-view :name 'tbl :rows rows
+                               :columns (list
+                                         (list "Package"  30 (lambda (p) (package-name p)))
+                                         (list "External" 10 (lambda (p) (let ((n 0))
+                                                                           (do-external-symbols (s p) (declare (ignore s)) (incf n)) n)))
+                                         (list "Uses"     40 (lambda (p) (format nil "~{~a~^ ~}"
+                                                                                (mapcar #'package-name (package-use-list p))))))))
+                      (1 (static-text :role :status :text " ↑/↓ select · click a row · wheel scrolls · Esc closes ")))))))
+    (setf (window-scroll-target win) (find-view win 'tbl) (window-help win) :browser)
+    (values win (find-view win 'tbl))))
+
 ;;; --- a small window demonstrating the cluster controls ----------------------
 
 (defun make-options ()
@@ -338,6 +356,7 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                 (list "ASDF systems"     (lambda () (dt-open dt #'make-systems)))
                 (list "Thread monitor"   (lambda () (dt-open dt #'make-threadmon)))
                 (list "HTML browser"     (lambda () (dt-open dt (lambda () (make-html)))))
+                (list "Package table"    (lambda () (dt-open dt #'make-package-table)))
                 (list "Options"          (lambda () (dt-open dt #'make-options))))
           (list "Arrange"                                  ; window management (dimmed with no windows)
                 (list "Next"             (lambda () (dt-next dt) (dt-refocus dt)) nil (any-win))
