@@ -36,6 +36,8 @@ event layers are new.")
    #:window #:window-title #:button #:button-label #:button-command #:static-text
    #:input-line #:input-text #:input-caret #:input-on-change
    #:list-box #:list-items #:list-selected #:list-on-activate
+   #:scrollback #:scrollback-append #:scrollback-clear #:sb-scroll #:sb-follow
    ;; demo + ported real windows
    #:run #:run-threadmon
-   #:run-browser #:run-packages #:run-systems #:run-project))
+   #:run-browser #:run-packages #:run-systems #:run-project
+   #:run-repl #:repl-window #:repl-package))
