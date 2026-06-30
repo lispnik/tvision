@@ -263,6 +263,22 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                           (status-hints (container-focus top)))))
     chips))
 
+;;; --- a small window demonstrating the cluster controls ----------------------
+
+(defun make-options ()
+  "A demo window showing checkbox and radio clusters with a live echo."
+  (let* ((win (ui (window (:title " Options (cluster controls) " :keymap *global-keys*)
+                    (stack
+                      (1 (static-text :role :label :text " Features — ↑/↓, Space or click toggles: "))
+                      (4 (cluster :name 'features :mode :check
+                           :items (list "Syntax highlight" "Word wrap" "Auto-indent" "Line numbers")
+                           :value (list 0)))
+                      (1 (static-text :role :label :text " Theme — radio: "))
+                      (3 (cluster :name 'theme :mode :radio :items (list "Blue" "Dark" "Light") :value 0))
+                      (:fill (static-text :name 'echo :role :status :text ""))
+                      (1 (static-text :role :status :text " Space/click toggles · Tab switches groups · Esc closes ")))))))
+    (values win (find-view win 'features))))
+
 ;;; --- entry point ------------------------------------------------------------
 
 (defun %desktop-menus (dt)
@@ -273,7 +289,8 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
               (cons "Package browser"  (lambda () (dt-open dt #'make-packages)))
               (cons "ASDF systems"     (lambda () (dt-open dt #'make-systems)))
               (cons "Thread monitor"   (lambda () (dt-open dt #'make-threadmon)))
-              (cons "HTML browser"     (lambda () (dt-open dt (lambda () (make-html))))))
+              (cons "HTML browser"     (lambda () (dt-open dt (lambda () (make-html)))))
+              (cons "Options"          (lambda () (dt-open dt #'make-options))))
         (list "Window"
               (cons "Next"             (lambda () (dt-next dt) (dt-refocus dt)))
               (cons "Tile"             (lambda () (dt-tile dt) (dt-refocus dt)))
