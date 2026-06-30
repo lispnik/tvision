@@ -103,6 +103,7 @@ window actions plus the focused widget's own `status-hints`.  Checkbox and radio
 window).  Standard **dialogs** are there too: a file picker and change-dir (File
 menu) and a live colour customiser that edits `*theme*` with instant preview.
 **F1** (or the Help menu) opens context-sensitive help for the focused window,
-rendered with the HTML view and cross-linked between topics.  Still deferred
-relative to the classic `tvision` system: menu hotkeys/accelerators, regex
-search/replace, and the editor's per-language indenters.
+rendered with the HTML view and cross-linked between topics.  The editor also has
+incremental **find** (Find/Next chips), **auto-indent**, and **mouse drag-select**.
+Still deferred relative to the classic `tvision` system: menu hotkeys/
+accelerators, and regex search & replace.

@@ -25,7 +25,9 @@
    (filename :initform nil :initarg :filename :accessor te-filename)
    (undo     :initform '() :accessor te-undo)             ; snapshots: (lines-list cy cx)
    (redo     :initform '() :accessor te-redo)
-   (colorizer :initform nil :initarg :colorizer :accessor te-colorizer))  ; (line in-string) -> (values attrs end)
+   (colorizer :initform nil :initarg :colorizer :accessor te-colorizer)   ; (line in-string) -> (values attrs end)
+   (indenter  :initform nil :initarg :indenter  :accessor te-indenter)    ; (te) -> indent column for a new line
+   (last-find :initform "" :accessor te-last-find))                       ; remembered search query
   (:metaclass reactive-class))
 
 (defmethod focusable-p ((te text-edit)) t)
@@ -200,7 +202,44 @@ selection / an empty selection."
 (defun te-newline (te)
   (te-save-undo te)
   (when (te-sel-ordered te) (te-delete-selection te))
-  (te-replace-region te (te-cy te) (te-cx te) (te-cy te) (te-cx te) (string #\Newline)))
+  (te-replace-region te (te-cy te) (te-cx te) (te-cy te) (te-cx te) (string #\Newline))
+  (when (te-indenter te)                                ; auto-indent the fresh line
+    (let ((n (funcall (te-indenter te) te)))
+      (when (and n (plusp n))
+        (setf (te-line te (te-cy te)) (concatenate 'string (make-string n :initial-element #\Space) (te-cur te))
+              (te-cx te) n)))))
+
+(defun lisp-auto-indent (te)
+  "Indent a new line to match the line above, +2 when it has unbalanced opens."
+  (let ((py (1- (te-cy te))))
+    (if (minusp py) 0
+        (let* ((prev (te-line te py))
+               (lead (or (position #\Space prev :test-not #'eql) (length prev)))
+               (net  (- (count #\( prev) (count #\) prev))))
+          (max 0 (+ lead (if (plusp net) 2 0)))))))
+
+;;; --- search -----------------------------------------------------------------
+
+(defun te-find (te query &key (from-line (te-cy te)) (from-col 0))
+  "Find QUERY (case-insensitive) at/after (FROM-LINE, FROM-COL); select it and
+move the cursor to its end.  Return T on a hit."
+  (when (plusp (length query))
+    (setf (te-last-find te) query)
+    (let ((q (string-downcase query)))
+      (loop for ln from from-line below (te-nlines te)
+            for line = (string-downcase (te-line te ln))
+            for start = (if (= ln from-line) (min from-col (length line)) 0)
+            for pos = (search q line :start2 start)
+            when pos do
+              (setf (te-cy te) ln (te-cx te) (+ pos (length q)) (te-anchor te) (cons ln pos))
+              (te-ensure-visible te)
+              (return-from te-find t)))
+    nil))
+
+(defun te-find-next (te)
+  (when (plusp (length (te-last-find te)))
+    (or (te-find te (te-last-find te) :from-line (te-cy te) :from-col (te-cx te))
+        (te-find te (te-last-find te) :from-line 0 :from-col 0))))   ; wrap to top
 
 (defun te-backspace (te)
   (cond ((te-sel-ordered te) (te-save-undo te) (te-delete-selection te))
@@ -333,9 +372,16 @@ selection / an empty selection."
 
 (defmethod handle-event ((te text-edit) (e mouse-down))
   (setf (te-cy te) (max 0 (min (1- (te-nlines te)) (+ (te-top te) (mouse-row te e))))
-        (te-cx te) (max 0 (min (length (te-cur te)) (+ (te-left te) (mouse-col te e))))
-        (te-anchor te) nil)
+        (te-cx te) (max 0 (min (length (te-cur te)) (+ (te-left te) (mouse-col te e)))))
+  (setf (te-anchor te) (cons (te-cy te) (te-cx te)))    ; anchor at the click; a drag extends from here
   (te-ensure-visible te) (setf (handled-p e) t))
+
+(defmethod handle-event ((te text-edit) (e mouse-move))
+  (when (te-anchor te)                                  ; dragging since the mouse-down -> extend selection
+    (setf (te-cy te) (max 0 (min (1- (te-nlines te)) (+ (te-top te) (mouse-row te e))))
+          (te-cx te) (max 0 (min (length (te-cur te)) (+ (te-left te) (mouse-col te e)))))
+    (te-ensure-visible te))
+  (setf (handled-p e) t))
 
 (defmethod handle-event ((te text-edit) (e wheel-event))
   (setf (te-anchor te) nil)
@@ -396,8 +442,20 @@ selection / an empty selection."
                     (te-selected-string te) (te-wrap te)))
       (invalidate st))))
 
+(defun %editor-find (te)
+  "Modal find prompt; on Enter, search from the cursor and select the match."
+  (let ((d (ui (dialog (:title " Find " :keymap *dialog-keys*
+                        :value-fn (lambda (d) (input-text (find-view d 'q))))
+                 (stack
+                   (1 (row (7 (static-text :role :label :text " Find: ")) (:fill (input-line :name 'q))))
+                   (1 (static-text :role :status :text " Enter: search (case-insensitive) · Esc: cancel ")))))))
+    (let ((r (exec-view d :width 52 :height 6)))
+      (unless (eq r :cancel) (te-find te r :from-line (te-cy te) :from-col (te-cx te))))))
+
 (defmethod status-hints ((te text-edit))   ; chips the desktop shows while the editor is focused
-  (list (cons "Undo" (lambda () (te-undo! te)))
+  (list (cons "Find" (lambda () (%editor-find te)))
+        (cons "Next" (lambda () (te-find-next te)))
+        (cons "Undo" (lambda () (te-undo! te)))
         (cons "Redo" (lambda () (te-redo! te)))
         (cons (if (te-wrap te) "Wrap:on" "Wrap:off")
               (lambda () (setf (te-wrap te) (not (te-wrap te)) (te-left te) 0) (te-ensure-visible te) (invalidate te)))))
@@ -419,7 +477,7 @@ WINDOW FOCUS)."
           (te-load te path)
           (te-set-text te (format nil ";; tv2 scratch buffer~%;; type freely — Shift+arrows select, C-c/C-x/C-v copy/cut/paste, C-z/C-y undo/redo.~%~%(defun hello (name)~%  (format t \"hello, ~~a!~~%\" name))~%")))
       (when (or (null path) (member (pathname-type path) '("lisp" "asd" "cl") :test #'equal))
-        (setf (te-colorizer te) #'lisp-colorize)))
+        (setf (te-colorizer te) #'lisp-colorize (te-indenter te) #'lisp-auto-indent)))
     (%editor-status win)
     (setf (window-scroll-target win) (find-view win 'edit) (window-help win) :editor)
     (values win (find-view win 'edit))))
