@@ -25,6 +25,8 @@ event layers are new.")
    #:container #:subviews #:container-focus #:add-subview #:focus-next #:all-focusables
    ;; layout DSL
    #:layout #:stack #:row #:add-laid #:rect #:ui
+   ;; modal dialogs + validation
+   #:dialog #:dialog-result #:exec-view #:validation-error #:validation-message #:fail-validation
    ;; widgets
    #:outline #:outline-roots #:outline-focused
    #:window #:window-title #:button #:button-label #:button-command #:static-text

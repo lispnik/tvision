@@ -58,9 +58,9 @@
   (defun expand-ui (form)
     (unless (consp form) (error "tv2 ui: expected a form, got ~s" form))
     (case (car form)
-      (window
+      ((window dialog)
        (destructuring-bind (opts child) (cdr form)
-         `(let ((w (make-instance 'window ,@opts)))
+         `(let ((w (make-instance ',(car form) ,@opts)))
             (add-subview w ,(expand-ui child))
             w)))
       ((stack row)
@@ -99,16 +99,20 @@ Space fire a button's command, arrows drive the focused outline, q quits."
                                                                     (input-text il))))))))))
                        (:fill (outline :name 'tree :roots (demo-roots) :keymap *outline-keys*))
                        (1 (row
+                            (18    (button :label "Go to line…" :command 'go-to-line))
                             (16    (button :label "Collapse all" :command 'collapse-all))
                             (8     (button :label "Quit"         :command 'quit))
                             (:fill (static-text :name 'echo :role :status :text " (type in the Filter field) "))))
                        (1 (static-text :role :status
-                            :text " Tab: focus · type in Filter · arrows/Enter: outline · Esc or Quit: exit ")))))))
+                            :text " Tab: focus · type in Filter · Go to line… opens a modal dialog · Esc/Quit: exit ")))))))
       (layout win (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
-      (setf (container-focus win) (first (all-focusables win))
+      (setf *root* win
+            (container-focus win) (first (all-focusables win))
             *running* t *dirty* t)
       (loop while *running* do
-        (when *dirty* (draw win) (tvision:flush-screen s) (setf *dirty* nil))
+        (when *dirty*
+          (tvision:hide-cursor s)              ; a focused input-line re-shows it
+          (draw win) (tvision:flush-screen s) (setf *dirty* nil))
         (tvision::pump-input s 0.05)
         (let ((tev (tvision::screen-next-event s)))
           (when tev

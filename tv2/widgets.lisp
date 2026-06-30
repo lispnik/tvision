@@ -49,7 +49,10 @@
   (:metaclass reactive-class))
 
 (defmethod draw ((v static-text))
-  (let ((attr (role (static-text-role v))))
+  ;; an empty :error line stays invisible (blends into the background) until set
+  (let ((attr (if (and (zerop (length (static-text-text v))) (eq (static-text-role v) :error))
+                  (role :normal)
+                  (role (static-text-role v)))))
     (fill-row v 0 0 (tvision::rect-width (view-bounds v)) attr)
     (draw-text v 0 0 (static-text-text v) attr)))
 

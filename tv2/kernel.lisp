@@ -14,6 +14,7 @@
 (defmethod sb-mop:validate-superclass ((c reactive-class) (s standard-class)) t)
 
 (defvar *dirty* nil "Set when reactive state changed since the last frame.")
+(defvar *root* nil "The current top-level window (the modal background).")
 (defun invalidate (object) (declare (ignore object)) (setf *dirty* t))
 
 (defmethod (setf sb-mop:slot-value-using-class) :after
@@ -191,7 +192,8 @@
         :button-focused (tvision:make-attr 15 4)     ; white on magenta
         :label          (tvision:make-attr 14 1)     ; yellow on blue
         :input          (tvision:make-attr 7 0)      ; grey on black (a field)
-        :input-focused  (tvision:make-attr 15 0))    ; white on black
+        :input-focused  (tvision:make-attr 15 0)     ; white on black
+        :error          (tvision:make-attr 15 4))    ; white on red
   "Role -> packed attribute.")
 
 (defun role (key) (or (getf *theme* key) (tvision:make-attr 7 0)))

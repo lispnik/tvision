@@ -19,4 +19,5 @@
                              (:file "kernel")
                              (:file "outline")
                              (:file "widgets")
-                             (:file "layout")))))
+                             (:file "layout")
+                             (:file "modal")))))
