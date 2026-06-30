@@ -38,6 +38,7 @@ event layers are new.")
    #:list-box #:list-items #:list-selected #:list-on-activate
    #:scrollback #:scrollback-append #:scrollback-clear #:sb-scroll #:sb-follow
    #:cluster #:cluster-value #:cluster-items
+   #:make-file-dialog #:make-color-dialog
    #:text-edit #:te-load #:te-save #:te-text #:te-set-text #:te-filename #:te-modified #:te-colorizer
    #:lisp-colorize
    ;; demo + ported real windows

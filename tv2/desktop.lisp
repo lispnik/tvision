@@ -297,7 +297,12 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
               (cons "Cascade"          (lambda () (dt-cascade dt) (dt-refocus dt)))
               (cons "Close"            (lambda () (let ((top (dt-top dt))) (when top (dt-close-window dt top))))))
         (list "File"
-              (cons "Exit"             (lambda () (setf *app-done* t))))))
+              (cons "Open file…"   (lambda () (let ((p (make-file-dialog :dir *project-dir* :title " Open file ")))
+                                                (when p (dt-open dt (lambda () (make-editor p)))))))
+              (cons "Change dir…"  (lambda () (let ((p (make-file-dialog :dir *project-dir* :dirs-only t :title " Change dir ")))
+                                                (when p (setf *project-dir* (uiop:ensure-directory-pathname p))))))
+              (cons "Colours…"     (lambda () (make-color-dialog)))
+              (cons "Exit"         (lambda () (setf *app-done* t))))))
 
 (defun run-desktop ()
   "Run the tv2 IDE: a Turbo-Vision-style desktop with a menu bar, a status bar,

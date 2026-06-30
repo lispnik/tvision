@@ -1,4 +1,4 @@
-# tv2 — a CLOS-native kernel for the tvision TUI framework
+es # tv2 — a CLOS-native kernel for the tvision TUI framework
 
 `tv2` is an experimental, clean-break re-architecture of the framework's
 *dispatch and construction* layers. It asks: if we diverged from classic Turbo
@@ -100,6 +100,8 @@ draw a **scrollbar** on the right frame edge (click the arrows/track or drag the
 thumb).  The bottom **status bar** shows clickable, context-sensitive chips —
 window actions plus the focused widget's own `status-hints`.  Checkbox and radio
 **cluster** controls are available (Space or click toggles; see the Options
-window).  Still deferred relative to the classic `tvision` system: menu
-hotkeys/accelerators, the standard file/help/color dialogs, regex search/replace,
-and the editor's per-language indenters.
+window).  Standard **dialogs** are there too: a file picker and change-dir (File
+menu) and a live colour customiser that edits `*theme*` with instant preview.
+Still deferred relative to the classic `tvision` system: menu
+hotkeys/accelerators, a help system, regex search/replace, and the editor's
+per-language indenters.

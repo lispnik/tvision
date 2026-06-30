@@ -81,7 +81,10 @@ get a lazy loader; files are leaves whose DATA is their relpath."
 (defkeymap *proj-keys* (*outline-keys*)
   (:enter proj-open))                    ; override Enter; arrows/Right/Left inherit from *outline-keys*
 
-(defun make-project (&optional (dir "/Users/mkennedy/Projects/common-lisp/tvision/"))
+(defvar *project-dir* "/Users/mkennedy/Projects/common-lisp/tvision/"
+  "Default root for new project-manager windows; set by the Change-dir dialog.")
+
+(defun make-project (&optional (dir *project-dir*))
   "Build a project-manager window for DIR.  Return (values WINDOW FOCUS)."
   (multiple-value-bind (tree rels) (%git-root dir)
     (let ((win (ui (window (:title " tv2 — Project manager (a real tvlisp window, ported) "
