@@ -310,6 +310,24 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                           (status-hints (container-focus top)))))
     chips))
 
+;;; --- a dialog demonstrating field validators --------------------------------
+
+(defun %validators-dialog ()
+  "Modal dialog showing a range-validated and a picture-validated field."
+  (let ((d (ui (dialog (:title " Field validators " :keymap *dialog-keys*
+                        :value-fn (lambda (d) (declare (ignore d)) t))
+                 (stack
+                   (1 (row (20 (static-text :role :label :text " Age (1..120): "))
+                           (:fill (input-line :name 'age :validator (range-validator 1 120)))))
+                   (1 (row (20 (static-text :role :label :text " Date ##/##/####: "))
+                           (:fill (input-line :name 'date :validator (picture-validator "##/##/####")))))
+                   (1 (static-text :name 'msg :role :error :text ""))
+                   (1 (static-text :role :status :text " letters are rejected in Age; OK validates the fields; Esc cancels "))
+                   (1 (row (:fill (static-text :text ""))
+                           (8  (button :label "OK"     :command 'accept))
+                           (12 (button :label "Cancel" :command 'cancel)))))))))
+    (exec-view d :width 52 :height 9)))
+
 ;;; --- a window demonstrating the table viewer --------------------------------
 
 (defun make-package-table ()
@@ -369,6 +387,7 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                 (list "Change dir…"  (lambda () (let ((p (make-file-dialog :dir *project-dir* :dirs-only t :title " Change dir ")))
                                                   (when p (setf *project-dir* (uiop:ensure-directory-pathname p))))))
                 (list "Colours…"     (lambda () (make-color-dialog)))
+                (list "Validators…" (lambda () (%validators-dialog)))
                 (list "Exit"         (lambda () (setf *app-done* t)) (ctrl #\q)))
           (list "Help"
                 (list "Contents"     (lambda () (dt-open dt (lambda () (make-help :general)))))

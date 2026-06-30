@@ -39,6 +39,7 @@ event layers are new.")
    #:scrollback #:scrollback-append #:scrollback-clear #:sb-scroll #:sb-follow
    #:cluster #:cluster-value #:cluster-items
    #:table-view #:table-rows #:table-columns #:table-selected
+   #:filter-validator #:range-validator #:picture-validator #:digits-validator #:input-validator #:input-history-id
    #:make-file-dialog #:make-color-dialog #:make-help #:*help-pages*
    #:text-edit #:te-load #:te-save #:te-text #:te-set-text #:te-filename #:te-modified #:te-colorizer
    #:lisp-colorize

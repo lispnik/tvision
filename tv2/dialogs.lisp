@@ -41,7 +41,7 @@ a file (or click Open) to choose it.  Return a pathname, or NIL on cancel."
                             :value-fn (lambda (d) (input-text (find-view d 'path))))
                      (stack
                        (1 (row (7 (static-text :role :label :text " Path: "))
-                               (:fill (input-line :name 'path))))
+                               (:fill (input-line :name 'path :history-id :file))))
                        (:fill (list-box :name 'files :on-activate #'activate))
                        (1 (row (:fill (static-text :text ""))
                                (8  (button :label "Open"   :command 'accept))

@@ -17,12 +17,29 @@
    (value-fn  :initarg :value-fn  :initform nil :accessor dialog-value-fn))   ; (dialog) -> result value
   (:metaclass reactive-class))
 
+(defun %dialog-input-lines (d)
+  (let ((out '()))
+    (labels ((walk (v) (when (typep v 'input-line) (push v out))
+               (when (typep v 'container) (mapc #'walk (subviews v)))))
+      (walk d))
+    (nreverse out)))
+
+(defun %validate-fields (d)
+  "Signal VALIDATION-ERROR for the first field whose validator's CHECK fails."
+  (dolist (il (%dialog-input-lines d))
+    (let ((vd (input-validator il)))
+      (when (and vd (field-validator-check vd))
+        (multiple-value-bind (ok msg) (funcall (field-validator-check vd) (input-text il))
+          (unless ok (fail-validation (or msg " Invalid field. "))))))))
+
 (define-command accept (v e)
   (let ((d (view-root v)))
     (when (typep d 'dialog)
       (handler-case
           (progn
-            (when (dialog-validator d) (funcall (dialog-validator d) d))   ; may signal
+            (%validate-fields d)                                          ; per-field validators
+            (when (dialog-validator d) (funcall (dialog-validator d) d))   ; whole-dialog check
+            (mapc #'input-remember (%dialog-input-lines d))                ; record field histories
             (setf (dialog-result d) (if (dialog-value-fn d) (funcall (dialog-value-fn d) d) t)
                   (dialog-done d) t))
         (validation-error (c)

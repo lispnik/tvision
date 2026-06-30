@@ -72,14 +72,40 @@
 ;;; (a first-class handler) fires whenever the text changes -- data binding
 ;;; without GetData/SetData.
 
+;;; A field validator: FILTER (char -> keep?) rejects keystrokes as typed; CHECK
+;;; (string -> (values ok-p message)) validates the whole field on accept.
+(defstruct (field-validator (:constructor %fv (&key filter check))) filter check)
+
+(defvar *input-histories* (make-hash-table) "HISTORY-ID -> list of past entries (most recent first).")
+
 (defclass input-line (view)
-  ((text      :initarg :text :initform "" :accessor input-text)
-   (caret     :initform 0 :accessor input-caret)
-   (scroll    :initform 0 :accessor input-scroll)          ; first visible column
-   (on-change :initarg :on-change :initform nil :accessor input-on-change))
+  ((text       :initarg :text :initform "" :accessor input-text)
+   (caret      :initform 0 :accessor input-caret)
+   (scroll     :initform 0 :accessor input-scroll)         ; first visible column
+   (on-change  :initarg :on-change :initform nil :accessor input-on-change)
+   (validator  :initarg :validator  :initform nil :accessor input-validator)   ; field-validator or NIL
+   (history-id :initarg :history-id :initform nil :accessor input-history-id)   ; key into *input-histories*
+   (hist-pos   :initform nil :accessor input-hist-pos))
   (:metaclass reactive-class))
 
 (defmethod focusable-p ((il input-line)) t)
+
+(defun input-history (il) (and (input-history-id il) (gethash (input-history-id il) *input-histories*)))
+(defun input-remember (il)
+  "Push the current text onto this field's history (deduped)."
+  (let ((id (input-history-id il)) (s (input-text il)))
+    (when (and id (plusp (length s)))
+      (setf (gethash id *input-histories*) (cons s (remove s (gethash id *input-histories*) :test #'string=))))))
+(defun input-recall (il delta)
+  "Replace the field with the previous/next history entry."
+  (let* ((h (input-history il)) (n (length h)))
+    (when (plusp n)
+      (let ((pos (cond ((null (input-hist-pos il)) (if (plusp delta) 0 (1- n)))
+                       (t (max -1 (min n (+ (input-hist-pos il) delta)))))))
+        (cond ((or (< pos 0) (>= pos n)) (setf (input-hist-pos il) nil (input-text il) ""))
+              (t (setf (input-hist-pos il) pos (input-text il) (nth pos h))))
+        (setf (input-caret il) (length (input-text il)))
+        (input-scroll-fix il) (input-notify il)))))
 
 (defun input-scroll-fix (il)
   (let ((b (view-bounds il)))
@@ -92,10 +118,12 @@
   (when (input-on-change il) (funcall (input-on-change il) il)))
 
 (defun input-insert (il ch)
-  (let ((txt (input-text il)) (c (input-caret il)))
-    (setf (input-text il)  (concatenate 'string (subseq txt 0 c) (string ch) (subseq txt c))
-          (input-caret il) (1+ c))
-    (input-scroll-fix il) (input-notify il)))
+  (let ((v (input-validator il)))
+    (when (or (null v) (null (field-validator-filter v)) (funcall (field-validator-filter v) ch))  ; reject filtered keys
+      (let ((txt (input-text il)) (c (input-caret il)))
+        (setf (input-text il)  (concatenate 'string (subseq txt 0 c) (string ch) (subseq txt c))
+              (input-caret il) (1+ c))
+        (input-scroll-fix il) (input-notify il)))))
 
 (defun input-backspace (il)
   (let ((txt (input-text il)) (c (input-caret il)))
@@ -137,6 +165,8 @@
       ((eql ks :del)   (input-delete il)    (setf (handled-p e) t))
       ((eql ks :left)  (input-move il -1)   (setf (handled-p e) t))
       ((eql ks :right) (input-move il 1)    (setf (handled-p e) t))
+      ((and (eql ks :up)   (input-history il)) (input-recall il 1)  (setf (handled-p e) t))   ; older
+      ((and (eql ks :down) (input-history il)) (input-recall il -1) (setf (handled-p e) t))   ; newer
       ((eql ks :home)  (setf (input-caret il) 0) (input-scroll-fix il) (setf (handled-p e) t))
       ((eql ks :end)   (setf (input-caret il) (length (input-text il))) (input-scroll-fix il)
                        (setf (handled-p e) t))

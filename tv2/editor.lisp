@@ -447,7 +447,7 @@ move the cursor to its end.  Return T on a hit."
   (let ((d (ui (dialog (:title " Find " :keymap *dialog-keys*
                         :value-fn (lambda (d) (input-text (find-view d 'q))))
                  (stack
-                   (1 (row (7 (static-text :role :label :text " Find: ")) (:fill (input-line :name 'q))))
+                   (1 (row (7 (static-text :role :label :text " Find: ")) (:fill (input-line :name 'q :history-id :find))))
                    (1 (static-text :role :status :text " Enter: search (case-insensitive) · Esc: cancel ")))))))
     (let ((r (exec-view d :width 52 :height 6)))
       (unless (eq r :cancel) (te-find te r :from-line (te-cy te) :from-col (te-cx te))))))

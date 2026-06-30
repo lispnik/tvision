@@ -108,5 +108,6 @@ incremental **find** (Find/Next chips), **auto-indent**, and **mouse drag-select
 The menu bar has **Alt-hotkeys** (the highlighted letter), global **accelerators**
 (e.g. `^O` Open, `^Q` Exit, `^R` REPL), and dimmed disabled items.  A **table
 viewer** (columns + fixed header + scrollbar; see the Package-table window) is
-available.  Still deferred relative to the classic `tvision` system: nested
-submenus, regex search & replace, input validators, and a history dropdown.
+available, and input fields support **validators** (filter / range / picture; see
+File → Validators…) and **Up/Down history** recall.  Still deferred relative to
+the classic `tvision` system: nested submenus and regex search & replace.
