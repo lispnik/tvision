@@ -283,7 +283,10 @@
    (links   :initform #() :accessor hv-links)
    (focus   :initform nil :accessor hv-focus)          ; focused link id, or NIL
    (top     :initform 0   :accessor hv-top)            ; first visible line
-   (on-link :initform nil :initarg :on-link :accessor hv-on-link))   ; (lambda (href) ...)
+   (matches :initform '() :accessor hv-matches)        ; find-in-page hits: (line start end)
+   (match-i :initform nil :accessor hv-match-i)        ; current match index, or NIL
+   (on-link :initform nil :initarg :on-link :accessor hv-on-link)     ; (lambda (href) ...)
+   (on-status :initform nil :accessor hv-on-status))   ; (lambda (string) ...) -> update a status line
   (:metaclass reactive-class))
 
 (defmethod focusable-p ((v html-view)) t)
@@ -297,10 +300,59 @@
 
 (defun set-html (v html)
   (multiple-value-bind (toks lks) (html->tokens (or html ""))
-    (setf (hv-tokens v) toks (hv-links v) lks (hv-focus v) nil (hv-top v) 0))
+    (setf (hv-tokens v) toks (hv-links v) lks (hv-focus v) nil (hv-top v) 0
+          (hv-matches v) '() (hv-match-i v) nil))
   (hv-relayout v)
   (invalidate v)
   v)
+
+;;; --- find-in-page -----------------------------------------------------------
+
+(defun hv-line-text (v li)
+  (with-output-to-string (s)
+    (when (< li (hv-nlines v)) (dolist (r (aref (hv-lines v) li)) (write-string (html-run-text r) s)))))
+
+(defun hv-status (v fmt &rest args)
+  (when (hv-on-status v) (funcall (hv-on-status v) (apply #'format nil fmt args))))
+
+(defun hv-find (v query)
+  "Find QUERY (case-insensitive) across the rendered lines, recording every match
+and jumping to the first.  Match columns are virtual columns = on-screen columns
+(the document is wrapped to width, never horizontally scrolled)."
+  (let ((q (string-downcase (or query ""))) (ms '()))
+    (when (plusp (length q))
+      (dotimes (li (hv-nlines v))
+        (let ((line (string-downcase (hv-line-text v li))) (start 0))
+          (loop for pos = (search q line :start2 start) while pos do
+            (push (list li pos (+ pos (length q))) ms)
+            (setf start (+ pos (length q)))))))
+    (setf (hv-matches v) (nreverse ms) (hv-match-i v) (if (hv-matches v) 0 nil))
+    (when (hv-match-i v) (hv-line-into-view v (first (first (hv-matches v)))))
+    (invalidate v)
+    (if (plusp (length q))
+        (if (hv-matches v) (hv-status v " find ~s: 1/~d matches (</> to cycle) " query (length (hv-matches v)))
+            (hv-status v " find ~s: no matches " query))
+        (hv-status v " find cancelled "))
+    (length (hv-matches v))))
+
+(defun hv-find-next (v dir)
+  (let ((n (length (hv-matches v))))
+    (when (plusp n)
+      (setf (hv-match-i v) (mod (+ (or (hv-match-i v) 0) dir) n))
+      (hv-line-into-view v (first (nth (hv-match-i v) (hv-matches v))))
+      (invalidate v)
+      (hv-status v " match ~d/~d " (1+ (hv-match-i v)) n))))
+
+(defun hv-prompt-find (v)
+  "Modal find prompt; on Enter, run the search."
+  (let ((d (ui (dialog (:title " Find in page " :keymap *dialog-keys*
+                         :value-fn (lambda (d) (input-text (find-view d 'q))))
+                 (stack
+                   (1 (row (8 (static-text :role :label :text " Find: "))
+                           (:fill (input-line :name 'q))))
+                   (1 (static-text :role :status :text " Enter: search · Esc: cancel ")))))))
+    (let ((r (exec-view d :width 52 :height 6)))
+      (unless (eq r :cancel) (hv-find v r)))))
 
 (defun hv-scroll (v delta)
   (let* ((h (r-h (view-bounds v))) (maxtop (max 0 (- (hv-nlines v) h))))
@@ -359,7 +411,19 @@
           (let ((col 0))
             (dolist (run (aref lines li))
               (when (< col w) (draw-text v col row (html-run-text run) (%html-run-attr v run)))
-              (incf col (length (html-run-text run))))))))))
+              (incf col (length (html-run-text run)))))
+          ;; overlay find-in-page matches (current match brighter)
+          (when (hv-matches v)
+            (let ((lt (hv-line-text v li)))
+              (loop for m in (hv-matches v) for mi from 0
+                    when (= (first m) li) do
+                      (loop for c from (second m) below (min w (third m))
+                            when (< c (length lt)) do
+                              (%put-cell (+ (tvision::rect-ax b) c) (+ (tvision::rect-ay b) row)
+                                         (char lt c)
+                                         (if (eql mi (hv-match-i v))
+                                             (tvision:make-attr 15 4)    ; current: white on red
+                                             (tvision:make-attr 0 6))))))))))))  ; others: black on cyan
 
 (defmethod handle-event ((v html-view) (e key-event))
   (let ((ks (event-keysym e)) (page (max 1 (1- (r-h (view-bounds v))))))
@@ -373,6 +437,9 @@
       ((eql ks #\n)    (hv-next-link v 1)   (setf (handled-p e) t))   ; next link
       ((eql ks #\p)    (hv-next-link v -1)  (setf (handled-p e) t))   ; prev link
       ((eql ks :enter) (hv-activate v)      (setf (handled-p e) t))   ; follow link
+      ((eql ks #\/)    (hv-prompt-find v)   (setf (handled-p e) t))   ; find in page
+      ((eql ks #\>)    (hv-find-next v 1)   (setf (handled-p e) t))   ; next match
+      ((eql ks #\<)    (hv-find-next v -1)  (setf (handled-p e) t))   ; prev match
       (t (call-next-method)))))                                       ; q / Esc bubble
 
 ;;; --- entry point: a small multi-page demo "site" ----------------------------
@@ -427,10 +494,11 @@ REPL and editor.</p>
                    (let ((html (cdr (assoc name *html-demo-pages* :test #'string=))))
                      (if html
                          (progn (set-html doc html) (hv-next-link doc 1)
-                                (echo (format nil " page: ~a   ~d link~:p   n/p: links · Enter: follow · arrows: scroll · Esc: quit "
+                                (echo (format nil " page: ~a   ~d link~:p   n/p: links · Enter: follow · /: find · arrows: scroll · Esc: quit "
                                               name (hv-nlinks doc))))
                          (echo (format nil " external link: ~a   (a real browser would navigate here) " name))))))
-          (setf (hv-on-link doc) (lambda (href) (show href)))   ; SHOW renders a known page or echoes an external href
+          (setf (hv-on-link doc) (lambda (href) (show href))   ; SHOW renders a known page or echoes an external href
+                (hv-on-status doc) #'echo)
           (show page)
           (setf *root* win
                 (container-focus win) doc
