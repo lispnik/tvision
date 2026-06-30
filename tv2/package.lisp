@@ -35,5 +35,6 @@ event layers are new.")
    #:outline #:outline-roots #:outline-focused
    #:window #:window-title #:button #:button-label #:button-command #:static-text
    #:input-line #:input-text #:input-caret #:input-on-change
+   #:list-box #:list-items #:list-selected #:list-on-activate
    ;; demo
    #:run))

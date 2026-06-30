@@ -131,6 +131,55 @@
                        (setf (handled-p e) t))
       (t (call-next-method)))))               ; Enter/Tab/Esc bubble (submit, focus, quit)
 
+;;; --- list-box: a scrollable, selectable flat list --------------------------
+;;; Like INPUT-LINE it dispatches keys directly (no keymap); SELECTED/TOP are
+;;; reactive, and Enter calls an ON-ACTIVATE closure with the chosen item.
+
+(defclass list-box (view)
+  ((items       :initarg :items :initform '() :accessor list-items)
+   (selected    :initform 0 :accessor list-selected)
+   (top         :initform 0 :accessor list-top)            ; first visible row
+   (on-activate :initarg :on-activate :initform nil :accessor list-on-activate))
+  (:metaclass reactive-class))
+
+(defmethod focusable-p ((lb list-box)) t)
+
+(defun list-scroll-fix (lb)
+  (let ((b (view-bounds lb)))
+    (when b
+      (let ((h (r-h b)) (sel (list-selected lb)) (top (list-top lb)))
+        (cond ((< sel top) (setf (list-top lb) sel))
+              ((>= sel (+ top h)) (setf (list-top lb) (1+ (- sel h)))))))))
+
+(defun list-move (lb delta)
+  (let ((n (length (list-items lb))))
+    (when (plusp n)
+      (setf (list-selected lb) (min (1- n) (max 0 (+ (list-selected lb) delta))))
+      (list-scroll-fix lb))))
+
+(defmethod draw ((lb list-box))
+  (let* ((b (view-bounds lb)) (h (tvision::rect-height b)) (w (tvision::rect-width b))
+         (active (view-focused-p lb)) (items (list-items lb)) (top (list-top lb)))
+    (dotimes (row h)
+      (let* ((i (+ top row))
+             (sel (and (= i (list-selected lb)) active))
+             (attr (if sel (role :focused) (role :normal))))
+        (fill-row lb 0 row w attr)
+        (when (< i (length items))
+          (draw-text lb 1 row (nth i items) attr))))))
+
+(defmethod handle-event ((lb list-box) (e key-event))
+  (let ((ks (event-keysym e)) (n (length (list-items lb))))
+    (cond
+      ((eql ks :up)    (list-move lb -1) (setf (handled-p e) t))
+      ((eql ks :down)  (list-move lb 1)  (setf (handled-p e) t))
+      ((eql ks :home)  (setf (list-selected lb) 0) (list-scroll-fix lb) (setf (handled-p e) t))
+      ((eql ks :end)   (setf (list-selected lb) (max 0 (1- n))) (list-scroll-fix lb) (setf (handled-p e) t))
+      ((eql ks :enter) (when (and (list-on-activate lb) (< (list-selected lb) n))
+                         (funcall (list-on-activate lb) lb (nth (list-selected lb) (list-items lb))))
+                       (setf (handled-p e) t))
+      (t (call-next-method)))))
+
 ;;; --- a command that reaches across the window to the outline ----------------
 
 (define-command collapse-all (v e)

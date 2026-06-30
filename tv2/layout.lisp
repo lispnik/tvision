@@ -70,7 +70,7 @@
                        (error "tv2 ui: ~(~a~) child must be (SIZE FORM), got ~s" (car form) entry))
                   collect `(add-laid c ,(expand-ui (second entry)) ,(first entry)))
           c))
-      ((outline button static-text input-line)
+      ((outline button static-text input-line list-box)
        `(make-instance ',(car form) ,@(cdr form)))
       (t (error "tv2 ui: unknown widget/form ~s" (car form))))))
 
@@ -99,7 +99,19 @@ and a background thread driving the clock through the worker->UI bridge."
                             (9     (static-text :role :label :text " Filter: "))
                             (:fill (input-line :name 'find :on-change #'%echo-filter))
                             (16    (static-text :name 'clock :role :status :text " bg: starting "))))
-                       (:fill (outline :name 'tree :roots (demo-roots) :keymap *outline-keys*))
+                       (:fill (row
+                                (:fill (outline :name 'tree :roots (demo-roots) :keymap *outline-keys*))
+                                (28 (stack
+                                      (1 (static-text :role :label :text " Recent: "))
+                                      (:fill (list-box :name 'recent
+                                               :items '("editor.lisp" "buffer.lisp" "modeline.lisp"
+                                                        "syntax.lisp" "theme.lisp" "keymap.lisp" "repl.lisp")
+                                               :on-activate (lambda (lb item)
+                                                              (declare (ignore lb))
+                                                              (let ((echo (find-view *root* 'echo)))
+                                                                (when echo
+                                                                  (setf (static-text-text echo)
+                                                                        (format nil " opened ~a " item)))))))))))
                        (1 (row
                             (18    (button :label "Go to line…" :command 'go-to-line))
                             (16    (button :label "Collapse all" :command 'collapse-all))
