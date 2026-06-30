@@ -97,7 +97,8 @@ scrolls the view under the pointer.  The desktop is a real window manager:
 **movable / resizable / overlapping windows** (drag the title to move, the ◢ grip
 to resize, `[✕]` to close; the Window menu tiles/cascades).  Scrollable windows
 draw a **scrollbar** on the right frame edge (click the arrows/track or drag the
-thumb).  Still deferred relative to the classic `tvision` system: menu
-hotkeys/accelerators, cluster controls (checkbox/radio) and the standard
-file/help/color dialogs, regex search/replace, and the editor's per-language
-indenters.
+thumb).  The bottom **status bar** shows clickable, context-sensitive chips —
+window actions plus the focused widget's own `status-hints`.  Still deferred
+relative to the classic `tvision` system: menu hotkeys/accelerators, cluster
+controls (checkbox/radio) and the standard file/help/color dialogs, regex
+search/replace, and the editor's per-language indenters.

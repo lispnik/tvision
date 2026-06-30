@@ -15,13 +15,28 @@
 ;;; --- status bar -------------------------------------------------------------
 
 (defclass status-bar (view)
-  ((text :initarg :text :initform "" :accessor sb-text))
+  ((provider :initarg :provider :initform nil :accessor stb-provider)  ; thunk -> ((LABEL . THUNK) ...)
+   (ranges   :initform '() :accessor stb-ranges))                      ; ((X0 X1 . THUNK) ...) for hit-testing
   (:metaclass reactive-class))
 
 (defmethod draw ((b status-bar))
-  (let ((attr (role :status)) (w (r-w (view-bounds b))))
+  (let* ((attr (role :status)) (w (r-w (view-bounds b)))
+         (items (and (stb-provider b) (funcall (stb-provider b)))) (x 0))
     (fill-row b 0 0 w attr)
-    (draw-text b 0 0 (sb-text b) attr)))
+    (setf (stb-ranges b) '())
+    (dolist (it items)
+      (let* ((label (format nil " ~a " (car it))) (n (length label)))
+        (when (< (+ x n) w)
+          (draw-text b x 0 label attr)
+          (push (list x (+ x n) (cdr it)) (stb-ranges b))
+          (incf x n)
+          (when (< (1+ x) w) (draw-text b x 0 "│" attr) (incf x 1)))))))
+
+(defmethod handle-event ((b status-bar) (e mouse-down))
+  (let ((col (mouse-col b e)))
+    (dolist (r (stb-ranges b))
+      (when (and (>= col (first r)) (< col (second r))) (funcall (third r)) (return))))
+  (setf (handled-p e) t))
 
 ;;; --- menu bar (pull-down menus) ---------------------------------------------
 
@@ -230,8 +245,23 @@
     (cond
       ((dt-drag dt) (dt-drag-update dt e))                 ; in a move/resize drag
       ((menu-hit-p mb x y) (handle-event mb e))
+      ((and (typep e 'mouse-down) (= y (tvision::rect-ay (view-bounds (dt-statusbar dt)))))
+       (handle-event (dt-statusbar dt) e))                 ; status-bar chips
       (t (let ((win (dt-window-at dt x y)))
            (when win (dt-window-click dt win e)))))))
+
+(defun dt-status-items (dt)
+  "The status-line chips for the current state: window actions when one is open,
+plus the focused widget's own STATUS-HINTS, plus the always-on globals."
+  (let* ((mb (dt-menubar dt)) (top (dt-top dt))
+         (chips (list (cons "≡ Windows" (lambda () (setf (menu-active mb) 0 (menu-sel mb) 0) (invalidate dt)))
+                      (cons "Tile"      (lambda () (dt-tile dt)))
+                      (cons "Cascade"   (lambda () (dt-cascade dt)))
+                      (cons "Exit"      (lambda () (setf *app-done* t))))))
+    (when top
+      (setf chips (append (list (cons "Close" (lambda () (dt-close-window dt top)))) chips
+                          (status-hints (container-focus top)))))
+    chips))
 
 ;;; --- entry point ------------------------------------------------------------
 
@@ -259,8 +289,7 @@ grip, click [✕] to close; Window menu tiles/cascades).  Returns on File→Exit
   (tvision:with-screen (s)
     (let ((dt (make-instance 'desktop)))
       (setf (dt-menubar dt)   (make-instance 'menu-bar :menus (%desktop-menus dt))
-            (dt-statusbar dt)  (make-instance 'status-bar
-                                 :text " click menus/rows/links · drag title to move · drag ◢ to resize · [✕] closes · Window: tile/cascade · File→Exit "))
+            (dt-statusbar dt)  (make-instance 'status-bar :provider (lambda () (dt-status-items dt))))
       (layout dt (rect 0 0 (tvision:screen-width s) (tvision:screen-height s)))
       (setf *root* dt *ui-thread* sb-thread:*current-thread* *app-done* nil *dirty* t)
       (loop until *app-done* do

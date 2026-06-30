@@ -235,6 +235,10 @@
 (defgeneric scroll-page (v) (:documentation "Number of visible rows."))
 (defgeneric scroll-to   (v pos) (:documentation "Set the offset (clamped) and repaint."))
 
+;;; Context-sensitive status-bar chips: a focused view may offer (LABEL . THUNK)
+;;; actions the desktop appends to the status line.  Default: none.
+(defgeneric status-hints (view) (:method (v) (declare (ignore v)) nil))
+
 (defun draw-vscroll (x y0 y1 pos max)
   "Draw a vertical scrollbar in column X with arrows at rows Y0 (▲) and Y1 (▼)
 and a thumb positioned by POS/MAX over the track between them."

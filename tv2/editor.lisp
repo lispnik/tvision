@@ -396,6 +396,12 @@ selection / an empty selection."
                     (te-selected-string te) (te-wrap te)))
       (invalidate st))))
 
+(defmethod status-hints ((te text-edit))   ; chips the desktop shows while the editor is focused
+  (list (cons "Undo" (lambda () (te-undo! te)))
+        (cons "Redo" (lambda () (te-redo! te)))
+        (cons (if (te-wrap te) "Wrap:on" "Wrap:off")
+              (lambda () (setf (te-wrap te) (not (te-wrap te)) (te-left te) 0) (te-ensure-visible te) (invalidate te)))))
+
 (defclass editor-window (window) () (:metaclass reactive-class))
 (defmethod draw :before ((w editor-window)) (%editor-status w))   ; keep the status line live each repaint
 
