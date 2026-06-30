@@ -11,13 +11,14 @@
 
 ;;; --- a table-view window (reused by the profiler) ---------------------------
 
-(defun make-table-window (title columns rows &key (help :browser))
+(defun make-table-window (title columns rows &key (help :browser) on-activate)
   "A window over a TABLE-VIEW.  COLUMNS = list of (TITLE WIDTH ACCESSOR); ROWS =
-row objects.  Return (values WINDOW FOCUS)."
+row objects.  ON-ACTIVATE (tv row) fires on Enter/double-click.  Return (values
+WINDOW FOCUS)."
   (let* ((win  (make-instance 'window :title title :keymap *global-keys*))
          (body (ui (stack
-                     (:fill (table-view :name 'tbl :columns columns :rows rows))
-                     (1 (static-text :role :status :text " ↑/↓ · PgUp/PgDn select · Esc: close "))))))
+                     (:fill (table-view :name 'tbl :columns columns :rows rows :on-activate on-activate))
+                     (1 (static-text :role :status :text " ↑/↓ · PgUp/PgDn select · Enter: open · Esc: close "))))))
     (add-subview win body)
     (setf (window-scroll-target win) (find-view win 'tbl) (window-help win) help)
     (values win (find-view win 'tbl))))

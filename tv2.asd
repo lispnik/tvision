@@ -44,4 +44,5 @@
                              (:file "inspect")
                              (:file "tools")
                              (:file "paredit")
+                             (:file "nav")
                              (:file "app")))))
