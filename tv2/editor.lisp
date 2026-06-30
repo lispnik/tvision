@@ -241,6 +241,41 @@ move the cursor to its end.  Return T on a hit."
     (or (te-find te (te-last-find te) :from-line (te-cy te) :from-col (te-cx te))
         (te-find te (te-last-find te) :from-line 0 :from-col 0))))   ; wrap to top
 
+(defun te-find-regex (te pattern &key (from-line (te-cy te)) (from-col 0))
+  "Find the next match of regex PATTERN (per line) from the cursor; select it."
+  (let ((items (ignore-errors (%rx-parse pattern))))
+    (when items
+      (loop for li from from-line below (te-nlines te)
+            do (multiple-value-bind (ms me) (%rx-search-line items (te-line te li) (if (= li from-line) from-col 0))
+                 (when ms
+                   (setf (te-cy te) li (te-cx te) me (te-anchor te) (cons li ms))
+                   (te-ensure-visible te) (return-from te-find-regex t)))))
+    nil))
+
+(defun te-replace-all (te find repl &key regex)
+  "Replace every occurrence of FIND with REPL across the buffer (plain substring,
+or a regex per line when REGEX).  Return the number of replacements."
+  (if (zerop (length find)) 0
+      (let ((count 0) (items (and regex (ignore-errors (%rx-parse find)))))
+        (when (or (not regex) items)
+          (te-save-undo te)
+          (dotimes (li (te-nlines te))
+            (let ((line (te-line te li)) (out (make-string-output-stream)) (pos 0))
+              (loop while (<= pos (length line)) do
+                (multiple-value-bind (ms me)
+                    (if regex
+                        (%rx-search-line items line pos)
+                        (let ((p (search find line :start2 (min pos (length line)) :test #'char-equal)))
+                          (when p (values p (+ p (length find))))))
+                  (cond
+                    ((null ms) (write-string (subseq line pos) out) (setf pos (1+ (length line))))
+                    ((> me ms) (write-string (subseq line pos ms) out) (write-string repl out)
+                               (incf count) (setf pos me))
+                    (t (write-string (subseq line pos (min (1+ ms) (length line))) out) (setf pos (1+ ms))))))
+              (setf (te-line te li) (get-output-stream-string out))))
+          (when (plusp count) (setf (te-modified te) t) (setf (te-anchor te) nil) (te-clamp te) (invalidate te)))
+        count)))
+
 (defun te-backspace (te)
   (cond ((te-sel-ordered te) (te-save-undo te) (te-delete-selection te))
         ((plusp (te-cx te))
@@ -452,9 +487,29 @@ move the cursor to its end.  Return T on a hit."
     (let ((r (exec-view d :width 52 :height 6)))
       (unless (eq r :cancel) (te-find te r :from-line (te-cy te) :from-col (te-cx te))))))
 
+(defun %editor-replace (te)
+  "Modal find/replace prompt (with a regex option); replace-all on OK."
+  (let ((d (ui (dialog (:title " Replace " :keymap *dialog-keys*
+                        :value-fn (lambda (d) (list (input-text (find-view d 'f))
+                                                    (input-text (find-view d 'r))
+                                                    (and (member 0 (cluster-value (find-view d 'rx))) t))))
+                 (stack
+                   (1 (row (10 (static-text :role :label :text " Find: "))    (:fill (input-line :name 'f :history-id :find))))
+                   (1 (row (10 (static-text :role :label :text " Replace: ")) (:fill (input-line :name 'r))))
+                   (1 (cluster :name 'rx :mode :check :items (list "regex (^ $ . * + ? \\d \\w [..])") :value '()))
+                   (1 (static-text :name 'msg :role :status :text " Enter: replace all · Esc: cancel "))
+                   (1 (row (:fill (static-text :text ""))
+                           (11 (button :label "Replace" :command 'accept))
+                           (12 (button :label "Cancel"  :command 'cancel)))))))))
+    (let ((r (exec-view d :width 58 :height 10)))
+      (unless (eq r :cancel)
+        (destructuring-bind (find repl regex) r
+          (te-replace-all te find repl :regex regex))))))
+
 (defmethod status-hints ((te text-edit))   ; chips the desktop shows while the editor is focused
   (list (cons "Find" (lambda () (%editor-find te)))
         (cons "Next" (lambda () (te-find-next te)))
+        (cons "Replace" (lambda () (%editor-replace te)))
         (cons "Undo" (lambda () (te-undo! te)))
         (cons "Redo" (lambda () (te-redo! te)))
         (cons (if (te-wrap te) "Wrap:on" "Wrap:off")

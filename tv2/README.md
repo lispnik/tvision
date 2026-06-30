@@ -104,12 +104,12 @@ window).  Standard **dialogs** are there too: a file picker and change-dir (File
 menu) and a live colour customiser that edits `*theme*` with instant preview.
 **F1** (or the Help menu) opens context-sensitive help for the focused window,
 rendered with the HTML view and cross-linked between topics.  The editor also has
-incremental **find** (Find/Next chips), **auto-indent**, and **mouse drag-select**.
+incremental **find**, **replace-all with optional regex** (Find/Next/Replace chips),
+**auto-indent**, and **mouse drag-select**.
 The menu bar has **Alt-hotkeys** (the highlighted letter), global **accelerators**
 (e.g. `^O` Open, `^Q` Exit, `^R` REPL), and dimmed disabled items.  A **table
 viewer** (columns + fixed header + scrollbar; see the Package-table window) is
 available, and input fields support **validators** (filter / range / picture; see
 File → Validators…) and **Up/Down history** recall.  The type-to-filter inputs
 (browser, project) rank results with **fzf-style fuzzy matching**.  Still deferred
-relative to the classic `tvision` system: nested submenus and regex search &
-replace.
+relative to the classic `tvision` system: nested submenus.
