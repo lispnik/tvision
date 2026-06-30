@@ -463,8 +463,13 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
 
 ;;; --- entry point ------------------------------------------------------------
 
+(defvar *extra-menus* nil
+  "Functions (DT) -> a menu spec, appended to the menu bar by later modules
+(e.g. inspect.lisp's Inspect menu).  Most-recently-pushed appears last.")
+
 (defun %desktop-menus (dt)
   (flet ((any-win () (lambda () (dt-top dt))))            ; ENABLED predicate: a window is open
+    (append
     (list (list "Windows"
                 (list "Lisp REPL"        (lambda () (dt-open dt :repl)) (ctrl #\r))
                 (list "Text editor"      (lambda () (dt-open dt :editor)))
@@ -500,7 +505,8 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                       (list "Project manager" (lambda () (dt-open dt (lambda () (make-help :project)))))
                       (list "Browsers"        (lambda () (dt-open dt (lambda () (make-help :browser)))))
                       (list "HTML browser"    (lambda () (dt-open dt (lambda () (make-help :html)))))
-                      (list "Thread monitor"  (lambda () (dt-open dt (lambda () (make-help :threads))))))))))
+                      (list "Thread monitor"  (lambda () (dt-open dt (lambda () (make-help :threads)))))))) ; end menu list
+    (mapcar (lambda (f) (funcall f dt)) (reverse *extra-menus*)))))   ; modules' extra menus
 
 (defun ensure-repl ()
   "The desktop's REPL window, opening one if none is present.  Returns it."
