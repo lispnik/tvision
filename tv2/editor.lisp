@@ -28,6 +28,7 @@
    (colorizer :initform nil :initarg :colorizer :accessor te-colorizer)   ; (line in-string) -> (values attrs end)
    (indenter  :initform nil :initarg :indenter  :accessor te-indenter)    ; (te) -> indent column for a new line
    (auto-close :initform nil :accessor te-auto-close)                     ; auto-insert closing )/]/"
+   (overwrite  :initform nil :accessor te-overwrite)                      ; overwrite (OVR) vs insert (INS) mode
    (line-numbers :initform nil :accessor te-line-numbers)                 ; show a line-number gutter (flat mode)
    (last-find :initform "" :accessor te-last-find))                       ; remembered search query
   (:metaclass reactive-class))
@@ -203,6 +204,11 @@ selection / an empty selection."
 close and sits between them; a close typed in front of the matching close steps
 over it."
   (cond
+    ((and (te-overwrite te) (< (te-cx te) (length (te-cur te))) (not (te-sel-ordered te)))
+     (te-save-undo te)                                    ; overwrite: replace the char under the cursor
+     (let ((l (te-cur te)) (c (te-cx te)))
+       (setf (te-line te (te-cy te)) (concatenate 'string (subseq l 0 c) (string ch) (subseq l (1+ c)))
+             (te-cx te) (1+ c))))
     ((not (te-auto-close te)) (te-insert-char te ch))
     ((and (member ch '(#\) #\] #\"))                      ; step over an existing close
           (< (te-cx te) (length (te-cur te)))
@@ -419,6 +425,7 @@ or a regex per line when REGEX).  Return the number of replacements."
                (<= top (te-cy te) (1- (+ top h))) (<= left (te-cx te) (1- (+ left w))))
       (tvision:set-cursor-pos tvision:*screen*
                               (+ ax gw (- (te-cx te) left)) (+ ay (- (te-cy te) top)))
+      (tvision:set-cursor-shape (if (te-overwrite te) :block :underline))   ; block cursor in overwrite mode
       (tvision:show-cursor tvision:*screen*))))
 
 (defun te-draw-wrap (te)
@@ -502,6 +509,7 @@ or a regex per line when REGEX).  Return the number of replacements."
         ((eql ks :enter) (te-newline te) (te-ensure-visible te) (done))
         ((eql ks :back)  (te-backspace te) (te-ensure-visible te) (done))
         ((eql ks :del)   (te-delete te) (te-ensure-visible te) (done))
+        ((eql ks :ins)   (setf (te-overwrite te) (not (te-overwrite te))) (invalidate te) (done))
         ;; movement
         ((eql ks :left)  (te-move te e (lambda ()
                                          (if (plusp (te-cx te)) (decf (te-cx te))
@@ -577,9 +585,10 @@ sole candidate, or pop up a chooser when there are several."
   (let ((te (find-view win 'edit)) (st (find-view win 'status)))
     (when (and te st)
       (setf (static-text-text st)
-            (format nil " ~a~:[~;*~]   L~d:C~d~:[~; (sel)~]~:[~; WRAP~]   C-s save · C-z/y undo · C-c/x/v · C-w wrap · Esc quit "
+            (format nil " ~a~:[~;*~]   L~d:C~d   ~a~:[~; sel~]~:[~; wrap~]   C-s save · Ins: OVR/INS · Esc quit "
                     (if (te-filename te) (file-namestring (te-filename te)) "scratch")
                     (te-modified te) (1+ (te-cy te)) (1+ (te-cx te))
+                    (if (te-overwrite te) "OVR" "INS")
                     (te-selected-string te) (te-wrap te)))
       (invalidate st))))
 

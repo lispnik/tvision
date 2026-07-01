@@ -165,7 +165,7 @@
         (cons tvision:+kb-pgup+ :pgup) (cons tvision:+kb-pgdn+ :pgdn)
         (cons tvision:+kb-tab+ :tab)   (cons tvision:+kb-shift-tab+ :shift-tab)
         (cons tvision::+kb-back+ :back) (cons tvision::+kb-del+ :del)
-        (cons tvision::+kb-f1+ :f1)))
+        (cons tvision::+kb-ins+ :ins) (cons tvision::+kb-f1+ :f1) (cons tvision::+kb-f5+ :f5)))
 
 (defun translate (tev)
   "Translate a tvision event struct into a tv2 event object, or NIL to ignore."
