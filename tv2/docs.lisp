@@ -70,13 +70,28 @@
 
 (defun do-manual (name url) (%browse-url (format nil " ~a " name) url))
 
-;;; --- a Docs menu ------------------------------------------------------------
+;;; --- the consolidated Browse menu (introspection + inspector + docs) --------
+;;; Loaded last of the tool modules, so it can reference inspect.lisp's and
+;;; nav.lisp's commands as well as its own.
 
 (push (lambda (dt)
-        (declare (ignore dt))
-        (list "Docs"
-              (list "Documentation…"   (lambda () (do-documentation)))
+        (list "Browse"
+              (list "Class browser"     (lambda () (dt-open dt :classes)))
+              (list "Function browser"  (lambda () (dt-open dt :functions)))
+              (list "Method browser…"   (lambda () (do-method-browser)))       ; nav.lisp
+              :--
+              (list "Describe…"         (lambda () (do-describe)))             ; inspect.lisp
+              (list "Documentation…"    (lambda () (do-documentation)))
               (list "Disassemble…"      (lambda () (do-disassemble)))
+              (list "Macroexpand…"      (lambda () (do-macroexpand)))          ; inspect.lisp
+              (list "Apropos…"          (lambda () (do-apropos)))              ; inspect.lisp
+              :--
+              (list "Inspect…"          (lambda () (do-inspect)))             ; inspect.lisp
+              (list "Object *" :submenu                                        ; inspect.lisp
+                    (list "Clip last value"  (lambda () (do-clip-last-value)))
+                    (list "Inspect *"        (lambda () (do-inspect-clipped)))
+                    (list "Insert * as text" (lambda () (do-insert-clipped))))
+              :--
               (list "HyperSpec lookup…" (lambda () (do-hyperspec)))
               (list "Manuals" :submenu
                     (list "SBCL manual" (lambda () (do-manual "SBCL manual" (cdr (assoc "SBCL manual" *manuals* :test #'string=)))))

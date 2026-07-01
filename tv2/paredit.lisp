@@ -30,17 +30,4 @@
   (let ((w (and *desktop* (dt-top *desktop*))))
     (when (typep w 'editor-window) (find-view w 'edit))))
 
-(push (lambda (dt)
-        (declare (ignore dt))
-        (flet ((pe (op) (lambda () (%editor-paredit (%focused-editor) op))))
-          (list "Lisp"
-                (list "Slurp forward →"   (pe :slurp))
-                (list "Barf forward ←"    (pe :barf))
-                (list "Slurp backward ←"  (pe :slurp-back))
-                (list "Barf backward →"   (pe :barf-back))
-                (list "Splice"            (pe :splice))
-                (list "Wrap in ( )"       (pe :wrap))
-                (list "Raise"             (pe :raise))
-                (list "Transpose"         (pe :transpose))
-                (list "Kill sexp"         (pe :kill)))))
-      *extra-menus*)
+;;; The structural ops are surfaced as the Edit -> Structure submenu (editing.lisp).

@@ -120,9 +120,9 @@
 
 (push (lambda (dt)
         (declare (ignore dt))
-        (list "Navigate"
+        (list "Search"
               (list "Go to definition…" (lambda () (do-goto-definition)))
-              (list "Method browser…"   (lambda () (do-method-browser)))
+              :--
               (list "Who calls…"        (lambda () (do-xref :calls "calls")))
               (list "Who references…"   (lambda () (do-xref :references "references")))
               (list "Who binds…"        (lambda () (do-xref :binds "binds")))

@@ -78,11 +78,24 @@
 
 (push (lambda (dt)
         (declare (ignore dt))
-        (flet ((cur () (%focused-editor)))
-          (list "Code"
+        (flet ((cur () (%focused-editor))
+               (pe (op) (lambda () (%editor-paredit (%focused-editor) op))))
+          (list "Edit"
                 (list "Comment region"      (lambda () (%comment-region (cur))))
-                (list "Insert snippet…"     (lambda () (%insert-snippet (cur))))
                 (list "Pretty-print region" (lambda () (%pretty-print-selection (cur))))
+                (list "Insert snippet…"     (lambda () (%insert-snippet (cur))))
+                :--
+                (list "Structure" :submenu                 ; paredit (from paredit.lisp)
+                      (list "Slurp forward →"   (pe :slurp))
+                      (list "Barf forward ←"    (pe :barf))
+                      (list "Slurp backward ←"  (pe :slurp-back))
+                      (list "Barf backward →"   (pe :barf-back))
+                      (list "Splice"            (pe :splice))
+                      (list "Wrap in ( )"       (pe :wrap))
+                      (list "Raise"             (pe :raise))
+                      (list "Transpose"         (pe :transpose))
+                      (list "Kill sexp"         (pe :kill)))
+                :--
                 (list "Auto-close parens"   (lambda () (let ((te (cur)))
                                                          (when te (setf (te-auto-close te) (not (te-auto-close te)))
                                                                (invalidate te)))))

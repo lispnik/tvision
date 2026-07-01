@@ -304,16 +304,5 @@ view for Back)."
               (list (cons :classes   #'make-class-browser)
                     (cons :functions #'make-function-browser))))
 
-(push (lambda (dt)
-        (list "Inspect"
-              (list "Class browser"    (lambda () (dt-open dt :classes)))
-              (list "Function browser" (lambda () (dt-open dt :functions)))
-              (list "Apropos…"         (lambda () (do-apropos)))
-              (list "Describe…"        (lambda () (do-describe)))
-              (list "Macroexpand…"     (lambda () (do-macroexpand)))
-              (list "Inspect…"         (lambda () (do-inspect)))
-              (list "Object *" :submenu
-                    (list "Clip last value"  (lambda () (do-clip-last-value)))
-                    (list "Inspect *"        (lambda () (do-inspect-clipped)))
-                    (list "Insert * as text" (lambda () (do-insert-clipped))))))
-      *extra-menus*)
+;;; The introspection commands are surfaced in the consolidated Browse menu
+;;; (built in docs.lisp, which loads after this file and nav.lisp).

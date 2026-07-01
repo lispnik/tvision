@@ -53,9 +53,10 @@ warnings/notes into the REPL."
 
 (push (lambda (dt)
         (declare (ignore dt))
-        (list "Eval"
+        (list "Run"
               (list "Eval / compile defun" (lambda () (do-eval-defun)))
               (list "Load buffer"          (lambda () (do-load-buffer)))
               (list "Compile buffer"       (lambda () (do-compile-buffer)))
+              :--
               (list "Interrupt eval"       (lambda () (do-interrupt-eval)))))
       *extra-menus*)

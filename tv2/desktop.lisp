@@ -52,12 +52,32 @@
   (:metaclass reactive-class))
 
 (defun ctrl (ch) (code-char (logand (char-code (char-upcase ch)) #x1f)))   ; (ctrl #\o) -> ^O keysym
-(defun item-label    (it) (first it))
+(defun item-separator-p (it) (eq it :--))                                   ; :-- is a horizontal rule
+(defun item-label    (it) (if (item-separator-p it) "" (first it)))
 (defun item-submenu-p (it) (and (consp it) (eq (second it) :submenu)))      ; (LABEL :submenu item...)
-(defun item-thunk    (it) (unless (item-submenu-p it) (second it)))
-(defun item-accel    (it) (unless (item-submenu-p it) (third it)))          ; submenu parents have no accel
-(defun item-enabled  (it) (let ((f (and (not (item-submenu-p it)) (fourth it)))) (or (null f) (funcall f))))
+(defun item-thunk    (it) (and (consp it) (not (item-submenu-p it)) (second it)))
+(defun item-accel    (it) (and (consp it) (not (item-submenu-p it)) (third it)))  ; submenu parents have no accel
+(defun item-enabled  (it) (and (not (item-separator-p it))
+                               (let ((f (and (consp it) (not (item-submenu-p it)) (fourth it))))
+                                 (or (null f) (funcall f)))))
 (defun item-submenu   (it) (cddr it))
+
+(defun %menu-step (items sel dir)
+  "Next selectable (non-separator) index from SEL in direction DIR, wrapping."
+  (let ((n (length items)))
+    (if (zerop n) 0
+        (loop for i from 1 to n
+              for k = (mod (+ sel (* dir i)) n)
+              unless (item-separator-p (nth k items)) return k
+              finally (return sel)))))
+
+(defparameter *menu-order*
+  '("≡" "File" "Edit" "Search" "Run" "Debug" "Browse" "Window" "Options" "Help")
+  "Left-to-right order of the menu bar; menus not listed fall to the right.")
+
+(defun %order-menus (menus)
+  (stable-sort (copy-list menus) #'<
+               :key (lambda (m) (or (position (car m) *menu-order* :test #'string=) most-positive-fixnum))))
 (defun menu-items   (mb) (cdr (nth (menu-active mb) (menu-menus mb))))
 (defun menu-hotkey  (m)  (and (plusp (length (car m))) (char-downcase (char (car m) 0))))
 
@@ -87,13 +107,15 @@
                      (let ((mww (menu-dropdown-width items)))
                        (%drop-shadow items-x items-y (+ items-x mww -1) (+ items-y (length items) -1))
                        (loop for it in items for r from 0 do
-                       (let* ((on (eql r sel)) (en (item-enabled it))
-                              (ia (cond ((and on en) (role :menu-selected)) (en (role :menu)) (t (role :menu-disabled)))))
-                         (loop for k below mww do (%put-cell (+ items-x k) (+ items-y r) #\Space ia))
-                         (%text-at (+ items-x 1) (+ items-y r) (item-label it) ia)
-                         (cond ((item-submenu-p it) (%put-cell (+ items-x mww -2) (+ items-y r) #\▶ ia))
-                               ((item-accel it) (let ((a (accel-label (item-accel it))))
-                                                  (%text-at (+ items-x mww -1 (- (length a))) (+ items-y r) a ia)))))))))
+                       (if (item-separator-p it)
+                           (loop for k below mww do (%put-cell (+ items-x k) (+ items-y r) #\─ (role :menu-disabled)))
+                           (let* ((on (eql r sel)) (en (item-enabled it))
+                                  (ia (cond ((and on en) (role :menu-selected)) (en (role :menu)) (t (role :menu-disabled)))))
+                             (loop for k below mww do (%put-cell (+ items-x k) (+ items-y r) #\Space ia))
+                             (%text-at (+ items-x 1) (+ items-y r) (item-label it) ia)
+                             (cond ((item-submenu-p it) (%put-cell (+ items-x mww -2) (+ items-y r) #\▶ ia))
+                                   ((item-accel it) (let ((a (accel-label (item-accel it))))
+                                                      (%text-at (+ items-x mww -1 (- (length a))) (+ items-y r) a ia))))))))))
               (draw-items items dx dy (menu-sel mb))
               (when (menu-sub mb)                                      ; second-level dropdown
                 (let ((parent (nth (menu-sel mb) items)))
@@ -114,8 +136,8 @@
       (if (menu-sub mb)                                            ; navigating an open submenu
           (let ((subs (item-submenu (nth (menu-sel mb) items))))
             (cond
-              ((eql ks :up)   (setf (menu-sub mb) (mod (1- (menu-sub mb)) (length subs))) (invalidate mb) (setf (handled-p e) t))
-              ((eql ks :down) (setf (menu-sub mb) (mod (1+ (menu-sub mb)) (length subs))) (invalidate mb) (setf (handled-p e) t))
+              ((eql ks :up)   (setf (menu-sub mb) (%menu-step subs (menu-sub mb) -1)) (invalidate mb) (setf (handled-p e) t))
+              ((eql ks :down) (setf (menu-sub mb) (%menu-step subs (menu-sub mb) 1)) (invalidate mb) (setf (handled-p e) t))
               ((member ks '(:left :esc)) (setf (menu-sub mb) nil) (invalidate mb) (setf (handled-p e) t))
               ((eql ks :enter) (let ((it (nth (menu-sub mb) subs)))
                                  (when (and it (item-enabled it) (item-thunk it)) (funcall (item-thunk it))))
@@ -126,8 +148,8 @@
                                (if (item-submenu-p it) (setf (menu-sub mb) 0)
                                    (setf (menu-active mb) (mod (1+ (menu-active mb)) n) (menu-sel mb) 0)))
                              (invalidate mb) (setf (handled-p e) t))
-            ((eql ks :up)    (setf (menu-sel mb) (mod (1- (menu-sel mb)) (length items)) (menu-sub mb) nil) (invalidate mb) (setf (handled-p e) t))
-            ((eql ks :down)  (setf (menu-sel mb) (mod (1+ (menu-sel mb)) (length items)) (menu-sub mb) nil) (invalidate mb) (setf (handled-p e) t))
+            ((eql ks :up)    (setf (menu-sel mb) (%menu-step items (menu-sel mb) -1) (menu-sub mb) nil) (invalidate mb) (setf (handled-p e) t))
+            ((eql ks :down)  (setf (menu-sel mb) (%menu-step items (menu-sel mb) 1) (menu-sub mb) nil) (invalidate mb) (setf (handled-p e) t))
             ((eql ks :enter) (menu-invoke-sel mb) (setf (handled-p e) t)))))))
 
 (defun menu-hotkey-index (mb ch)
@@ -484,46 +506,68 @@ editor buffer text."
   "Functions (DT) -> a menu spec, appended to the menu bar by later modules
 (e.g. inspect.lisp's Inspect menu).  Most-recently-pushed appears last.")
 
+(defun %about-dialog ()
+  "The classic ≡ system-menu About box."
+  (let ((d (ui (dialog (:title " About " :keymap *dialog-keys* :value-fn (constantly t))
+                 (stack
+                   (1 (static-text :role :label :text "    tvlisp — a Common Lisp IDE"))
+                   (1 (static-text :role :label :text "    on the tv2 CLOS kernel"))
+                   (1 (static-text :text ""))
+                   (1 (static-text :text "    a Turbo Vision-style TUI, ported to SBCL"))
+                   (:fill (static-text :text ""))
+                   (1 (row (:fill (static-text :text "")) (8 (button :label "OK" :command 'accept))
+                           (:fill (static-text :text "")))))))))
+    (exec-view d :width 46 :height 10)))
+
 (defun %desktop-menus (dt)
   (flet ((any-win () (lambda () (dt-top dt))))            ; ENABLED predicate: a window is open
-    (append
-    (list (list "Windows"
-                (list "Lisp REPL"        (lambda () (dt-open dt :repl)) (ctrl #\r))
-                (list "Text editor"      (lambda () (dt-open dt :editor)))
-                (list "Project manager"  (lambda () (dt-open dt :project)))
-                (list "Package browser"  (lambda () (dt-open dt :packages)))
-                (list "ASDF systems"     (lambda () (dt-open dt :systems)))
-                (list "Thread monitor"   (lambda () (dt-open dt :threads)))
-                (list "HTML browser"     (lambda () (dt-open dt :html)))
-                (list "Package table"    (lambda () (dt-open dt :ptable)))
-                (list "Options"          (lambda () (dt-open dt :options))))
-          (list "Arrange"                                  ; window management (dimmed with no windows)
-                (list "Next"             (lambda () (dt-next dt) (dt-refocus dt)) nil (any-win))
-                (list "Tile"             (lambda () (dt-tile dt) (dt-refocus dt)) nil (any-win))
-                (list "Cascade"          (lambda () (dt-cascade dt) (dt-refocus dt)) nil (any-win))
-                (list "Close"            (lambda () (let ((top (dt-top dt))) (when top (dt-close-window dt top)))) nil (any-win)))
-          (list "File"
-                (list "Open file…"   (lambda () (let ((p (make-file-dialog :dir *project-dir* :title " Open file ")))
-                                                  (when p (dt-open dt (lambda () (make-editor p)))))) (ctrl #\o))
-                (list "Change dir…"  (lambda () (let ((p (make-file-dialog :dir *project-dir* :dirs-only t :title " Change dir ")))
-                                                  (when p (setf *project-dir* (uiop:ensure-directory-pathname p))))))
-                (list "Colours…"     (lambda () (make-color-dialog)))
-                (list "Validators…" (lambda () (%validators-dialog)))
-                (list "Save layout"  (lambda () (dt-save-layout dt)))
-                (list "Restore layout" (lambda () (mapc (lambda (w) (dt-close-window dt w)) (copy-list (dt-windows dt)))
-                                         (dt-load-layout dt)) nil (lambda () t))
-                (list "Exit"         (lambda () (setf *app-done* t)) (ctrl #\q)))
-          (list "Help"
-                (list "Contents"     (lambda () (dt-open dt (lambda () (make-help :general)))))
-                (list "This window"  (lambda () (dt-help dt)) :f1)
-                (list "Topics" :submenu                       ; a nested submenu
-                      (list "Lisp REPL"       (lambda () (dt-open dt (lambda () (make-help :repl)))))
-                      (list "Text editor"     (lambda () (dt-open dt (lambda () (make-help :editor)))))
-                      (list "Project manager" (lambda () (dt-open dt (lambda () (make-help :project)))))
-                      (list "Browsers"        (lambda () (dt-open dt (lambda () (make-help :browser)))))
-                      (list "HTML browser"    (lambda () (dt-open dt (lambda () (make-help :html)))))
-                      (list "Thread monitor"  (lambda () (dt-open dt (lambda () (make-help :threads)))))))) ; end menu list
-    (mapcar (lambda (f) (funcall f dt)) (reverse *extra-menus*)))))   ; modules' extra menus
+    (%order-menus
+     (append
+      (list
+       (list "≡"
+             (list "About…"    (lambda () (%about-dialog))))
+       (list "File"
+             (list "Open file…"     (lambda () (let ((p (make-file-dialog :dir *project-dir* :title " Open file ")))
+                                                 (when p (dt-open dt (lambda () (make-editor p)))))) (ctrl #\o))
+             (list "Change dir…"    (lambda () (let ((p (make-file-dialog :dir *project-dir* :dirs-only t :title " Change dir ")))
+                                                 (when p (setf *project-dir* (uiop:ensure-directory-pathname p))))))
+             :--
+             (list "Save layout"    (lambda () (dt-save-layout dt)))
+             (list "Restore layout" (lambda () (mapc (lambda (w) (dt-close-window dt w)) (copy-list (dt-windows dt)))
+                                      (dt-load-layout dt)) nil (lambda () t))
+             :--
+             (list "Exit"           (lambda () (setf *app-done* t)) (ctrl #\q)))
+       (list "Window"                                     ; open tool windows + window management
+             (list "Lisp REPL"       (lambda () (dt-open dt :repl)) (ctrl #\r))
+             (list "Text editor"     (lambda () (dt-open dt :editor)))
+             (list "Project manager" (lambda () (dt-open dt :project)))
+             (list "Package browser" (lambda () (dt-open dt :packages)))
+             (list "ASDF systems"    (lambda () (dt-open dt :systems)))
+             (list "Thread monitor"  (lambda () (dt-open dt :threads)))
+             (list "HTML browser"    (lambda () (dt-open dt :html)))
+             (list "Package table"   (lambda () (dt-open dt :ptable)))
+             :--
+             (list "Next"            (lambda () (dt-next dt) (dt-refocus dt)) nil (any-win))
+             (list "Tile"            (lambda () (dt-tile dt) (dt-refocus dt)) nil (any-win))
+             (list "Cascade"         (lambda () (dt-cascade dt) (dt-refocus dt)) nil (any-win))
+             (list "Close"           (lambda () (let ((top (dt-top dt))) (when top (dt-close-window dt top)))) nil (any-win)))
+       (list "Options"
+             (list "Settings…"       (lambda () (dt-open dt :options)))
+             (list "Colours…"        (lambda () (make-color-dialog)))
+             (list "Validators…"     (lambda () (%validators-dialog))))
+       (list "Help"
+             (list "Contents"        (lambda () (dt-open dt (lambda () (make-help :general)))))
+             (list "This window"     (lambda () (dt-help dt)) :f1)
+             (list "Topics" :submenu
+                   (list "Lisp REPL"       (lambda () (dt-open dt (lambda () (make-help :repl)))))
+                   (list "Text editor"     (lambda () (dt-open dt (lambda () (make-help :editor)))))
+                   (list "Project manager" (lambda () (dt-open dt (lambda () (make-help :project)))))
+                   (list "Browsers"        (lambda () (dt-open dt (lambda () (make-help :browser)))))
+                   (list "HTML browser"    (lambda () (dt-open dt (lambda () (make-help :html)))))
+                   (list "Thread monitor"  (lambda () (dt-open dt (lambda () (make-help :threads))))))
+             :--
+             (list "About…"          (lambda () (%about-dialog)))))
+      (mapcar (lambda (f) (funcall f dt)) (reverse *extra-menus*))))))   ; modules' Edit/Search/Run/Debug/Browse menus
 
 (defun ensure-repl ()
   "The desktop's REPL window, opening one if none is present.  Returns it."

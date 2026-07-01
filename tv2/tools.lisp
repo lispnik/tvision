@@ -163,12 +163,14 @@ tv2's debugger (Step-next / Step-into / Step-out / Continue restarts)."
 
 (push (lambda (dt)
         (declare (ignore dt))
-        (list "Tools"
+        (list "Debug"
               (list "Trace (toggle)…"  (lambda () (do-trace)))
               (list "Break on entry…"  (lambda () (do-break-on-entry)))
               (list "Untrace all"      (lambda () (do-untrace-all)))
               (list "Traced functions" (lambda () (do-traced-list)))
+              :--
+              (list "Step…"                  (lambda () (do-step)))
+              :--
               (list "Profile…"               (lambda () (do-profile)))
-              (list "Deterministic profile…" (lambda () (do-profile-deterministic)))
-              (list "Step…"                  (lambda () (do-step)))))
+              (list "Deterministic profile…" (lambda () (do-profile-deterministic)))))
       *extra-menus*)
