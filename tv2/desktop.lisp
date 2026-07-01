@@ -102,25 +102,38 @@
         (%text-at (+ ax x) ay (format nil " ~a " label) attr)
         (%put-cell (+ ax x 1) ay (char label 0) (if open attr hot))   ; highlight the hotkey letter
         (when open
-          (let* ((items (cdr menu)) (dx (+ ax x)) (dy (1+ ay)) (mw (menu-dropdown-width items)))
-            (flet ((draw-items (items items-x items-y sel)
-                     (let ((mww (menu-dropdown-width items)))
-                       (%drop-shadow items-x items-y (+ items-x mww -1) (+ items-y (length items) -1))
-                       (loop for it in items for r from 0 do
-                       (if (item-separator-p it)
-                           (loop for k below mww do (%put-cell (+ items-x k) (+ items-y r) #\─ (role :menu-disabled)))
-                           (let* ((on (eql r sel)) (en (item-enabled it))
-                                  (ia (cond ((and on en) (role :menu-selected)) (en (role :menu)) (t (role :menu-disabled)))))
-                             (loop for k below mww do (%put-cell (+ items-x k) (+ items-y r) #\Space ia))
-                             (%text-at (+ items-x 1) (+ items-y r) (item-label it) ia)
-                             (cond ((item-submenu-p it) (%put-cell (+ items-x mww -2) (+ items-y r) #\▶ ia))
-                                   ((item-accel it) (let ((a (accel-label (item-accel it))))
-                                                      (%text-at (+ items-x mww -1 (- (length a))) (+ items-y r) a ia))))))))))
-              (draw-items items dx dy (menu-sel mb))
-              (when (menu-sub mb)                                      ; second-level dropdown
+          (let* ((items (cdr menu)) (x0 (+ ax x)) (box-top (1+ ay)) (mw (menu-dropdown-width items))
+                 (nb (role :menu)))                                    ; frame colour (same as the menu body)
+            (flet ((draw-items (items bx bt sel)
+                     ;; a bordered dropdown box: ┌─┐ top, │ … │ items, ├─┤ separators,
+                     ;; └─┘ bottom -- like the original Turbo Vision (items inset 1 cell).
+                     (let ((mww (menu-dropdown-width items)) (n (length items)))
+                       (%drop-shadow bx bt (+ bx mww -1) (+ bt n 1))
+                       (%put-cell bx bt #\┌ nb)                        ; top border
+                       (loop for k from 1 below (1- mww) do (%put-cell (+ bx k) bt #\─ nb))
+                       (%put-cell (+ bx mww -1) bt #\┐ nb)
+                       (loop for it in items for r from 0 for ry = (+ bt 1 r) do
+                         (%put-cell bx ry #\│ nb) (%put-cell (+ bx mww -1) ry #\│ nb)   ; side borders
+                         (if (item-separator-p it)
+                             (progn (%put-cell bx ry #\├ nb)           ; tee-connected divider
+                                    (loop for k from 1 below (1- mww) do (%put-cell (+ bx k) ry #\─ nb))
+                                    (%put-cell (+ bx mww -1) ry #\┤ nb))
+                             (let* ((on (eql r sel)) (en (item-enabled it))
+                                    (ia (cond ((and on en) (role :menu-selected)) (en (role :menu)) (t (role :menu-disabled)))))
+                               (loop for k from 1 below (1- mww) do (%put-cell (+ bx k) ry #\Space ia))
+                               (%text-at (+ bx 2) ry (item-label it) ia)
+                               (cond ((item-submenu-p it) (%put-cell (+ bx mww -3) ry #\▶ ia))
+                                     ((item-accel it) (let ((a (accel-label (item-accel it))))
+                                                        (%text-at (+ bx mww -2 (- (length a))) ry a ia)))))))
+                       (let ((by (+ bt n 1)))                          ; bottom border
+                         (%put-cell bx by #\└ nb)
+                         (loop for k from 1 below (1- mww) do (%put-cell (+ bx k) by #\─ nb))
+                         (%put-cell (+ bx mww -1) by #\┘ nb)))))
+              (draw-items items x0 box-top (menu-sel mb))
+              (when (menu-sub mb)                                      ; second-level dropdown (overlaps the parent's right border)
                 (let ((parent (nth (menu-sel mb) items)))
                   (when (item-submenu-p parent)
-                    (draw-items (item-submenu parent) (+ dx mw) (+ dy (menu-sel mb)) (menu-sub mb))))))))
+                    (draw-items (item-submenu parent) (+ x0 mw -1) (+ box-top 1 (menu-sel mb)) (menu-sub mb))))))))
         (incf x (+ 2 (length label)))))))
 
 (defun %menu-run (mb thunk)
@@ -176,28 +189,29 @@
     (values (menu-title-x mb (menu-active mb)) (menu-dropdown-width (menu-items mb)))))
 
 (defun menu-sub-cols (mb)
-  "(values SX SY0 COUNT WIDTH) of the open submenu dropdown, or NIL."
+  "(values SX SY0 COUNT WIDTH) of the open submenu dropdown, or NIL.  SY0 is the
+box's top-border row; its items occupy rows SY0+1 .. SY0+COUNT."
   (when (and (menu-active mb) (menu-sub mb))
     (let ((parent (nth (menu-sel mb) (menu-items mb))))
       (when (item-submenu-p parent)
         (multiple-value-bind (x0 mw) (menu-dropdown-cols mb)
-          (values (+ x0 mw) (1+ (menu-sel mb)) (length (item-submenu parent))
+          (values (+ x0 mw -1) (+ 2 (menu-sel mb)) (length (item-submenu parent))
                   (menu-dropdown-width (item-submenu parent))))))))
 
 (defun menu-hit-p (mb x y)
   (or (zerop y)
-      (and (menu-active mb) (plusp y) (<= y (length (menu-items mb)))
+      (and (menu-active mb) (>= y 1) (<= y (+ 2 (length (menu-items mb))))    ; main box incl. borders
            (multiple-value-bind (x0 mw) (menu-dropdown-cols mb)
              (and x0 (>= x x0) (< x (+ x0 mw)))))
-      (multiple-value-bind (sx sy0 cnt smw) (menu-sub-cols mb)   ; open submenu region
-        (and sx (>= x sx) (< x (+ sx smw)) (>= y sy0) (< y (+ sy0 cnt))))))
+      (multiple-value-bind (sx sy0 cnt smw) (menu-sub-cols mb)   ; open submenu box incl. borders
+        (and sx (>= x sx) (< x (+ sx smw)) (>= y sy0) (<= y (+ sy0 cnt 1))))))
 
 (defmethod handle-event ((mb menu-bar) (e mouse-down))
   (let ((col (mouse-col mb e)) (row (mouse-row mb e)))
     (multiple-value-bind (sx sy0 cnt smw) (menu-sub-cols mb)
       (cond
-        ((and sx (>= col sx) (< col (+ sx smw)) (>= row sy0) (< row (+ sy0 cnt)))   ; submenu item
-         (let* ((idx (- row sy0)) (subs (item-submenu (nth (menu-sel mb) (menu-items mb)))) (it (nth idx subs)))
+        ((and sx (>= col sx) (< col (+ sx smw)) (> row sy0) (<= row (+ sy0 cnt)))   ; submenu item (row sy0 is the border)
+         (let* ((idx (- row sy0 1)) (subs (item-submenu (nth (menu-sel mb) (menu-items mb)))) (it (nth idx subs)))
            (setf (menu-sub mb) idx) (invalidate mb)
            (%menu-run mb (and it (item-enabled it) (item-thunk it)))))
         ((zerop row)                                  ; clicked a title -> open that menu
@@ -208,7 +222,7 @@
                  (setf (menu-active mb) i (menu-sel mb) 0 (menu-sub mb) nil) (invalidate mb) (return))
                (incf x tw)))))
         ((menu-active mb)                             ; clicked a dropdown item -> invoke / open submenu
-         (let ((idx (1- row)) (items (menu-items mb)))
+         (let ((idx (- row 2)) (items (menu-items mb)))   ; row 1 is the top border; item 0 is at row 2
            (when (and (>= idx 0) (< idx (length items)))
              (setf (menu-sel mb) idx (menu-sub mb) nil) (invalidate mb) (menu-invoke-sel mb))))))
     (setf (handled-p e) t)))
