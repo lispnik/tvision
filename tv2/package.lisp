@@ -16,7 +16,7 @@ event layers are new.")
    #:event-keysym #:event-modifiers #:event-where #:event-delta #:handled-p
    #:handle-event
    ;; keymaps
-   #:keymap #:keymap-parent #:bind-key #:keymap-lookup #:defkeymap
+   #:keymap #:keymap-parent #:bind-key #:keymap-lookup #:defkeymap #:*global-keys*
    ;; commands
    #:command #:command-name #:command-enabled-p #:register-command
    #:define-command #:perform
@@ -51,5 +51,5 @@ event layers are new.")
    #:run-repl #:repl-window #:repl-package #:*repl-eval-fn* #:repl-hist-vars #:repl-busy #:repl-submit-string #:repl-last-value #:repl-last-value-p
    #:run-editor #:*editor-eval-fn* #:*editor-completions-fn* #:*paren-matcher*
    #:html-view #:set-html #:run-html #:make-doc-browser #:*url-fetch-fn* #:*hyperspec-url-fn*
-   #:run-app #:run-menu #:*app-windows* #:*desktop* #:ensure-repl
+   #:run-view #:run-app #:run-menu #:*app-windows* #:*desktop* #:ensure-repl
    #:run-desktop #:desktop #:menu-bar #:status-bar))
