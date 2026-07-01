@@ -31,7 +31,10 @@
    (overwrite  :initform nil :accessor te-overwrite)                      ; overwrite (OVR) vs insert (INS) mode
    (line-numbers :initform nil :accessor te-line-numbers)                 ; show a line-number gutter (flat mode)
    (notes     :initform nil :accessor te-notes)                           ; alist (LINE . SEVERITY) of compiler notes
-   (last-find :initform "" :accessor te-last-find))                       ; remembered search query
+   (last-find :initform "" :accessor te-last-find)                        ; remembered search query
+   (isearch     :initform nil :accessor te-isearch)                       ; live incremental-search query, or NIL when off
+   (isearch-org :initform nil :accessor te-isearch-org)                   ; (cy . cx) to restore on cancel
+   (isearch-fail :initform nil :accessor te-isearch-fail))                ; T when the current query has no match
   (:metaclass reactive-class))
 
 (defparameter *note-markers*
@@ -305,6 +308,51 @@ move the cursor to its end.  Return T on a hit."
     (or (te-find te (te-last-find te) :from-line (te-cy te) :from-col (te-cx te))
         (te-find te (te-last-find te) :from-line 0 :from-col 0))))   ; wrap to top
 
+;;; --- incremental search (an editor mode; keystrokes refine the match) -------
+
+(defun te-isearch-start (te)
+  "Enter incremental-search mode: keystrokes extend the query and move the match
+live; Ctrl-S finds the next; Enter accepts; Esc restores the original position."
+  (setf (te-isearch te) "" (te-isearch-org te) (cons (te-cy te) (te-cx te))
+        (te-isearch-fail te) nil)
+  (invalidate te))
+
+(defun %te-isearch-run (te)
+  "Re-search for the current query from the origin (called after each edit)."
+  (let ((q (te-isearch te)) (org (te-isearch-org te)))
+    (if (zerop (length q))
+        (setf (te-cy te) (car org) (te-cx te) (cdr org) (te-anchor te) nil (te-isearch-fail te) nil)
+        (setf (te-isearch-fail te) (not (te-find te q :from-line (car org) :from-col (cdr org)))))
+    (te-ensure-visible te) (invalidate te)))
+
+(defun %te-isearch-next (te)
+  "Ctrl-S: jump to the next occurrence after the current match (wrapping)."
+  (let ((q (te-isearch te)))
+    (when (plusp (length q))
+      (setf (te-isearch-fail te)
+            (not (or (te-find te q :from-line (te-cy te) :from-col (te-cx te))
+                     (te-find te q :from-line 0 :from-col 0))))
+      (te-ensure-visible te) (invalidate te))))
+
+(defun te-isearch-key (te ks)
+  "Handle one keystroke in incremental-search mode.  Return :CONSUMED when it was
+an isearch action, NIL to leave the mode and let the key act normally."
+  (cond
+    ((eql ks :esc)                                       ; cancel — restore where search began
+     (let ((org (te-isearch-org te)))
+       (setf (te-cy te) (car org) (te-cx te) (cdr org) (te-anchor te) nil (te-isearch te) nil))
+     (te-ensure-visible te) (invalidate te) :consumed)
+    ((eql ks :enter) (setf (te-isearch te) nil) (invalidate te) :consumed)  ; accept, keep position
+    ((eql ks :back)
+     (let ((q (te-isearch te)))
+       (when (plusp (length q)) (setf (te-isearch te) (subseq q 0 (1- (length q))))))
+     (%te-isearch-run te) :consumed)
+    ((and (characterp ks) (= (char-code ks) 19)) (%te-isearch-next te) :consumed)  ; Ctrl-S
+    ((and (characterp ks) (graphic-char-p ks))
+     (setf (te-isearch te) (concatenate 'string (te-isearch te) (string ks)))
+     (%te-isearch-run te) :consumed)
+    (t nil)))                                            ; any other key ends isearch
+
 (defun te-find-regex (te pattern &key (from-line (te-cy te)) (from-col 0))
   "Find the next match of regex PATTERN (per line) from the cursor; select it."
   (let ((items (ignore-errors (%rx-parse pattern))))
@@ -501,6 +549,12 @@ or a regex per line when REGEX).  Return the number of replacements."
 
 (defmethod handle-event ((te text-edit) (e key-event))
   (let* ((ks (event-keysym e)) (cc (and (characterp ks) (char-code ks))))
+    ;; incremental search intercepts keys until it accepts/cancels or a
+    ;; non-isearch key ends the mode (that key then falls through to act normally)
+    (when (te-isearch te)
+      (if (eq (te-isearch-key te ks) :consumed)
+          (progn (setf (handled-p e) t) (return-from handle-event))
+          (progn (setf (te-isearch te) nil) (invalidate te))))
     (macrolet ((done () '(setf (handled-p e) t)))
       (cond
         ;; control chords (arrive as characters with code 1..26)
@@ -598,11 +652,14 @@ sole candidate, or pop up a chooser when there are several."
   (let ((te (find-view win 'edit)) (st (find-view win 'status)))
     (when (and te st)
       (setf (static-text-text st)
+            (if (te-isearch te)
+                (format nil " I-search~:[~;-fail~]: ~a▉   Ctrl-S: next · Enter: accept · Esc: cancel "
+                        (te-isearch-fail te) (te-isearch te))
             (format nil " ~a~:[~;*~]   L~d:C~d   ~a~:[~; sel~]~:[~; wrap~]   C-s save · Ins: OVR/INS · Esc quit "
                     (if (te-filename te) (file-namestring (te-filename te)) "scratch")
                     (te-modified te) (1+ (te-cy te)) (1+ (te-cx te))
                     (if (te-overwrite te) "OVR" "INS")
-                    (te-selected-string te) (te-wrap te)))
+                    (te-selected-string te) (te-wrap te))))
       (invalidate st))))
 
 (defun %editor-find (te)

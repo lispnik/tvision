@@ -74,6 +74,20 @@
                                      (when more (terpri o) (terpri o)))))))
                 (te-insert te pp) (te-ensure-visible te) (invalidate te))))))))
 
+;;; --- go to line -------------------------------------------------------------
+
+(defun %editor-goto-line (te)
+  "Prompt for a line number and move the cursor there (selecting the line)."
+  (when te
+    (let ((s (prompt-string " Go to line " (format nil "Line (1-~d):" (te-nlines te)))))
+      (when (and s (plusp (length (string-trim " " s))))
+        (let ((n (ignore-errors (parse-integer (string-trim " " s)))))
+          (when n
+            (let ((li (max 0 (min (1- (te-nlines te)) (1- n)))))
+              (setf (te-cy te) li (te-cx te) 0
+                    (te-anchor te) (cons li 0))              ; select the line, for a visible flash
+              (te-clamp te) (te-ensure-visible te) (invalidate te))))))))
+
 ;;; --- an Edit menu -----------------------------------------------------------
 
 (push (lambda (dt)
@@ -84,6 +98,9 @@
                 (list "Comment region"      (lambda () (%comment-region (cur))))
                 (list "Pretty-print region" (lambda () (%pretty-print-selection (cur))))
                 (list "Insert snippet…"     (lambda () (%insert-snippet (cur))))
+                :--
+                (list "Incremental search"  (lambda () (let ((te (cur))) (when te (te-isearch-start te)))))
+                (list "Go to line…"         (lambda () (%editor-goto-line (cur))))
                 :--
                 (list "Structure" :submenu                 ; paredit (from paredit.lisp)
                       (list "Slurp forward →"   (pe :slurp))

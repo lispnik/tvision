@@ -198,10 +198,38 @@ by the editor's eval-defun / eval-region (programmatic submit)."
       (let ((pos (1- cur)))
         (if (minusp pos) (%repl-recall v "" nil) (%repl-recall v (nth pos h) pos))))))
 
+(defun %repl-history-search (v)
+  "Reverse-i-search: a modal, live-filtered picker over the REPL history; Enter
+recalls the chosen line into the input."
+  (let* ((win (view-root v)) (hist (repl-history win)))
+    (if (null hist)
+        (input-notify v)                                ; nothing to search yet
+        (let ((d (ui (dialog (:title " History search "
+                              :keymap *dialog-keys*
+                              :value-fn (lambda (d) (let ((lb (find-view d 'lb)))
+                                                      (nth (list-selected lb) (list-items lb)))))
+                       (stack
+                         (1 (row (9 (static-text :role :label :text " Search: "))
+                                 (:fill (input-line :name 'q
+                                          :on-change (lambda (il)
+                                                       (let ((lb (find-view (view-root il) 'lb)))
+                                                         (setf (list-items lb) (fuzzy-filter (input-text il) hist)
+                                                               (list-selected lb) 0 (list-top lb) 0)
+                                                         (invalidate lb)))))))
+                         (:fill (list-box :name 'lb :items hist
+                                  :on-activate (lambda (lb item) (declare (ignore item)) (perform 'accept lb nil))))
+                         (1 (static-text :role :status
+                              :text " type to filter · ↑/↓ select · Enter: recall · Esc: cancel ")))))))
+          (let ((r (exec-view d :width 66 :height 16)))
+            (when (and (not (eq r :cancel)) (stringp r)) (%repl-recall v r nil)))))))
+
+(define-command repl-hist-search (v e) (%repl-history-search v))
+
 (defkeymap *repl-input-keys* (*global-keys*)            ; Esc/q (when blank) still quit via the parent
   (:enter repl-enter)
   (:up    repl-hist-prev)
-  (:down  repl-hist-next))
+  (:down  repl-hist-next)
+  ((code-char 18) repl-hist-search))                    ; Ctrl-R: reverse-i-search over history
 
 ;;; --- entry point ------------------------------------------------------------
 
