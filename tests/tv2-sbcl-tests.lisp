@@ -68,5 +68,26 @@
          (string= (%thread-backtrace th) "(thread is dead)")))
 
 ;;; ===========================================================================
+;;; 3. sb-di frame-local debugger (%capture-backtrace reads frame locals)
+;;; ===========================================================================
+(format t "~%## sb-di frame locals~%")
+(declaim (optimize (debug 3)))
+(defun bt-probe (aardvark)
+  (let ((zebra (* aardvark 2)))
+    (declare (ignorable zebra))
+    (%capture-backtrace :count 20)))          ; frames of the live stack, with locals
+(multiple-value-bind (frames lives) (bt-probe 21)
+  (check "backtrace captured frames" (and (consp frames) (plusp (length frames))))
+  (check "frames align with live sb-di frames" (= (length frames) (length lives)))
+  (check "the probe frame is present" (some (lambda (f) (search "BT-PROBE" (string-upcase (getf f :label)))) frames))
+  (let ((probe (find-if (lambda (f) (search "BT-PROBE" (string-upcase (getf f :label)))) frames)))
+    (check "its locals include aardvark = 21"
+           (and probe (assoc "aardvark" (getf probe :locals) :test #'string=)
+                (string= "21" (second (assoc "aardvark" (getf probe :locals) :test #'string=)))))
+    (check "locals are (name value-string) pairs"
+           (and probe (every (lambda (l) (and (stringp (first l)) (stringp (second l))))
+                             (getf probe :locals))))))
+
+;;; ===========================================================================
 (format t "~%~d passed, ~d failed~%" *pass* *fail*)
 (sb-ext:exit :code (if (zerop *fail*) 0 1))

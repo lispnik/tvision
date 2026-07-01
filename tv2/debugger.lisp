@@ -4,8 +4,11 @@
 ;;;; condition + restarts + a live backtrace, and invokes the chosen restart back
 ;;;; on the worker -- whose stack is still live because it stays blocked waiting
 ;;;; for the choice (the SLIME cross-thread debugger model).  This port keeps
-;;;; that protocol and renders it as a tv2 modal dialog.  (Deferred from the full
-;;;; engine: per-frame locals, return-from-frame / restart-frame ops.)
+;;;; that protocol and renders it as a tv2 modal dialog: the condition, the
+;;;; restarts, a live backtrace whose selected frame shows its LOCAL VARIABLES
+;;;; (via sb-di), and return-from-frame (via sb-debug:unwind-to-frame-and-call).
+;;;; Reading another frame's locals and forcing its return is an SBCL capability
+;;;; other Lisps don't expose.
 
 (in-package #:tv2)
 
@@ -38,25 +41,36 @@ sb-di internals are hard-referenced at build time)."
              (ns  (and ds (fboundp dsns) (funcall dsns ds))))
         (and ns (file-namestring ns))))))
 
+(defun %internal-frame-p (name)
+  "True for the debugger's own / signalling frames -- skipped from the top of the
+backtrace so it starts at the real error site (princ drops the package, so this
+matches SB-KERNEL::ERROR, TV2::%REPL-DEBUG, etc.)."
+  (let ((s (string-upcase (princ-to-string name))))
+    (or (search "%CAPTURE-BACKTRACE" s) (search "%REPL-DEBUG" s) (search "%DEBUGGER" s)
+        (search "%SIGNAL" s) (string= s "SIGNAL") (string= s "ERROR") (string= s "%ERROR")
+        (search "INVOKE-DEBUGGER" s) (search "INVOKE-DEBUG" s))))
+
 (defun %capture-backtrace (&key (count 40))
   "Walk the live stack ONCE.  Return (values FRAMES LIVES): FRAMES is a list of
 plists (:label :source :locals) -- plain data safe to show on the UI thread --
 and LIVES is the index-aligned list of live SB-DI:FRAME objects, valid only while
-the erroring thread stays blocked (so frame ops can act on them)."
-  (let ((frames '()) (lives '()))
+the erroring thread stays blocked (so frame ops can act on them).  Leading
+debugger/signalling frames are skipped so the top frame is the actual error site."
+  (let ((frames '()) (lives '()) (skipping t) (i 0))
     (ignore-errors
-     (let ((i 0))
-       (do ((f (sb-di:top-frame) (sb-di:frame-down f)))
-           ((or (null f) (>= i count)))
-         (let* ((df (sb-di:frame-debug-fun f))
-                (name (handler-case (sb-di:debug-fun-name df) (error () "?")))
-                (loc (handler-case (sb-di:frame-code-location f) (error () nil))))
+     (do ((f (sb-di:top-frame) (sb-di:frame-down f)))
+         ((or (null f) (>= i count)))
+       (let* ((df (sb-di:frame-debug-fun f))
+              (name (handler-case (sb-di:debug-fun-name df) (error () "?")))
+              (loc (handler-case (sb-di:frame-code-location f) (error () nil))))
+         (when (and skipping (not (%internal-frame-p name))) (setf skipping nil))
+         (unless skipping
            (push (list :label (format nil "~2d  ~a" i (%ellipsize (princ-to-string name) 58))
                        :source (%frame-source f)
                        :locals (%frame-locals f df loc))
                  frames)
-           (push f lives))
-         (incf i))))
+           (push f lives)
+           (incf i)))))
     (values (nreverse frames) (nreverse lives))))
 
 (defun %frame-return (lives index form-string package)
