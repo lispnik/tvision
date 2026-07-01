@@ -216,8 +216,8 @@
         :input-focused   (tvision:make-attr 15 3)    ; white on cyan
         :error           (tvision:make-attr 15 4)    ; white on red
         :desktop         (tvision:make-attr 8 1)     ; dim ░ pattern on blue (the desktop)
-        :scrollbar       (tvision:make-attr 7 1)     ; scrollbar track
-        :scrollbar-thumb (tvision:make-attr 15 1))   ; arrows + thumb
+        :scrollbar       (tvision:make-attr 0 3)     ; scrollbar track + arrows + corners: black on cyan (classic TV)
+        :scrollbar-thumb (tvision:make-attr 14 3))   ; the position indicator █: yellow on cyan
   "Role -> packed attribute.")
 
 ;;; The classic "grey dialog" palette, bound over *THEME* while a dialog and its
@@ -299,8 +299,8 @@ along the bottom, offset one cell past the (X0,Y0)-(X1,Y1) box."
 and a thumb positioned by POS/MAX over the track between them."
   (let ((bar (role :scrollbar)) (thumb (role :scrollbar-thumb)))
     (when (> y1 y0)
-      (%put-cell x y0 #\▲ thumb)
-      (%put-cell x y1 #\▼ thumb)
+      (%put-cell x y0 #\▲ bar)                        ; arrows share the track colour (classic TV)
+      (%put-cell x y1 #\▼ bar)
       (let ((track (- y1 y0 1)))                       ; inner rows y0+1 .. y1-1
         (loop for r from 1 below (- y1 y0) do (%put-cell x (+ y0 r) #\▒ bar))
         (when (and (plusp max) (plusp track))
@@ -311,8 +311,8 @@ and a thumb positioned by POS/MAX over the track between them."
 and a thumb positioned by POS/MAX over the track between them."
   (let ((bar (role :scrollbar)) (thumb (role :scrollbar-thumb)))
     (when (> x1 x0)
-      (%put-cell x0 y #\◄ thumb)
-      (%put-cell x1 y #\► thumb)
+      (%put-cell x0 y #\◄ bar)                        ; arrows share the track colour (classic TV)
+      (%put-cell x1 y #\► bar)
       (let ((track (- x1 x0 1)))                       ; inner cols x0+1 .. x1-1
         (loop for c from 1 below (- x1 x0) do (%put-cell (+ x0 c) y #\▒ bar))
         (when (and (plusp max) (plusp track))

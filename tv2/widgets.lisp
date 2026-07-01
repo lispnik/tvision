@@ -31,16 +31,22 @@
               y0 (window-title w) frame)
     (dolist (sv (subviews w)) (draw sv))               ; children paint over the interior
     (when (window-scroll-target w)                     ; scrollbars on the right + bottom frame edges
-      (let ((tgt (window-scroll-target w)))
+      (let ((tgt (window-scroll-target w)) (sb (role :scrollbar)) (hscroll nil))
         (draw-vscroll x1 (1+ y0) (1- y1) (scroll-pos tgt) (scroll-max tgt))
         (when (plusp (scroll-hmax tgt))
-          (draw-hscroll y1 (1+ x0) (1- x1) (scroll-hpos tgt) (scroll-hmax tgt)))))
+          (setf hscroll t)
+          (draw-hscroll y1 (1+ x0) (1- x1) (scroll-hpos tgt) (scroll-hmax tgt)))
+        ;; classic TV: the scrollbar owns its end cells, drawn as box elbows in
+        ;; the bar colour (not a resize grip) -- ┐ top-right, ┘ bottom-right,
+        ;; └ bottom-left where the horizontal bar meets the frame
+        (%put-cell x1 y0 #\┐ sb)
+        (%put-cell x1 y1 #\┘ sb)
+        (when hscroll (%put-cell x0 y1 #\└ sb))))
     (when (window-managed w)                            ; desktop affordances
       (%text-at (+ x0 1) y0 "[×]" frame)                ; close box
       (when (> (- x1 x0) 7) (%text-at (- x1 4) y0 (if (window-zoomed w) "[↓]" "[↑]") frame))  ; zoom box
       (when (and (window-number w) (<= 1 (window-number w) 9))    ; z-order number (Alt-N)
-        (%put-cell (- x1 3) y1 (code-char (+ (char-code #\0) (window-number w))) frame))
-      (%put-cell x1 y1 #\◢ frame))))                    ; resize grip
+        (%put-cell (- x1 3) y1 (code-char (+ (char-code #\0) (window-number w))) frame)))))
 
 ;;; --- button: focusable, fires a command on Enter/Space ----------------------
 

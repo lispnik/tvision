@@ -625,8 +625,9 @@ editor buffer text."
 
 (defun run-desktop ()
   "Run the tv2 IDE: a Turbo-Vision-style desktop with a menu bar, a status bar,
-and movable / resizable / overlapping windows (drag the title bar, drag the ◢
-grip, click [✕] to close; Window menu tiles/cascades).  Returns on File→Exit."
+and movable / resizable / overlapping windows (drag the title bar, drag the
+bottom-right corner to resize, click [✕] to close; Window menu tiles/cascades).
+Returns on File→Exit."
   (tvision:with-screen (s)
     (let ((dt (make-instance 'desktop)))
       (setf (dt-menubar dt)   (make-instance 'menu-bar :menus (%desktop-menus dt))
