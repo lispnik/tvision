@@ -31,7 +31,7 @@
 (defmethod scroll-to   ((v text-edit) pos) (setf (te-top v) (max 0 (min pos (scroll-max v)))) (invalidate v))
 
 ;;; text-edit scrolls horizontally too (long lines) -- but not in soft-wrap mode.
-(defun %te-maxwidth (v) (loop for i below (te-nlines v) maximize (length (te-line v i))))
+(defun %te-maxwidth (v) (loop for i below (te-nlines v) maximize (%vwidth (te-line v i))))  ; display columns
 (defmethod scroll-hpage ((v text-edit)) (max 1 (- (if (view-bounds v) (r-w (view-bounds v)) 1) (te-gutter-width v))))
 (defmethod scroll-hpos  ((v text-edit)) (te-left v))
 (defmethod scroll-hmax  ((v text-edit)) (if (te-wrap v) 0 (max 0 (- (%te-maxwidth v) (scroll-hpage v)))))

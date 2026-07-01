@@ -23,13 +23,19 @@ endef
 FRAMEWORK := tvision.asd $(wildcard src/*.lisp)
 
 .DEFAULT_GOAL := all
-.PHONY: all clean test test-lisp help
+.PHONY: all clean test test-lisp test-tv2 help
 
 # Build check: compile and load the framework.
 all: $(FRAMEWORK)
 	$(call asdf-load,(asdf:load-system :tvision))
 
-test: test-lisp
+test: test-lisp test-tv2
+
+# Headless tests for the tv2 CLOS kernel: SBCL-specific IDE features and the
+# editor's display-width (wide CJK / emoji) layout.
+test-tv2: tv2.asd $(wildcard tv2/*.lisp) tests/tv2-sbcl-tests.lisp tests/tv2-editor-tests.lisp
+	$(SBCL) --script tests/tv2-sbcl-tests.lisp
+	$(SBCL) --script tests/tv2-editor-tests.lisp
 
 # Run the headless control test suite (exit non-zero on any failure).
 test-lisp: $(FRAMEWORK) tests/tvision-tests.lisp
@@ -42,4 +48,4 @@ clean:
 	rm -rf $(HOME)/.cache/common-lisp/*tvision* 2>/dev/null || true
 
 help:
-	@echo "Targets: all (default), test, test-lisp, clean"
+	@echo "Targets: all (default), test, test-lisp, test-tv2, clean"

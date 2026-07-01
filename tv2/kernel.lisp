@@ -139,6 +139,12 @@
     (tvision:screen-cell-set tvision:*screen* x y
                              (tvision::cell-make-code (char-code char) attr))))
 
+(defun %put-code (x y code attr)
+  "Like %PUT-CELL but writes a raw character CODE (e.g. tvision::+wide-cont+, the
+sentinel marking the second cell of a double-width glyph)."
+  (when tvision:*screen*
+    (tvision:screen-cell-set tvision:*screen* x y (tvision::cell-make-code code attr))))
+
 (defun draw-text (view col row string attr)
   "Write STRING at view-local (COL,ROW), clipped to VIEW's width."
   (let* ((b (view-bounds view))

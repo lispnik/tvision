@@ -88,49 +88,81 @@
         ((te-notes te) 2)                                        ; a marker column + a space
         (t 0)))
 (defun te-vw (te) (max 1 (r-w (view-bounds te))))
-(defun %segs (len w) (max 1 (1+ (floor (max 0 len) w))))
+
+;;; --- display width (wide CJK / emoji occupy two columns) --------------------
+;;; The cursor is a CODE-POINT index (TE-CX); its on-screen position, the wrap
+;;; break points and the horizontal scroll are all DISPLAY columns.  Reuse
+;;; tvision's East-Asian width machinery (src/draw-buffer.lisp) so wide glyphs
+;;; line up instead of shoving the rest of the line one column right per glyph.
+(defun %cw (ch) (tvision:char-width ch))                         ; 1 or 2 display columns
+(defun %col->vc (line col)
+  "Display column of code-point index COL (total width of LINE[0,COL))."
+  (tvision:string-width line 0 (min col (length line))))
+(defun %vwidth (line) (tvision:string-width line))              ; full display width
+(defun %vc->col (line g)
+  "Largest code-point index in LINE whose display column does not exceed G."
+  (let ((len (length line)) (vx 0) (i 0))
+    (loop while (< i len) for cw = (%cw (char line i))
+          while (<= (+ vx cw) g) do (incf vx cw) (incf i))
+    i))
+(defun %segs-of (line w) (tvision::wrap-segments line (max 1 w)))  ; code-point starts of each visual row
+(defun %nsegs (line w) (length (%segs-of line w)))
+(defun %seg-of (segs col)
+  "Index of the last segment start <= COL (the visual row holding code-point COL)."
+  (let ((idx 0)) (loop for s in segs for k from 0 while (<= s col) do (setf idx k)) idx))
+
 (defun te-cum-vrows (te line w)               ; visual rows occupied by lines [0, LINE)
-  (loop for i below line sum (%segs (length (te-line te i)) w)))
+  (loop for i below line sum (%nsegs (te-line te i) w)))
 (defun te-vrow->pos (te v w)                  ; absolute visual row -> (values line sub)
   (let ((line 0))
-    (loop for n = (%segs (length (te-line te line)) w)
+    (loop for n = (%nsegs (te-line te line) w)
           while (and (>= v n) (< line (1- (te-nlines te))))
           do (decf v n) (incf line))
-    (values line (min v (1- (%segs (length (te-line te line)) w))))))
+    (values line (min v (1- (%nsegs (te-line te line) w))))))
 
 (defun te-ensure-visible (te)
   (let ((b (view-bounds te)))
     (when b
       (if (te-wrap te)
           (let* ((w (te-vw te)) (h (r-h b))
-                 (curv (+ (te-cum-vrows te (te-cy te) w) (floor (te-cx te) w)))
+                 (segs (%segs-of (te-cur te) w))
+                 (curv (+ (te-cum-vrows te (te-cy te) w) (%seg-of segs (te-cx te))))
                  (topv (+ (te-cum-vrows te (te-top te) w) (te-tsub te))))
             (cond ((< curv topv) (setf topv curv))
                   ((>= curv (+ topv h)) (setf topv (1+ (- curv h)))))
             (multiple-value-bind (l s) (te-vrow->pos te (max 0 topv) w)
               (setf (te-top te) l (te-tsub te) s (te-left te) 0)))
-          (let ((h (r-h b)) (w (max 1 (- (r-w b) (te-gutter-width te)))))
+          (let ((h (r-h b)) (w (max 1 (- (r-w b) (te-gutter-width te))))
+                (vc (%col->vc (te-cur te) (te-cx te))))          ; cursor display column
             (cond ((< (te-cy te) (te-top te)) (setf (te-top te) (te-cy te)))
                   ((>= (te-cy te) (+ (te-top te) h)) (setf (te-top te) (1+ (- (te-cy te) h)))))
-            (cond ((< (te-cx te) (te-left te)) (setf (te-left te) (te-cx te)))
-                  ((>= (te-cx te) (+ (te-left te) w)) (setf (te-left te) (1+ (- (te-cx te) w))))))))))
+            (cond ((< vc (te-left te)) (setf (te-left te) vc))
+                  ((>= vc (+ (te-left te) w)) (setf (te-left te) (1+ (- vc w))))))))))
 
 (defun te-vmove (te dir)
   "Move the cursor one visual row (DIR -1/+1) in wrap mode, crossing sub-rows
 within a long line and spilling onto the next/previous logical line at the same
 visual column."
-  (let* ((w (te-vw te)) (seg (floor (te-cx te) w)) (vcol (mod (te-cx te) w)))
-    (if (plusp dir)
-        (if (< seg (1- (%segs (length (te-cur te)) w)))
-            (setf (te-cx te) (min (length (te-cur te)) (+ (* (1+ seg) w) vcol)))
-            (when (< (te-cy te) (1- (te-nlines te)))
-              (incf (te-cy te)) (setf (te-cx te) (min (length (te-cur te)) vcol))))
-        (if (plusp seg)
-            (setf (te-cx te) (+ (* (1- seg) w) vcol))
-            (when (plusp (te-cy te))
-              (decf (te-cy te))
-              (let ((segc (%segs (length (te-cur te)) w)))
-                (setf (te-cx te) (min (length (te-cur te)) (+ (* (1- segc) w) vcol)))))))))
+  (let* ((w (te-vw te)) (line (te-cur te)) (segs (%segs-of line w))
+         (seg (%seg-of segs (te-cx te)))
+         (vcol (- (%col->vc line (te-cx te)) (%col->vc line (nth seg segs)))))  ; display col within the segment
+    (flet ((land (l* seg* segs*)                       ; code-point index in L* at SEG*'s VCOL offset
+             (let* ((start (nth seg* segs*))
+                    (end   (or (nth (1+ seg*) segs*) (length l*)))
+                    (col   (%vc->col l* (+ (%col->vc l* start) vcol))))
+               (max start (min end col)))))
+      (if (plusp dir)
+          (if (< seg (1- (length segs)))
+              (setf (te-cx te) (land line (1+ seg) segs))
+              (when (< (te-cy te) (1- (te-nlines te)))
+                (incf (te-cy te))
+                (setf (te-cx te) (land (te-cur te) 0 (%segs-of (te-cur te) w)))))
+          (if (plusp seg)
+              (setf (te-cx te) (land line (1- seg) segs))
+              (when (plusp (te-cy te))
+                (decf (te-cy te))
+                (let ((s2 (%segs-of (te-cur te) w)))
+                  (setf (te-cx te) (land (te-cur te) (1- (length s2)) s2)))))))))
 
 ;;; --- selection --------------------------------------------------------------
 
@@ -450,6 +482,29 @@ or a regex per line when REGEX).  Return the number of replacements."
 
 ;;; --- drawing ----------------------------------------------------------------
 
+(defun %te-draw-cells (line from to base-x y skip w attr-fn)
+  "Draw LINE[FROM,TO) into the W screen cells starting at (BASE-X, Y).  The run's
+first code point sits at display column 0; SKIP display columns are scrolled off
+the left, so only display columns [SKIP, SKIP+W) show.  ATTR-FN maps a code-point
+index (or NIL, for padding) to an attribute.  A wide glyph occupies two cells --
+the second is the +wide-cont+ sentinel; a wide glyph straddling either edge shows
+a space.  Trailing cells are space-filled."
+  (let ((dcol 0) (i from))
+    (loop while (< i to) for cw = (%cw (char line i))       ; skip glyphs fully left of the view
+          while (<= (+ dcol cw) skip) do (incf dcol cw) (incf i))
+    (loop while (< i to) for ch = (char line i) for cw = (%cw ch)
+          for sx = (- dcol skip)
+          while (< sx w) do
+            (let ((attr (funcall attr-fn i)))
+              (cond
+                ((minusp sx) (%put-cell base-x y #\Space attr))                          ; wide glyph half off the left
+                ((and (= cw 2) (= sx (1- w))) (%put-cell (+ base-x sx) y #\Space attr))   ; no room for the 2nd half
+                (t (%put-cell (+ base-x sx) y ch attr)
+                   (when (= cw 2) (%put-code (+ base-x sx 1) y tvision::+wide-cont+ attr)))))
+            (incf dcol cw) (incf i))
+    (let ((pad (funcall attr-fn nil)))                       ; space-fill the rest of the row
+      (loop for sx from (max 0 (- dcol skip)) below w do (%put-cell (+ base-x sx) y #\Space pad)))))
+
 (defmethod draw ((te text-edit))
   (if (te-wrap te) (te-draw-wrap te) (te-draw-flat te)))
 
@@ -475,50 +530,51 @@ or a regex per line when REGEX).  Return the number of replacements."
                          (role (if (member sev '(:warning :error)) :error :menu-hotkey))))))
         (when (and valid color)
           (multiple-value-bind (a end) (funcall color line carry) (setf attrs a carry end)))
-        (dotimes (x w)
-          (let* ((col (+ left x))
-                 (ch (if (< col (length line)) (char line col) #\Space))
-                 (attr (cond ((and valid (te-selected-p te line-i col)) selattr)
-                             ((and attrs (< col (length attrs))) (aref attrs col))
-                             (t norm))))
-            (%put-cell (+ ax gw x) (+ ay row) ch attr)))))
-    (when (and (view-focused-p te) tvision:*screen*
-               (<= top (te-cy te) (1- (+ top h))) (<= left (te-cx te) (1- (+ left w))))
-      (tvision:set-cursor-pos tvision:*screen*
-                              (+ ax gw (- (te-cx te) left)) (+ ay (- (te-cy te) top)))
-      (tvision:set-cursor-shape (if (te-overwrite te) :block :underline))   ; block cursor in overwrite mode
-      (tvision:show-cursor tvision:*screen*))))
+        (flet ((attr-fn (i)
+                 (cond ((null i) norm)
+                       ((and valid (te-selected-p te line-i i)) selattr)
+                       ((and attrs (< i (length attrs))) (aref attrs i))
+                       (t norm))))
+          (%te-draw-cells line 0 (length line) (+ ax gw) (+ ay row) left w #'attr-fn))))
+    (let* ((cur (te-line te (te-cy te))) (vc (%col->vc cur (te-cx te))))   ; cursor display column
+      (when (and (view-focused-p te) tvision:*screen*
+                 (<= top (te-cy te) (1- (+ top h))) (<= left vc (1- (+ left w))))
+        (tvision:set-cursor-pos tvision:*screen*
+                                (+ ax gw (- vc left)) (+ ay (- (te-cy te) top)))
+        (tvision:set-cursor-shape (if (te-overwrite te) :block :underline))   ; block cursor in overwrite mode
+        (tvision:show-cursor tvision:*screen*)))))
 
 (defun te-draw-wrap (te)
   (let* ((b (view-bounds te)) (h (r-h b)) (w (te-vw te))
+         (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b))
          (norm (role :normal)) (selattr (role :focused)) (color (te-colorizer te))
          (line-i (te-top te)) (seg (te-tsub te))
          (carry (when color (let ((in nil)) (dotimes (i (te-top te) in) (setf in (lisp-string-carry (te-line te i) in))))))
          (attrs nil) (cur-line -1) (cursor-row nil) (cursor-col nil))
     (dotimes (row h)
-      (let ((valid (< line-i (te-nlines te))))
-        (when valid
-          (let* ((line (te-line te line-i)) (start (* seg w)) (len (length line)))
+      (if (< line-i (te-nlines te))
+          (let* ((line (te-line te line-i)) (segs (%segs-of line w)) (segn (length segs))
+                 (s (min seg (1- segn)))
+                 (start (nth s segs)) (end (or (nth (1+ s) segs) (length line))))
             (when (and color (/= cur-line line-i))                  ; colorize each logical line once
               (multiple-value-setq (attrs carry) (funcall color line carry)) (setf cur-line line-i))
-            (dotimes (x w)
-              (let* ((col (+ start x))
-                     (ch (if (< col len) (char line col) #\Space))
-                     (attr (cond ((te-selected-p te line-i col) selattr)
-                                 ((and color attrs (< col (length attrs))) (aref attrs col))
-                                 (t norm))))
-                (%put-cell (+ (tvision::rect-ax b) x) (+ (tvision::rect-ay b) row) ch attr)))
-            ;; is the cursor on this visual row?
-            (when (and (= line-i (te-cy te)) (= seg (floor (te-cx te) w)))
-              (setf cursor-row row cursor-col (mod (te-cx te) w)))
-            ;; advance one visual row
+            (flet ((attr-fn (i)
+                     (cond ((null i) norm)
+                           ((te-selected-p te line-i i) selattr)
+                           ((and color attrs (< i (length attrs))) (aref attrs i))
+                           (t norm))))
+              (%te-draw-cells line start end ax (+ ay row) 0 w #'attr-fn))
+            ;; is the cursor on this visual row?  (cx == end belongs to the next
+            ;; row's start unless this is the line's final segment)
+            (when (and (= line-i (te-cy te)) (<= start (te-cx te))
+                       (or (< (te-cx te) end) (and (= (te-cx te) end) (= (1+ s) segn))))
+              (setf cursor-row row cursor-col (- (%col->vc line (te-cx te)) (%col->vc line start))))
             (incf seg)
-            (when (>= seg (%segs len w)) (setf seg 0) (incf line-i))))
-        (unless valid
-          (dotimes (x w) (%put-cell (+ (tvision::rect-ax b) x) (+ (tvision::rect-ay b) row) #\Space norm)))))
+            (when (>= seg segn) (setf seg 0) (incf line-i)))
+          (dotimes (x w) (%put-cell (+ ax x) (+ ay row) #\Space norm))))
     (when (and (view-focused-p te) tvision:*screen* cursor-row)
-      (tvision:set-cursor-pos tvision:*screen*
-                              (+ (tvision::rect-ax b) cursor-col) (+ (tvision::rect-ay b) cursor-row))
+      (tvision:set-cursor-pos tvision:*screen* (+ ax cursor-col) (+ ay cursor-row))
+      (tvision:set-cursor-shape (if (te-overwrite te) :block :underline))
       (tvision:show-cursor tvision:*screen*))))
 
 ;;; --- key handling (dispatched directly) -------------------------------------
@@ -527,18 +583,31 @@ or a regex per line when REGEX).  Return the number of replacements."
   "Run movement FN, managing selection (Shift) and viewport."
   (te-mark te e) (funcall fn) (te-clamp te) (te-ensure-visible te))
 
-(defun te-mouse-col (te e) (max 0 (- (mouse-col te e) (te-gutter-width te))))   ; screen -> text column
+(defun te-mouse-col (te e) (max 0 (- (mouse-col te e) (te-gutter-width te))))   ; screen col within the text area
+
+(defun te-mouse-pos (te e)
+  "Map a mouse event to (values LINE COL) in the buffer, honouring soft-wrap and
+wide glyphs (a click lands on the code point whose display cell was clicked)."
+  (let ((row (mouse-row te e)) (mcol (te-mouse-col te e)))
+    (if (te-wrap te)
+        (let* ((w (te-vw te))
+               (v (+ (te-cum-vrows te (te-top te) w) (te-tsub te) row)))
+          (multiple-value-bind (l s) (te-vrow->pos te (max 0 v) w)
+            (let* ((line (te-line te l)) (segs (%segs-of line w))
+                   (start (nth (min s (1- (length segs))) segs)))
+              (values l (min (length line) (%vc->col line (+ (%col->vc line start) mcol)))))))
+        (let ((line-i (max 0 (min (1- (te-nlines te)) (+ (te-top te) row)))))
+          (values line-i (min (length (te-line te line-i))
+                              (%vc->col (te-line te line-i) (+ (te-left te) mcol))))))))
 
 (defmethod handle-event ((te text-edit) (e mouse-down))
-  (setf (te-cy te) (max 0 (min (1- (te-nlines te)) (+ (te-top te) (mouse-row te e))))
-        (te-cx te) (max 0 (min (length (te-cur te)) (+ (te-left te) (te-mouse-col te e)))))
+  (multiple-value-bind (l c) (te-mouse-pos te e) (setf (te-cy te) l (te-cx te) c))
   (setf (te-anchor te) (cons (te-cy te) (te-cx te)))    ; anchor at the click; a drag extends from here
   (te-ensure-visible te) (setf (handled-p e) t))
 
 (defmethod handle-event ((te text-edit) (e mouse-move))
   (when (te-anchor te)                                  ; dragging since the mouse-down -> extend selection
-    (setf (te-cy te) (max 0 (min (1- (te-nlines te)) (+ (te-top te) (mouse-row te e))))
-          (te-cx te) (max 0 (min (length (te-cur te)) (+ (te-left te) (te-mouse-col te e)))))
+    (multiple-value-bind (l c) (te-mouse-pos te e) (setf (te-cy te) l (te-cx te) c))
     (te-ensure-visible te))
   (setf (handled-p e) t))
 
