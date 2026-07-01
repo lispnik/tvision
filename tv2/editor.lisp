@@ -30,8 +30,13 @@
    (auto-close :initform nil :accessor te-auto-close)                     ; auto-insert closing )/]/"
    (overwrite  :initform nil :accessor te-overwrite)                      ; overwrite (OVR) vs insert (INS) mode
    (line-numbers :initform nil :accessor te-line-numbers)                 ; show a line-number gutter (flat mode)
+   (notes     :initform nil :accessor te-notes)                           ; alist (LINE . SEVERITY) of compiler notes
    (last-find :initform "" :accessor te-last-find))                       ; remembered search query
   (:metaclass reactive-class))
+
+(defparameter *note-markers*
+  '((:note . #\∘) (:style . #\∘) (:warning . #\!) (:error . #\!))
+  "Gutter glyph per compiler-note severity.")
 
 (defmethod focusable-p ((te text-edit)) t)
 
@@ -73,10 +78,12 @@
 ;;; visual-row model for soft-wrap: a logical line of length LEN occupies
 ;;; (1+ floor(LEN/W)) visual rows; column C sits on sub-row floor(C/W), col mod(C/W).
 (defun te-gutter-width (te)
-  "Columns reserved for the line-number gutter (0 when off / in wrap mode)."
-  (if (and (te-line-numbers te) (not (te-wrap te)))
-      (1+ (length (princ-to-string (max 1 (te-nlines te)))))    ; digits + a trailing space
-      0))
+  "Columns reserved for the gutter (line numbers and/or compiler-note markers);
+0 when both are off or in wrap mode."
+  (cond ((te-wrap te) 0)
+        ((te-line-numbers te) (1+ (length (princ-to-string (max 1 (te-nlines te))))))  ; digits + a space
+        ((te-notes te) 2)                                        ; a marker column + a space
+        (t 0)))
 (defun te-vw (te) (max 1 (r-w (view-bounds te))))
 (defun %segs (len w) (max 1 (1+ (floor (max 0 len) w))))
 (defun te-cum-vrows (te line w)               ; visual rows occupied by lines [0, LINE)
@@ -409,9 +416,15 @@ or a regex per line when REGEX).  Return the number of replacements."
     (dotimes (row h)
       (let* ((line-i (+ top row)) (valid (< line-i (te-nlines te)))
              (line (if valid (te-line te line-i) "")) (attrs nil))
-        (when (plusp gw)                                  ; line-number gutter
-          (let ((g (if valid (format nil "~v@a " (1- gw) (1+ line-i)) (make-string gw :initial-element #\Space))))
-            (dotimes (gx gw) (%put-cell (+ ax gx) (+ ay row) (char g gx) gutattr))))
+        (when (plusp gw)                                  ; line-number / note-marker gutter
+          (let ((g (if (and valid (te-line-numbers te))
+                       (format nil "~v@a " (1- gw) (1+ line-i))
+                       (make-string gw :initial-element #\Space)))
+                (sev (and valid (cdr (assoc line-i (te-notes te))))))
+            (dotimes (gx gw) (%put-cell (+ ax gx) (+ ay row) (char g gx) gutattr))
+            (when sev                                     ; overlay a note marker in the trailing gutter cell
+              (%put-cell (+ ax gw -1) (+ ay row) (or (cdr (assoc sev *note-markers*)) #\!)
+                         (role (if (member sev '(:warning :error)) :error :menu-hotkey))))))
         (when (and valid color)
           (multiple-value-bind (a end) (funcall color line carry) (setf attrs a carry end)))
         (dotimes (x w)

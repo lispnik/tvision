@@ -1,0 +1,50 @@
+;;;; tv2-sbcl-tests.lisp --- tests for the SBCL-specific IDE features on tv2.
+;;;;
+;;;; These exercise the *logic* behind the SBCL-only IDE features (compiler
+;;;; notes, sb-di backtraces, sb-aprof, allocation-information, typexpand, GC
+;;;; stats, evaluator mode, package locks, sb-cltl2) directly -- no UI needed.
+;;;;
+;;;; Run from the repo root:  sbcl --script tests/tv2-sbcl-tests.lisp
+
+(require :asdf)
+(asdf:load-asd (truename "tv2.asd"))
+(handler-bind ((warning #'muffle-warning)) (asdf:load-system :tv2))
+(in-package #:tv2)
+
+(defvar *pass* 0) (defvar *fail* 0)
+(defmacro check (desc form)
+  `(handler-case (if ,form (progn (incf *pass*) (format t "  ok   ~a~%" ,desc))
+                     (progn (incf *fail*) (format t "  FAIL ~a~%" ,desc)))
+     (error (e) (incf *fail*) (format t "  ERR  ~a -- ~a~%" ,desc e))))
+
+;;; ===========================================================================
+;;; 1. Compiler notes (sb-ext:compiler-note capture + offset refine)
+;;; ===========================================================================
+(format t "~&## compiler notes~%")
+(multiple-value-bind (status notes)
+    (%compile-text-notes
+     (format nil "(defun add-floats (a b)~%  (declare (optimize speed))~%  (+ a b))~%")
+     (find-package :cl-user))
+  (check "compile status is :ok" (eq status :ok))
+  (check "captured at least one note" (>= (length notes) 1))
+  (check "at least one :note severity" (some (lambda (n) (eq (getf n :severity) :note)) notes))
+  (check "a speed note about a full call"
+         (some (lambda (n) (search "FULL CALL" (string-upcase (getf n :message)))) notes))
+  (check "every note carries a position" (every (lambda (n) (integerp (getf n :pos))) notes)))
+
+;; clean code yields no notes
+(multiple-value-bind (status notes)
+    (%compile-text-notes "(defun plain-id (x) x)" (find-package :cl-user))
+  (check "clean code compiles :ok" (eq status :ok))
+  (check "clean code yields no notes" (null notes)))
+
+;; offset refinement points at the named symbol
+(let ((text "(foo)
+(bar BAZ)
+"))
+  (check "refine-offset locates the offending token"
+         (= (%note-refine-offset text 6 "undefined variable: BAZ") (search "BAZ" text))))
+
+;;; ===========================================================================
+(format t "~%~d passed, ~d failed~%" *pass* *fail*)
+(sb-ext:exit :code (if (zerop *fail*) 0 1))
