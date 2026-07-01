@@ -176,15 +176,4 @@ mark the offending lines in the gutter and open a navigable notes list."
   "Clear the compiler-note gutter markers in the focused editor."
   (let ((te (%focused-editor))) (when te (setf (te-notes te) nil) (invalidate te))))
 
-(push (lambda (dt)
-        (declare (ignore dt))
-        (list "Run"
-              (list "Eval / compile defun" (lambda () (do-eval-defun)))
-              (list "Load buffer"          (lambda () (do-load-buffer)))
-              (list "Compile buffer"       (lambda () (do-compile-buffer)))
-              :--
-              (list "Compiler notes…"      (lambda () (do-compile-notes)))
-              (list "Clear notes"          (lambda () (do-clear-notes)))
-              :--
-              (list "Interrupt eval"       (lambda () (do-interrupt-eval)))))
-      *extra-menus*)
+;; These commands are surfaced through the consolidated "Lisp" menu (docs.lisp).

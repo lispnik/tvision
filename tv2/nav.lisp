@@ -116,16 +116,5 @@
             (%show-locations (format nil " Methods of ~a " name) (%gf-methods fn))
             (%open-output " Method browser " (format nil "~a is not a generic function." name)))))))
 
-;;; --- a Navigate menu --------------------------------------------------------
-
-(push (lambda (dt)
-        (declare (ignore dt))
-        (list "Search"
-              (list "Go to definition…" (lambda () (do-goto-definition)))
-              :--
-              (list "Who calls…"        (lambda () (do-xref :calls "calls")))
-              (list "Who references…"   (lambda () (do-xref :references "references")))
-              (list "Who binds…"        (lambda () (do-xref :binds "binds")))
-              (list "Who sets…"         (lambda () (do-xref :sets "sets")))
-              (list "Who macroexpands…" (lambda () (do-xref :macroexpands "macroexpands")))))
-      *extra-menus*)
+;; Go-to-definition and the xref commands are surfaced through the consolidated
+;; "Lisp" menu's Navigate submenu (docs.lisp).

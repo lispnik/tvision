@@ -72,7 +72,7 @@
               finally (return sel)))))
 
 (defparameter *menu-order*
-  '("≡" "File" "Edit" "Search" "Run" "Debug" "Browse" "Window" "Options" "Help")
+  '("≡" "File" "Edit" "Lisp" "Window" "Options" "Help")
   "Left-to-right order of the menu bar; menus not listed fall to the right.")
 
 (defun %order-menus (menus)
@@ -615,7 +615,7 @@ editor buffer text."
                    (list "Thread monitor"  (lambda () (dt-open dt (lambda () (make-help :threads))))))
              :--
              (list "About…"          (lambda () (%about-dialog)))))
-      (mapcar (lambda (f) (funcall f dt)) (reverse *extra-menus*))))))   ; modules' Edit/Search/Run/Debug/Browse menus
+      (mapcar (lambda (f) (funcall f dt)) (reverse *extra-menus*))))))   ; modules' Edit + consolidated Lisp menus
 
 (defun ensure-repl ()
   "The desktop's REPL window, opening one if none is present.  Returns it."

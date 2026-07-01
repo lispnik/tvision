@@ -364,23 +364,5 @@ tv2's debugger (Step-next / Step-into / Step-out / Continue restarts)."
       (dt-open *desktop* (lambda () (make-table-window title columns rows)))
       (multiple-value-bind (w f) (make-table-window title columns rows) (run-view w :focus f))))
 
-;;; --- register a Tools menu --------------------------------------------------
-
-(push (lambda (dt)
-        (declare (ignore dt))
-        (list "Debug"
-              (list "Trace (toggle)…"  (lambda () (do-trace)))
-              (list "Trace package…"   (lambda () (do-trace-package)))
-              (list "Trace snapshots…" (lambda () (do-trace-snapshots)))
-              (list "Untrace all"      (lambda () (do-untrace-all)))
-              (list "Traced functions" (lambda () (do-traced-list)))
-              :--
-              (list "Break on entry…"     (lambda () (do-break-on-entry)))
-              (list "Conditional break…"  (lambda () (do-conditional-break)))
-              (list "Call tree…"          (lambda () (do-call-tree)))
-              :--
-              (list "Step…"                  (lambda () (do-step)))
-              :--
-              (list "Profile…"               (lambda () (do-profile)))
-              (list "Deterministic profile…" (lambda () (do-profile-deterministic)))))
-      *extra-menus*)
+;; The trace / break / call-tree / step / profile commands are surfaced through
+;; the consolidated "Lisp" menu's Debug submenu (docs.lisp).

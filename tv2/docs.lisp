@@ -74,27 +74,62 @@
 ;;; Loaded last of the tool modules, so it can reference inspect.lisp's and
 ;;; nav.lisp's commands as well as its own.
 
+;;; The single, consolidated "Lisp" menu (Turbo-Vision style, like classic
+;;; tvlisp): evaluate/compile at the top, then Navigate / Document / Debug /
+;;; Browse submenus.  docs.lisp loads last, so every do-* command it references
+;;; (from compile, nav, tools, inspect and here) is already defined.  This
+;;; replaces the former separate Run / Search / Debug / Browse top-level menus.
 (push (lambda (dt)
-        (list "Browse"
-              (list "Class browser"     (lambda () (dt-open dt :classes)))
-              (list "Function browser"  (lambda () (dt-open dt :functions)))
-              (list "Method browser…"   (lambda () (do-method-browser)))       ; nav.lisp
+        (list "Lisp"
+              (list "Eval / compile defun" (lambda () (do-eval-defun)))         ; compile.lisp
+              (list "Load buffer"          (lambda () (do-load-buffer)))
+              (list "Compile buffer"       (lambda () (do-compile-buffer)))
+              (list "Interrupt eval"       (lambda () (do-interrupt-eval)))
               :--
-              (list "Describe…"         (lambda () (do-describe)))             ; inspect.lisp
-              (list "Documentation…"    (lambda () (do-documentation)))
-              (list "Disassemble…"      (lambda () (do-disassemble)))
-              (list "Macroexpand…"      (lambda () (do-macroexpand)))          ; inspect.lisp
-              (list "Apropos…"          (lambda () (do-apropos)))              ; inspect.lisp
+              (list "Inspect…"          (lambda () (do-inspect)))               ; inspect.lisp
+              (list "Describe…"         (lambda () (do-describe)))
+              (list "Macroexpand…"      (lambda () (do-macroexpand)))
+              (list "Apropos…"          (lambda () (do-apropos)))
               :--
-              (list "Inspect…"          (lambda () (do-inspect)))             ; inspect.lisp
-              (list "Object *" :submenu                                        ; inspect.lisp
-                    (list "Clip last value"  (lambda () (do-clip-last-value)))
-                    (list "Inspect *"        (lambda () (do-inspect-clipped)))
-                    (list "Insert * as text" (lambda () (do-insert-clipped))))
-              :--
-              (list "HyperSpec lookup…" (lambda () (do-hyperspec)))
-              (list "Manuals" :submenu
+              (list "Navigate" :submenu                                          ; nav.lisp
+                    (list "Go to definition…" (lambda () (do-goto-definition)))
+                    :--
+                    (list "Who calls…"        (lambda () (do-xref :calls "calls")))
+                    (list "Who references…"   (lambda () (do-xref :references "references")))
+                    (list "Who binds…"        (lambda () (do-xref :binds "binds")))
+                    (list "Who sets…"         (lambda () (do-xref :sets "sets")))
+                    (list "Who macroexpands…" (lambda () (do-xref :macroexpands "macroexpands"))))
+              (list "Document" :submenu                                          ; the renderer allows only
+                    (list "Documentation…"    (lambda () (do-documentation)))     ; two dropdown levels, so the
+                    (list "Disassemble…"      (lambda () (do-disassemble)))       ; manuals are flat here rather
+                    (list "Compiler notes…"   (lambda () (do-compile-notes)))     ; than a nested submenu
+                    (list "Clear notes"       (lambda () (do-clear-notes)))       ; compile.lisp
+                    :--
+                    (list "HyperSpec lookup…" (lambda () (do-hyperspec)))
                     (list "SBCL manual" (lambda () (do-manual "SBCL manual" (cdr (assoc "SBCL manual" *manuals* :test #'string=)))))
                     (list "CCL manual"  (lambda () (do-manual "CCL manual"  (cdr (assoc "CCL manual"  *manuals* :test #'string=)))))
-                    (list "ECL manual"  (lambda () (do-manual "ECL manual"  (cdr (assoc "ECL manual"  *manuals* :test #'string=))))))))
+                    (list "ECL manual"  (lambda () (do-manual "ECL manual"  (cdr (assoc "ECL manual"  *manuals* :test #'string=))))))
+              (list "Debug / trace" :submenu                                     ; tools.lisp
+                    (list "Trace (toggle)…"  (lambda () (do-trace)))
+                    (list "Trace package…"   (lambda () (do-trace-package)))
+                    (list "Trace snapshots…" (lambda () (do-trace-snapshots)))
+                    (list "Untrace all"      (lambda () (do-untrace-all)))
+                    (list "Traced functions" (lambda () (do-traced-list)))
+                    :--
+                    (list "Break on entry…"     (lambda () (do-break-on-entry)))
+                    (list "Conditional break…"  (lambda () (do-conditional-break)))
+                    (list "Call tree…"          (lambda () (do-call-tree)))
+                    (list "Step…"               (lambda () (do-step)))
+                    :--
+                    (list "Profile…"               (lambda () (do-profile)))
+                    (list "Deterministic profile…" (lambda () (do-profile-deterministic))))
+              (list "Browse" :submenu
+                    (list "Class browser"    (lambda () (dt-open dt :classes)))
+                    (list "Function browser" (lambda () (dt-open dt :functions)))
+                    (list "Method browser…"  (lambda () (do-method-browser))))   ; nav.lisp
+              :--
+              (list "Object *" :submenu                                          ; inspect.lisp
+                    (list "Clip last value"  (lambda () (do-clip-last-value)))
+                    (list "Inspect *"        (lambda () (do-inspect-clipped)))
+                    (list "Insert * as text" (lambda () (do-insert-clipped))))))
       *extra-menus*)
