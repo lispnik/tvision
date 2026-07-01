@@ -47,7 +47,7 @@ event layers are new.")
    ;; demo + ported real windows
    #:run #:run-threadmon
    #:run-browser #:run-packages #:run-systems #:run-project #:*project-status-fn* #:*project-grep-fn*
-   #:*object->outline-fn* #:make-inspector #:*profile-fn* #:make-table-window #:*paredit-fn*
+   #:*object->outline-fn* #:make-inspector #:*profile-fn* #:make-table-window #:*paredit-fn* #:*reorder-fn* #:*repl-time*
    #:run-repl #:repl-window #:repl-package #:*repl-eval-fn* #:repl-hist-vars #:repl-busy #:repl-submit-string #:repl-last-value #:repl-last-value-p
    #:run-editor #:*editor-eval-fn* #:*editor-completions-fn* #:*paren-matcher*
    #:html-view #:set-html #:run-html #:make-doc-browser #:*url-fetch-fn* #:*hyperspec-url-fn*

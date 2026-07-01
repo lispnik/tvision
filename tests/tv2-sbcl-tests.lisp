@@ -89,5 +89,23 @@
                              (getf probe :locals))))))
 
 ;;; ===========================================================================
+;;; 4. call-tree tracing (sb-int:encapsulate recording + system-symbol guard)
+;;; ===========================================================================
+(format t "~%## call tree~%")
+(defun ct-probe (n) (if (<= n 0) 0 (ct-probe (1- n))))
+(%ct-clear)
+(check "refuses to watch a CL built-in" (eq (%ct-watch 'length) :system))
+(check "length was NOT encapsulated" (not (member 'length *ct-watched*)))
+(%ct-watch 'ct-probe)
+(ct-probe 3)
+(let ((rows (%ct-snapshot)))
+  (check "recorded nested calls" (>= (length rows) 4))
+  (check "top row is a :call to ct-probe" (and (eq (first (first rows)) :call) (eq (third (first rows)) 'ct-probe)))
+  (check "records a :return" (some (lambda (r) (eq (first r) :return)) rows))
+  (check "row labels render as strings" (every (lambda (r) (stringp (%ct-row-label r))) rows)))
+(%ct-unwatch 'ct-probe)
+(check "unwatch removes it" (not (member 'ct-probe *ct-watched*)))
+
+;;; ===========================================================================
 (format t "~%~d passed, ~d failed~%" *pass* *fail*)
 (sb-ext:exit :code (if (zerop *fail*) 0 1))

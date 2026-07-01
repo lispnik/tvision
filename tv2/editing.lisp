@@ -88,6 +88,83 @@
                     (te-anchor te) (cons li 0))              ; select the line, for a visible flash
               (te-clamp te) (te-ensure-visible te) (invalidate te))))))))
 
+;;; --- reorder a function's required arguments at its call sites --------------
+;;; Heavy sexp rewriting (finding operator-position calls and permuting their
+;;; args) is tvlisp's; tv2 does the arglist introspection + buffer orchestration
+;;; and calls the hook per open editor buffer.
+;;; (funcall *REORDER-FN* NAME-STRING TEXT PERM R) -> new TEXT, or NIL if unchanged.
+
+(defvar *reorder-fn* nil)
+
+(defun %required-names (sym)
+  "Names of SYM's leading required parameters (stops at the first &-marker)."
+  (let ((ll (ignore-errors (sb-introspect:function-lambda-list sym))) (out '()))
+    (dolist (p ll (nreverse out))
+      (when (and (symbolp p) (plusp (length (symbol-name p))) (char= (char (symbol-name p) 0) #\&))
+        (return (nreverse out)))
+      (push p out))))
+
+(defun %parse-perm (input names)
+  "Parse INPUT (space/comma separated 1-based indices or param names) into a
+0-based permutation of 0..N-1, or NIL when it is not a full permutation."
+  (let* ((n (length names))
+         (toks (remove "" (loop with acc and start = 0
+                                for i to (length input)
+                                when (or (= i (length input)) (member (char input i) '(#\Space #\Tab #\,)))
+                                  do (push (subseq input start i) acc) (setf start (1+ i))
+                                finally (return (nreverse acc)))
+                       :test #'string=))
+         (perm (cond
+                 ((/= (length toks) n) nil)
+                 ((every (lambda (tk) (every #'digit-char-p tk)) toks)
+                  (mapcar (lambda (tk) (1- (parse-integer tk))) toks))
+                 (t (mapcar (lambda (tk) (position (string-upcase tk) names
+                                                   :key (lambda (s) (string-upcase (string s))) :test #'string=))
+                            toks)))))
+    (when (and perm (notany #'null perm)
+               (equal (sort (copy-list perm) #'<) (loop for i below n collect i)))
+      perm)))
+
+(defun do-reorder-args ()
+  "Reorder a function's required arguments at its direct call sites across all
+open editor buffers (calls via apply/funcall/#' and the definition are untouched)."
+  (unless *reorder-fn* (return-from do-reorder-args (%open-output " Reorder args " "No reorder backend is installed.")))
+  (let ((s (prompt-string " Reorder args " "Function:")))
+    (when (and s (plusp (length (string-trim " " s))))
+      (setf s (string-trim " " s))
+      (let* ((sym (%read-in-active s))
+             (names (and sym (symbolp sym) (fboundp sym) (%required-names sym)))
+             (r (length names)))
+        (cond
+          ((not (and sym (symbolp sym) (fboundp sym))) (%open-output " Reorder args " (format nil "~a is not a function." s)))
+          ((< r 2) (%open-output " Reorder args " (format nil "~a has fewer than 2 required arguments." s)))
+          (t (let* ((cur (format nil "~{~(~a~)~^ ~}" names))
+                    (input (prompt-string " Reorder args " (format nil "Params (~a) — new order:" cur)))
+                    (perm (and input (%parse-perm (string-trim " " input) names))))
+               (cond
+                 ((null input) nil)
+                 ((null perm) (%open-output " Reorder args " (format nil "Not a permutation of the ~d params (~a)." r cur)))
+                 ((equal perm (loop for i below r collect i)) (%open-output " Reorder args " "Order unchanged."))
+                 (t (let ((name (string-downcase s)) (total 0))
+                      (dolist (w (and *desktop* (dt-windows *desktop*)))
+                        (when (typep w 'editor-window)
+                          (let ((te (find-view w 'edit)))
+                            (when te
+                              (let* ((old (te-text te))
+                                     (new (ignore-errors (funcall *reorder-fn* name old perm r))))
+                                (when (and new (stringp new) (string/= new old))
+                                  (let ((off (te-offset te (te-cy te) (te-cx te))))
+                                    (te-save-undo te) (te-set-text te new)
+                                    (multiple-value-bind (l c) (te-pos-at-offset te (min off (length new)))
+                                      (setf (te-cy te) l (te-cx te) c))
+                                    (te-clamp te) (te-ensure-visible te) (invalidate te))
+                                  (incf total)))))))
+                      (%open-output " Reorder args "
+                                    (if (plusp total)
+                                        (format nil "Reordered ~a to (~{~(~a~)~^ ~}) in ~d buffer~:p."
+                                                name (mapcar (lambda (k) (nth k names)) perm) total)
+                                        (format nil "No direct calls to ~a found in open buffers." name)))))))))))))
+
 ;;; --- an Edit menu -----------------------------------------------------------
 
 (push (lambda (dt)
@@ -101,6 +178,7 @@
                 :--
                 (list "Incremental search"  (lambda () (let ((te (cur))) (when te (te-isearch-start te)))))
                 (list "Go to line…"         (lambda () (%editor-goto-line (cur))))
+                (list "Reorder args…"       (lambda () (do-reorder-args)))
                 :--
                 (list "Structure" :submenu                 ; paredit (from paredit.lisp)
                       (list "Slurp forward →"   (pe :slurp))

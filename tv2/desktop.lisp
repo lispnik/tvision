@@ -600,7 +600,9 @@ editor buffer text."
        (list "Options"
              (list "Settings…"       (lambda () (dt-open dt :options)))
              (list "Colours…"        (lambda () (make-color-dialog)))
-             (list "Validators…"     (lambda () (%validators-dialog))))
+             (list "Validators…"     (lambda () (%validators-dialog)))
+             (list "Eval timing"     (lambda () (setf *repl-time* (not *repl-time*))
+                                       (%tool-note (if *repl-time* "eval timing ON" "eval timing OFF")))))
        (list "Help"
              (list "Contents"        (lambda () (dt-open dt (lambda () (make-help :general)))))
              (list "This window"     (lambda () (dt-help dt)) :f1)

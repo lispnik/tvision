@@ -142,6 +142,22 @@ the cross-thread debugger (HANDLER-BIND keeps the stack live for the restart)."
 ;;; different eval backend (e.g. tvlisp's repl-backend-eval).
 (defvar *repl-eval-fn* '%repl-eval)
 
+(defvar *repl-time* nil "When true, print each submission's run time after it evaluates.")
+
+(defun %repl-eval-timed (win input)
+  "Evaluate INPUT via *REPL-EVAL-FN*, appending a run-time line when *REPL-TIME*.
+Backend-agnostic (times around the whole synchronous eval), so it works for both
+tv2's evaluator and an embedded backend."
+  (if (not *repl-time*)
+      (funcall *repl-eval-fn* win input)
+      (let ((t0 (get-internal-run-time)) (r0 (get-internal-real-time)))
+        (funcall *repl-eval-fn* win input)
+        (let ((run  (/ (float (- (get-internal-run-time) t0)) internal-time-units-per-second))
+              (real (/ (float (- (get-internal-real-time) r0)) internal-time-units-per-second)))
+          (run-on-ui (lambda ()
+                       (let ((sb (find-view win 'transcript)))
+                         (when sb (scrollback-append sb (format nil "; ~,3fs run, ~,3fs real~%" run real))))))))))
+
 (defun repl-ensure-worker (win)
   (unless (repl-mailbox win) (setf (repl-mailbox win) (sb-concurrency:make-mailbox)))
   (unless (and (repl-worker win) (sb-thread:thread-alive-p (repl-worker win)))
@@ -151,7 +167,7 @@ the cross-thread debugger (HANDLER-BIND keeps the stack live for the restart)."
              (loop for job = (sb-concurrency:receive-message (repl-mailbox win))
                    do (case (car job)
                         (:quit (return))
-                        (:eval (funcall *repl-eval-fn* win (cdr job))))))
+                        (:eval (%repl-eval-timed win (cdr job))))))
            :name "tv2-repl-worker"))))
 
 ;;; --- commands (bound on the input-line's keymap) ----------------------------
