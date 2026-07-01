@@ -95,16 +95,16 @@
 ;;; tvision's East-Asian width machinery (src/draw-buffer.lisp) so wide glyphs
 ;;; line up instead of shoving the rest of the line one column right per glyph.
 (defun %cw (ch) (tvision:char-width ch))                         ; 1 or 2 display columns
-(defun %col->vc (line col)
-  "Display column of code-point index COL (total width of LINE[0,COL))."
-  (tvision:string-width line 0 (min col (length line))))
-(defun %vwidth (line) (tvision:string-width line))              ; full display width
-(defun %vc->col (line g)
-  "Largest code-point index in LINE whose display column does not exceed G."
-  (let ((len (length line)) (vx 0) (i 0))
-    (loop while (< i len) for cw = (%cw (char line i))
-          while (<= (+ vx cw) g) do (incf vx cw) (incf i))
-    i))
+;; Column math is GRAPHEME-aware: a cluster (combining marks, ZWJ / skin-tone /
+;; flag emoji) counts as one display unit of its base width, and the cursor
+;; lands only on cluster boundaries.  visual-col / col-at-vcol / next- and
+;; prev-grapheme-col are tvision's (src/draw-buffer.lisp); they fast-path simple
+;; lines to per-code-point, so ASCII / CJK are unaffected.
+(defun %col->vc (line col) (tvision::visual-col line 0 col))     ; display column of code-point index COL
+(defun %vwidth (line) (tvision::visual-col line 0 (length line)))  ; full display width
+(defun %vc->col (line g) (tvision::col-at-vcol line 0 (length line) g))  ; code-point index at display column G
+(defun %next-col (line col) (tvision::next-grapheme-col line col))   ; next grapheme boundary after COL
+(defun %prev-col (line col) (tvision::prev-grapheme-col line col))   ; grapheme boundary before COL
 (defun %segs-of (line w) (tvision::wrap-segments line (max 1 w)))  ; code-point starts of each visual row
 (defun %nsegs (line w) (length (%segs-of line w)))
 (defun %seg-of (segs col)
@@ -424,9 +424,9 @@ or a regex per line when REGEX).  Return the number of replacements."
   (cond ((te-sel-ordered te) (te-save-undo te) (te-delete-selection te))
         ((plusp (te-cx te))
          (te-save-undo te)
-         (let ((l (te-cur te)) (c (te-cx te)))
-           (setf (te-line te (te-cy te)) (concatenate 'string (subseq l 0 (1- c)) (subseq l c))
-                 (te-cx te) (1- c))))
+         (let* ((l (te-cur te)) (c (te-cx te)) (p (%prev-col l c)))  ; delete the whole grapheme
+           (setf (te-line te (te-cy te)) (concatenate 'string (subseq l 0 p) (subseq l c))
+                 (te-cx te) p)))
         ((plusp (te-cy te))
          (te-save-undo te)
          ;; join with the previous line; TE-REPLACE-REGION leaves the cursor at the seam
@@ -436,8 +436,8 @@ or a regex per line when REGEX).  Return the number of replacements."
   (cond ((te-sel-ordered te) (te-save-undo te) (te-delete-selection te))
         ((< (te-cx te) (length (te-cur te)))
          (te-save-undo te)
-         (let ((l (te-cur te)) (c (te-cx te)))
-           (setf (te-line te (te-cy te)) (concatenate 'string (subseq l 0 c) (subseq l (1+ c))))))
+         (let* ((l (te-cur te)) (c (te-cx te)) (n (%next-col l c)))  ; delete the whole grapheme
+           (setf (te-line te (te-cy te)) (concatenate 'string (subseq l 0 c) (subseq l n)))))
         ((< (te-cy te) (1- (te-nlines te)))
          (te-save-undo te)
          (te-replace-region te (te-cy te) (te-cx te) (1+ (te-cy te)) 0 ""))))
@@ -483,27 +483,37 @@ or a regex per line when REGEX).  Return the number of replacements."
 ;;; --- drawing ----------------------------------------------------------------
 
 (defun %te-draw-cells (line from to base-x y skip w attr-fn)
-  "Draw LINE[FROM,TO) into the W screen cells starting at (BASE-X, Y).  The run's
-first code point sits at display column 0; SKIP display columns are scrolled off
-the left, so only display columns [SKIP, SKIP+W) show.  ATTR-FN maps a code-point
-index (or NIL, for padding) to an attribute.  A wide glyph occupies two cells --
-the second is the +wide-cont+ sentinel; a wide glyph straddling either edge shows
-a space.  Trailing cells are space-filled."
-  (let ((dcol 0) (i from))
-    (loop while (< i to) for cw = (%cw (char line i))       ; skip glyphs fully left of the view
-          while (<= (+ dcol cw) skip) do (incf dcol cw) (incf i))
-    (loop while (< i to) for ch = (char line i) for cw = (%cw ch)
-          for sx = (- dcol skip)
-          while (< sx w) do
-            (let ((attr (funcall attr-fn i)))
-              (cond
-                ((minusp sx) (%put-cell base-x y #\Space attr))                          ; wide glyph half off the left
-                ((and (= cw 2) (= sx (1- w))) (%put-cell (+ base-x sx) y #\Space attr))   ; no room for the 2nd half
-                (t (%put-cell (+ base-x sx) y ch attr)
-                   (when (= cw 2) (%put-code (+ base-x sx 1) y tvision::+wide-cont+ attr)))))
-            (incf dcol cw) (incf i))
-    (let ((pad (funcall attr-fn nil)))                       ; space-fill the rest of the row
-      (loop for sx from (max 0 (- dcol skip)) below w do (%put-cell (+ base-x sx) y #\Space pad)))))
+  "Draw LINE[FROM,TO) into the W screen cells starting at (BASE-X, Y), one GRAPHEME
+CLUSTER per display unit.  The run's first grapheme sits at display column 0; SKIP
+display columns are scrolled off the left, so only [SKIP, SKIP+W) show.  ATTR-FN
+maps a code-point index (or NIL, for padding) to an attribute.  A wide cluster
+occupies two cells (the second is +wide-cont+); a multi-code-point cluster is
+interned and stored as one cell; a cluster straddling an edge shows a space.
+Trailing cells are space-filled."
+  (let* ((simple (tvision::simple-line-p line))
+         (offs (unless simple (tvision::grapheme-offsets line)))
+         (dcol 0) (i from))
+    (labels ((nextg (j) (min to (if simple (1+ j)
+                                     (or (find-if (lambda (o) (> o j)) offs) (length line)))))
+             (gwidth (a b) (if (= (- b a) 1) (%cw (char line a))
+                               (tvision::grapheme-width (subseq line a b)))))
+      (loop while (< i to) for j = (nextg i) for gw = (gwidth i j)   ; skip clusters fully left of the view
+            while (<= (+ dcol gw) skip) do (incf dcol gw) (setf i j))
+      (loop while (< i to) for j = (nextg i) for gw = (gwidth i j)
+            for sx = (- dcol skip)
+            while (< sx w) do
+              (let ((attr (funcall attr-fn i)))
+                (cond
+                  ((minusp sx) (%put-cell base-x y #\Space attr))                          ; wide cluster half off the left
+                  ((and (= gw 2) (= sx (1- w))) (%put-cell (+ base-x sx) y #\Space attr))   ; no room for the 2nd half
+                  ((> (- j i) 1)                                                            ; a multi-code-point cluster
+                   (%put-code (+ base-x sx) y (tvision::intern-grapheme (subseq line i j)) attr)
+                   (when (= gw 2) (%put-code (+ base-x sx 1) y tvision::+wide-cont+ attr)))
+                  (t (%put-cell (+ base-x sx) y (char line i) attr)
+                     (when (= gw 2) (%put-code (+ base-x sx 1) y tvision::+wide-cont+ attr)))))
+              (incf dcol gw) (setf i j))
+      (let ((pad (funcall attr-fn nil)))                       ; space-fill the rest of the row
+        (loop for sx from (max 0 (- dcol skip)) below w do (%put-cell (+ base-x sx) y #\Space pad))))))
 
 (defmethod draw ((te text-edit))
   (if (te-wrap te) (te-draw-wrap te) (te-draw-flat te)))
@@ -648,11 +658,11 @@ wide glyphs (a click lands on the code point whose display cell was clicked)."
         ((eql ks :ins)   (setf (te-overwrite te) (not (te-overwrite te))) (invalidate te) (done))
         ;; movement
         ((eql ks :left)  (te-move te e (lambda ()
-                                         (if (plusp (te-cx te)) (decf (te-cx te))
+                                         (if (plusp (te-cx te)) (setf (te-cx te) (%prev-col (te-cur te) (te-cx te)))
                                              (when (plusp (te-cy te))
                                                (decf (te-cy te)) (setf (te-cx te) (length (te-cur te))))))) (done))
         ((eql ks :right) (te-move te e (lambda ()
-                                         (if (< (te-cx te) (length (te-cur te))) (incf (te-cx te))
+                                         (if (< (te-cx te) (length (te-cur te))) (setf (te-cx te) (%next-col (te-cur te) (te-cx te)))
                                              (when (< (te-cy te) (1- (te-nlines te)))
                                                (incf (te-cy te)) (setf (te-cx te) 0))))) (done))
         ((eql ks :up)    (te-move te e (lambda () (if (te-wrap te) (te-vmove te -1) (decf (te-cy te))))) (done))

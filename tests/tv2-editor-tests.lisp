@@ -93,5 +93,27 @@
          (<= (te-left te) (%col->vc (te-cur te) (te-cx te)) (+ (te-left te) 6))))
 
 ;;; ===========================================================================
+(format t "~%## grapheme clusters (combining marks, skin-tone / ZWJ emoji)~%")
+(let ((acc (coerce (list #\e (code-char #x301)) 'string)))          ; "é" = e + combining acute
+  (check "combining pair is one grapheme"    (= (%next-col acc 0) 2))
+  (check "combining cluster is one column"   (= (%vwidth acc) 1))
+  (check "display column past the cluster=1" (= (%col->vc acc 2) 1))
+  (check "prev-col steps over the cluster"   (= (%prev-col acc 2) 0)))
+(let ((skin (coerce (list (code-char #x1F44D) (code-char #x1F3FD)) 'string)))  ; 👍🏽 base+skin-tone
+  (check "skin-tone emoji is one grapheme"   (= (%next-col skin 0) 2))
+  (check "skin-tone cluster is two columns"  (= (%vwidth skin) 2))
+  (check "vc->col mid wide cluster -> start" (= (%vc->col skin 1) 0)))
+(let ((fam (coerce (list (code-char #x1F468) (code-char #x200D) (code-char #x1F469)
+                         (code-char #x200D) (code-char #x1F467)) 'string)))    ; 👨‍👩‍👧 ZWJ sequence
+  (check "ZWJ family is a single grapheme"   (= (%next-col fam 0) (length fam)))
+  (check "ZWJ family is two columns"         (= (%vwidth fam) 2)))
+(let ((te (make-instance 'text-edit)))        ; backspace removes a whole cluster, not one code point
+  (te-set-text te (coerce (list #\a #\e (code-char #x301) #\b) 'string))       ; a é b
+  (setf (te-cy te) 0 (te-cx te) 3)            ; cursor after the é cluster (a=0, é=1..3)
+  (te-backspace te)
+  (check "backspace deletes the whole é grapheme" (string= (te-cur te) "ab"))
+  (check "cursor sits at the cluster start"       (= (te-cx te) 1)))
+
+;;; ===========================================================================
 (format t "~%~d passed, ~d failed~%" *pass* *fail*)
 (sb-ext:exit :code (if (zerop *fail*) 0 1))
