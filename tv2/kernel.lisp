@@ -365,11 +365,15 @@ and a thumb positioned by POS/MAX over the track between them."
   (dolist (sv (subviews c)) (draw sv)))
 
 (defmethod handle-event ((c container) (e key-event))
-  (cond
-    ((eql (event-keysym e) :tab)       (focus-next c 1)  (setf (handled-p e) t))
-    ((eql (event-keysym e) :shift-tab) (focus-next c -1) (setf (handled-p e) t))
-    (t (let ((f (container-focus c))) (when f (handle-event f e)))   ; -> the focused leaf
-       (unless (handled-p e) (call-next-method)))))                  ; -> container's keymap
+  (let ((ks (event-keysym e)))
+    (cond
+      ((and (logtest (event-modifiers e) tvision::+md-alt+) (characterp ks)   ; Alt-<label mnemonic>
+            (%dispatch-label-hotkey c ks))
+       (setf (handled-p e) t))
+      ((eql ks :tab)       (focus-next c 1)  (setf (handled-p e) t))
+      ((eql ks :shift-tab) (focus-next c -1) (setf (handled-p e) t))
+      (t (let ((f (container-focus c))) (when f (handle-event f e)))   ; -> the focused leaf
+         (unless (handled-p e) (call-next-method))))))                 ; -> container's keymap
 
 ;;; ---------------------------------------------------------------------------
 ;;; Mouse: events carry a screen point; dispatch hit-tests the view tree top-down

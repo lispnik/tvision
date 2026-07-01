@@ -77,6 +77,47 @@
     (fill-row v 0 0 (tvision::rect-width (view-bounds v)) attr)
     (draw-text v 0 0 (static-text-text v) attr)))
 
+;;; --- label: static text linked to a control (TLabel) ------------------------
+;;; TEXT marks its Alt-mnemonic with ~x~; Alt-x (from anywhere in the dialog)
+;;; focuses the LINKed control (referenced by name), and the label brightens
+;;; while that control is focused.
+
+(defclass label (static-text)
+  ((link :initarg :link :initform nil :accessor label-link))   ; NAME of the linked control
+  (:metaclass reactive-class))
+
+(defun %label-hotkey (v)
+  "The label's Alt-mnemonic (the char after the first ~, downcased), or NIL."
+  (let* ((s (or (static-text-text v) "")) (p (position #\~ s)))
+    (when (and p (< (1+ p) (length s))) (char-downcase (char s (1+ p))))))
+
+(defun %label-linked-view (v)
+  (and (label-link v) (find-view (view-root v) (label-link v))))
+
+(defmethod draw ((v label))
+  (let* ((b (view-bounds v)) (w (r-w b)) (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b))
+         (linked (%label-linked-view v))
+         (text-c (role (if (and linked (view-focused-p linked)) :focused :label)))   ; brighten when linked control focused
+         (hot-c  (role :menu-hotkey)))
+    (fill-row v 0 0 w text-c)
+    (loop with x = 0 and hot = nil
+          for ch across (static-text-text v)
+          while (< x w)
+          do (if (char= ch #\~) (setf hot (not hot))
+                 (progn (%put-cell (+ ax x) ay ch (if hot hot-c text-c)) (incf x))))))
+
+(defun %dispatch-label-hotkey (c char)
+  "If a label under container C has Alt-mnemonic CHAR, focus its linked control
+and return T."
+  (let ((labels '()))
+    (labels ((walk (v) (when (typep v 'label) (push v labels))
+               (when (typep v 'container) (mapc #'walk (subviews v)))))
+      (walk c))
+    (let ((lbl (find (char-downcase char) labels :key #'%label-hotkey)))
+      (when lbl
+        (let ((ctrl (%label-linked-view lbl)))
+          (when ctrl (setf (container-focus (view-root c)) ctrl) (invalidate c) t))))))
+
 ;;; --- input-line: an editable single-line text field -------------------------
 ;;; Text/caret/scroll are reactive (edits repaint), and an ON-CHANGE closure
 ;;; (a first-class handler) fires whenever the text changes -- data binding

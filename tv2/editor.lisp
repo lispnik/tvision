@@ -609,8 +609,8 @@ sole candidate, or pop up a chooser when there are several."
                                                     (input-text (find-view d 'r))
                                                     (and (member 0 (cluster-value (find-view d 'rx))) t))))
                  (stack
-                   (1 (row (10 (static-text :role :label :text " Find: "))    (:fill (input-line :name 'f :history-id :find))))
-                   (1 (row (10 (static-text :role :label :text " Replace: ")) (:fill (input-line :name 'r))))
+                   (1 (row (10 (label :role :label :link 'f :text " ~F~ind: "))    (:fill (input-line :name 'f :history-id :find))))
+                   (1 (row (10 (label :role :label :link 'r :text " ~R~eplace: ")) (:fill (input-line :name 'r))))
                    (1 (cluster :name 'rx :mode :check :items (list "regex (^ $ . * + ? \\d \\w [..])") :value '()))
                    (1 (static-text :name 'msg :role :status :text " Enter: replace all · Esc: cancel "))
                    (1 (row (:fill (static-text :text ""))

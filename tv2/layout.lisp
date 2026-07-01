@@ -70,7 +70,7 @@
                        (error "tv2 ui: ~(~a~) child must be (SIZE FORM), got ~s" (car form) entry))
                   collect `(add-laid c ,(expand-ui (second entry)) ,(first entry)))
           c))
-      ((outline button static-text input-line list-box scrollback text-edit html-view cluster table-view)
+      ((outline button static-text label input-line list-box scrollback text-edit html-view cluster table-view)
        `(make-instance ',(car form) ,@(cdr form)))
       (t (error "tv2 ui: unknown widget/form ~s" (car form))))))
 
