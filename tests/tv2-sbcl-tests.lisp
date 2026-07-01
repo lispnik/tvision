@@ -46,5 +46,27 @@
          (= (%note-refine-offset text 6 "undefined variable: BAZ") (search "BAZ" text))))
 
 ;;; ===========================================================================
+;;; 2. Cross-thread backtrace (sb-thread:interrupt-thread + print-backtrace)
+;;; ===========================================================================
+(format t "~%## thread backtrace~%")
+(check "self backtrace is a non-empty string"
+       (let ((bt (%thread-backtrace sb-thread:*current-thread*)))
+         (and (stringp bt) (plusp (length bt)))))
+(let* ((gate (sb-thread:make-semaphore))
+       (th (sb-thread:make-thread
+            (lambda () (sb-thread:wait-on-semaphore gate)) :name "tv2-test-victim")))
+  (sleep 0.1)
+  (let ((bt (%thread-backtrace th)))
+    (check "another thread's backtrace is captured" (and (stringp bt) (plusp (length bt))))
+    (check "backtrace mentions a stack frame"
+           (or (search "SEMAPHORE" (string-upcase bt)) (search "WAIT" (string-upcase bt))
+               (search "(" bt))))
+  (sb-thread:signal-semaphore gate)
+  (ignore-errors (sb-thread:join-thread th :timeout 2))
+  (sleep 0.1)
+  (check "dead thread reports as dead"
+         (string= (%thread-backtrace th) "(thread is dead)")))
+
+;;; ===========================================================================
 (format t "~%~d passed, ~d failed~%" *pass* *fail*)
 (sb-ext:exit :code (if (zerop *fail*) 0 1))
