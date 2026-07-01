@@ -36,7 +36,7 @@ event layers are new.")
    #:window #:window-title #:button #:button-label #:button-command #:static-text
    #:input-line #:input-text #:input-caret #:input-on-change
    #:list-box #:list-items #:list-selected #:list-on-activate
-   #:scrollback #:scrollback-append #:scrollback-clear #:sb-scroll #:sb-follow
+   #:scrollback #:scrollback-append #:scrollback-present #:scrollback-clear #:sb-scroll #:sb-follow #:sb-on-present
    #:cluster #:cluster-value #:cluster-items
    #:table-view #:table-rows #:table-columns #:table-selected
    #:filter-validator #:range-validator #:picture-validator #:digits-validator #:input-validator #:input-history-id

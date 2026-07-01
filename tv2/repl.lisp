@@ -125,15 +125,20 @@ the cross-thread debugger (HANDLER-BIND keeps the stack live for the restart)."
                                /// //  // /  / vals
                                *** **  ** *  * (first vals))
                          (if vals
-                             (dolist (v vals) (push (format nil "=> ~a" (prin1-to-string v)) msgs))
-                             (push "; No values" msgs))))))
-        (repl-abort () (push ";; — aborted to top level —" msgs)))
+                             ;; keep the live object so the printed result is a
+                             ;; clickable presentation (SLY-style)
+                             (dolist (v vals) (push (list :present v (format nil "=> ~a~%" (prin1-to-string v))) msgs))
+                             (push (list :text (format nil "; No values~%")) msgs))))))
+        (repl-abort () (push (list :text (format nil ";; — aborted to top level —~%")) msgs)))
       (setf new-pkg *package*))                         ; sticky IN-PACKAGE (captured before unbind)
     (finish-output out)
-    (let ((lines (nreverse msgs)) (pkg new-pkg))
+    (let ((entries (nreverse msgs)) (pkg new-pkg))
       (run-on-ui (lambda ()
                    (let ((sb (find-view win 'transcript)))
-                     (when sb (dolist (l lines) (scrollback-append sb (concatenate 'string l (string #\Newline))))))
+                     (when sb (dolist (e entries)
+                                (ecase (first e)
+                                  (:present (scrollback-present sb (third e) (second e)))
+                                  (:text    (scrollback-append sb (second e)))))))
                    (setf (repl-package win) pkg (repl-busy win) nil)
                    (%repl-update-prompt win))))))
 
@@ -249,6 +254,14 @@ recalls the chosen line into the input."
 
 ;;; --- entry point ------------------------------------------------------------
 
+(defun %repl-present-inspect (object)
+  "Open an inspector on a clicked REPL result -- its live object (SLY-style)."
+  (let ((label (let ((s (handler-case (prin1-to-string object) (error () "object"))))
+                 (if (> (length s) 40) (concatenate 'string (subseq s 0 37) "…") s))))
+    (if *desktop*
+        (dt-open *desktop* (lambda () (make-inspector object label)))
+        (multiple-value-bind (w f) (make-inspector object label) (run-view w :focus f)))))
+
 (defun make-repl (&optional (package :cl-user))
   "Build a Lisp REPL window.  Return (values WINDOW FOCUS OPEN); OPEN's cleanup
 stops the per-listener worker thread when the window closes."
@@ -257,7 +270,7 @@ stops the per-listener worker thread when the window closes."
                               :keymap *global-keys*
                               :package (or (find-package package) (find-package :cl-user))))
          (body (ui (stack
-                     (:fill (scrollback :name 'transcript))
+                     (:fill (scrollback :name 'transcript :on-present #'%repl-present-inspect))
                      (1 (row (12 (static-text :name 'prompt :role :label :text " CL-USER> "))
                              (:fill (input-line :name 'input :keymap *repl-input-keys*))))
                      (1 (static-text :role :status

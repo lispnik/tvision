@@ -13,7 +13,11 @@
   ((lines   :initform (make-array 0 :adjustable t :fill-pointer 0) :accessor sb-lines)
    (pending :initform "" :accessor sb-pending)        ; incomplete trailing line (no newline yet)
    (top     :initform 0 :accessor sb-top)             ; first visible row
-   (follow  :initform t :accessor sb-follow))         ; stick to the tail as new text arrives
+   (follow  :initform t :accessor sb-follow)          ; stick to the tail as new text arrives
+   ;; SLY-style presentations: line-index -> live object, so a printed result can
+   ;; be clicked to inspect the actual object (the REPL uses this).
+   (presentations :initform (make-hash-table) :accessor sb-presentations)
+   (on-present :initarg :on-present :initform nil :accessor sb-on-present))  ; (object) -> act on a clicked presentation
   (:metaclass reactive-class))
 
 (defmethod focusable-p ((sb scrollback)) t)
@@ -44,9 +48,18 @@ transcript, holding any trailing partial line in PENDING for the next chunk."
   (when (sb-follow sb) (sb-scroll-end sb))
   (invalidate sb))
 
+(defun scrollback-present (sb text object)
+  "Append TEXT (a full result line, ending in newline) and mark the line(s) it
+occupies as a presentation of the live OBJECT, so clicking them fires ON-PRESENT."
+  (let ((first (length (sb-lines sb))))
+    (scrollback-append sb text)
+    (loop for i from first below (length (sb-lines sb))
+          do (setf (gethash i (sb-presentations sb)) object))))
+
 (defun scrollback-clear (sb)
   (setf (fill-pointer (sb-lines sb)) 0
         (sb-pending sb) "" (sb-top sb) 0 (sb-follow sb) t)
+  (clrhash (sb-presentations sb))
   (invalidate sb))
 
 (defun sb-scroll (sb delta)
@@ -57,11 +70,18 @@ transcript, holding any trailing partial line in PENDING for the next chunk."
 
 (defmethod draw ((sb scrollback))
   (let* ((b (view-bounds sb)) (h (r-h b)) (w (r-w b))
-         (attr (role :normal)) (top (sb-top sb)) (total (sb-total sb)))
+         (attr (role :normal)) (pres (role :label)) (top (sb-top sb)) (total (sb-total sb)))
     (dotimes (row h)
-      (let ((i (+ top row)))
-        (fill-row sb 0 row w attr)
-        (when (< i total) (draw-text sb 0 row (sb-row sb i) attr))))))
+      (let* ((i (+ top row))
+             (a (if (nth-value 1 (gethash i (sb-presentations sb))) pres attr)))  ; presentation lines stand out
+        (fill-row sb 0 row w a)
+        (when (< i total) (draw-text sb 0 row (sb-row sb i) a))))))
+
+(defmethod handle-event ((sb scrollback) (e mouse-down))
+  (let ((i (+ (sb-top sb) (mouse-row sb e))))          ; click a presented result -> act on the live object
+    (multiple-value-bind (obj present) (gethash i (sb-presentations sb))
+      (when (and present (sb-on-present sb)) (funcall (sb-on-present sb) obj))))
+  (setf (handled-p e) t))
 
 (defmethod handle-event ((sb scrollback) (e wheel-event))
   (sb-scroll sb (* 3 (event-delta e))) (setf (handled-p e) t))
