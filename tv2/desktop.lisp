@@ -122,7 +122,7 @@
                                     (ia (cond ((and on en) (role :menu-selected)) (en (role :menu)) (t (role :menu-disabled)))))
                                (loop for k from 1 below (1- mww) do (%put-cell (+ bx k) ry #\Space ia))
                                (%text-at (+ bx 2) ry (item-label it) ia)
-                               (cond ((item-submenu-p it) (%put-cell (+ bx mww -3) ry #\▶ ia))
+                               (cond ((item-submenu-p it) (%put-cell (+ bx mww -3) ry #\► ia))
                                      ((item-accel it) (let ((a (accel-label (item-accel it))))
                                                         (%text-at (+ bx mww -2 (- (length a))) ry a ia)))))))
                        (let ((by (+ bt n 1)))                          ; bottom border
