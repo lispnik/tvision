@@ -12,7 +12,10 @@
    (cleanup :initform nil :accessor window-cleanup)     ; thunk run when the desktop closes it
    (scroll-target :initform nil :accessor window-scroll-target)   ; scrollable view -> frame scrollbar
    (help    :initform :general :accessor window-help)   ; help topic for F1 / the Help menu
-   (kind    :initform nil :accessor window-kind))       ; builder keyword, for desktop layout save/restore
+   (kind    :initform nil :accessor window-kind)        ; builder keyword, for desktop layout save/restore
+   (number  :initform nil :accessor window-number)      ; 1..9 z-order number (Alt-N selects it)
+   (zoomed  :initform nil :accessor window-zoomed)      ; filling the desktop?
+   (saved-bounds :initform nil :accessor window-saved-bounds))  ; bounds to restore on un-zoom
   (:metaclass reactive-class))
 
 (defmethod draw ((w window))
@@ -32,9 +35,12 @@
         (draw-vscroll x1 (1+ y0) (1- y1) (scroll-pos tgt) (scroll-max tgt))
         (when (plusp (scroll-hmax tgt))
           (draw-hscroll y1 (1+ x0) (1- x1) (scroll-hpos tgt) (scroll-hmax tgt)))))
-    (when (window-managed w)                            ; desktop affordances: close box + resize grip
-      (%text-at (+ x0 1) y0 "[×]" frame)
-      (%put-cell x1 y1 #\◢ frame))))
+    (when (window-managed w)                            ; desktop affordances
+      (%text-at (+ x0 1) y0 "[×]" frame)                ; close box
+      (when (> (- x1 x0) 7) (%text-at (- x1 4) y0 (if (window-zoomed w) "[↓]" "[↑]") frame))  ; zoom box
+      (when (and (window-number w) (<= 1 (window-number w) 9))    ; z-order number (Alt-N)
+        (%put-cell (- x1 3) y1 (code-char (+ (char-code #\0) (window-number w))) frame))
+      (%put-cell x1 y1 #\◢ frame))))                    ; resize grip
 
 ;;; --- button: focusable, fires a command on Enter/Space ----------------------
 

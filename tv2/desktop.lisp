@@ -240,8 +240,8 @@
          (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b)) (bg (role :desktop)) (top (dt-top dt)))
     (loop for y from (1+ ay) below (+ ay (1- h)) do          ; patterned background
       (loop for x from ax below (+ ax w) do (%put-cell x y #\▒ bg)))
-    (dolist (win (dt-windows dt))                            ; windows back-to-front
-      (setf (window-active win) (eq win top)) (draw win))
+    (loop for win in (dt-windows dt) for i from 1 do        ; windows back-to-front, numbered 1..
+      (setf (window-active win) (eq win top) (window-number win) i) (draw win))
     (draw (dt-statusbar dt))
     (draw (dt-menubar dt))))                                 ; menu + dropdown overlay everything
 
@@ -289,6 +289,21 @@ directly, not persisted).  Cascade-positioned, focused on top."
     (setf (dt-windows dt) (cons (dt-top dt) (butlast (dt-windows dt))))
     (invalidate dt)))
 
+(defun dt-zoom (dt win)
+  "Toggle WIN between its size and filling the desktop content area (classic zoom)."
+  (when (window-managed win)
+    (if (window-zoomed win)
+        (progn (when (window-saved-bounds win) (layout win (window-saved-bounds win)))
+               (setf (window-zoomed win) nil))
+        (progn (setf (window-saved-bounds win) (view-bounds win) (window-zoomed win) t)
+               (layout win (dt-content dt))))
+    (dt-raise dt win) (dt-refocus dt) (invalidate dt)))
+
+(defun dt-select-number (dt n)
+  "Raise + focus the Nth window (1-based z-order), if it exists."
+  (let ((win (nth (1- n) (dt-windows dt))))
+    (when win (dt-raise dt win) (dt-refocus dt) (invalidate dt))))
+
 (defun dt-cascade (dt)
   (let ((c (dt-content dt)))
     (loop for win in (dt-windows dt) for i from 0
@@ -317,8 +332,11 @@ directly, not persisted).  Cascade-positioned, focused on top."
   (let* ((mb (dt-menubar dt)) (top (dt-top dt)) (ks (event-keysym e))
          (alt (logtest (event-modifiers e) tvision::+md-alt+)))
     (cond
+      ((and alt (characterp ks) (digit-char-p ks) (char/= ks #\0))   ; Alt-1..9 selects that window
+       (dt-select-number dt (digit-char-p ks)))
       ((and alt (characterp ks) (menu-hotkey-index mb ks))   ; Alt-<hotkey> opens that menu
        (setf (menu-active mb) (menu-hotkey-index mb ks) (menu-sel mb) 0) (invalidate mb))
+      ((and (eql ks :f5) top) (dt-zoom dt top))             ; F5: zoom/unzoom the top window
       ((eql ks :f1) (dt-help dt))                            ; F1: contextual help
       (top
        (cond
@@ -367,6 +385,8 @@ directly, not persisted).  Cascade-positioned, focused on top."
     (cond
       ((not (typep e 'mouse-down)) (handle-event win e))            ; wheel etc. -> widgets
       ((and (zerop ly) (<= 1 lx 3)) (dt-close-window dt win))       ; [✕] close box
+      ((and (zerop ly) (> w 7) (<= (- w 5) lx (- w 3))) (dt-zoom dt win))  ; [↑] zoom box
+      ((and (zerop ly) (event-double e)) (dt-zoom dt win))          ; double-click title -> zoom
       ((and (= lx (1- w)) (= ly (1- h))) (setf (dt-drag dt) (list :resize win)))  ; resize grip
       ((and (= lx (1- w)) (window-scroll-target win) (>= ly 1) (<= ly (- h 2)))   ; right (vertical) scrollbar
        (multiple-value-bind (sx sy0 sy1) (window-vscroll-bounds win)
@@ -562,6 +582,7 @@ editor buffer text."
              (list "HTML browser"    (lambda () (dt-open dt :html)))
              (list "Package table"   (lambda () (dt-open dt :ptable)))
              :--
+             (list "Zoom"            (lambda () (let ((top (dt-top dt))) (when top (dt-zoom dt top)))) :f5 (any-win))
              (list "Next"            (lambda () (dt-next dt) (dt-refocus dt)) nil (any-win))
              (list "Tile"            (lambda () (dt-tile dt) (dt-refocus dt)) nil (any-win))
              (list "Cascade"         (lambda () (dt-cascade dt) (dt-refocus dt)) nil (any-win))
