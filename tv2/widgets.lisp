@@ -33,7 +33,7 @@
         (when (plusp (scroll-hmax tgt))
           (draw-hscroll y1 (1+ x0) (1- x1) (scroll-hpos tgt) (scroll-hmax tgt)))))
     (when (window-managed w)                            ; desktop affordances: close box + resize grip
-      (%text-at (+ x0 1) y0 "[✕]" frame)
+      (%text-at (+ x0 1) y0 "[×]" frame)
       (%put-cell x1 y1 #\◢ frame))))
 
 ;;; --- button: focusable, fires a command on Enter/Space ----------------------

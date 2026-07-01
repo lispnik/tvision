@@ -123,12 +123,18 @@
                     (draw-items (item-submenu parent) (+ dx mw) (+ dy (menu-sel mb)) (menu-sub mb))))))))
         (incf x (+ 2 (length label)))))))
 
+(defun %menu-run (mb thunk)
+  "Close the menu, then run THUNK -- so the menu doesn't linger over the result."
+  (setf (menu-active mb) nil (menu-sub mb) nil)
+  (invalidate mb)
+  (when thunk (funcall thunk)))
+
 (defun menu-invoke-sel (mb)
-  "Open a submenu parent, or invoke a normal selected item."
+  "Open a submenu parent, or invoke (and close on) a normal selected item."
   (let ((it (nth (menu-sel mb) (menu-items mb))))
     (cond ((null it) nil)
           ((item-submenu-p it) (setf (menu-sub mb) 0) (invalidate mb))
-          ((and (item-enabled it) (item-thunk it)) (funcall (item-thunk it))))))
+          ((and (item-enabled it) (item-thunk it)) (%menu-run mb (item-thunk it))))))
 
 (defmethod handle-event ((mb menu-bar) (e key-event))
   (when (menu-active mb)
@@ -140,7 +146,7 @@
               ((eql ks :down) (setf (menu-sub mb) (%menu-step subs (menu-sub mb) 1)) (invalidate mb) (setf (handled-p e) t))
               ((member ks '(:left :esc)) (setf (menu-sub mb) nil) (invalidate mb) (setf (handled-p e) t))
               ((eql ks :enter) (let ((it (nth (menu-sub mb) subs)))
-                                 (when (and it (item-enabled it) (item-thunk it)) (funcall (item-thunk it))))
+                                 (%menu-run mb (and it (item-enabled it) (item-thunk it))))
                                (setf (handled-p e) t))))
           (cond
             ((eql ks :left)  (setf (menu-active mb) (mod (1- (menu-active mb)) n) (menu-sel mb) 0 (menu-sub mb) nil) (invalidate mb) (setf (handled-p e) t))
@@ -193,7 +199,7 @@
         ((and sx (>= col sx) (< col (+ sx smw)) (>= row sy0) (< row (+ sy0 cnt)))   ; submenu item
          (let* ((idx (- row sy0)) (subs (item-submenu (nth (menu-sel mb) (menu-items mb)))) (it (nth idx subs)))
            (setf (menu-sub mb) idx) (invalidate mb)
-           (when (and it (item-enabled it) (item-thunk it)) (funcall (item-thunk it)))))
+           (%menu-run mb (and it (item-enabled it) (item-thunk it)))))
         ((zerop row)                                  ; clicked a title -> open that menu
          (let ((x 1))
            (loop for menu in (menu-menus mb) for i from 0 do
@@ -233,7 +239,7 @@
   (let* ((b (view-bounds dt)) (w (r-w b)) (h (r-h b))
          (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b)) (bg (role :desktop)) (top (dt-top dt)))
     (loop for y from (1+ ay) below (+ ay (1- h)) do          ; patterned background
-      (loop for x from ax below (+ ax w) do (%put-cell x y #\░ bg)))
+      (loop for x from ax below (+ ax w) do (%put-cell x y #\▒ bg)))
     (dolist (win (dt-windows dt))                            ; windows back-to-front
       (setf (window-active win) (eq win top)) (draw win))
     (draw (dt-statusbar dt))
