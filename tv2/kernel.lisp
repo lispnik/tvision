@@ -283,6 +283,13 @@ along the bottom, offset one cell past the (X0,Y0)-(X1,Y1) box."
 (defgeneric scroll-page (v) (:documentation "Number of visible rows."))
 (defgeneric scroll-to   (v pos) (:documentation "Set the offset (clamped) and repaint."))
 
+;;; The horizontal counterpart; a view with SCROLL-HMAX > 0 gets a bottom
+;;; scrollbar too.  Default: no horizontal scrolling.
+(defgeneric scroll-hpos  (v) (:method (v) (declare (ignore v)) 0))
+(defgeneric scroll-hmax  (v) (:method (v) (declare (ignore v)) 0))
+(defgeneric scroll-hpage (v) (:method (v) (declare (ignore v)) 1))
+(defgeneric scroll-hto   (v pos) (:method (v pos) (declare (ignore v pos)) nil))
+
 ;;; Context-sensitive status-bar chips: a focused view may offer (LABEL . THUNK)
 ;;; actions the desktop appends to the status line.  Default: none.
 (defgeneric status-hints (view) (:method (v) (declare (ignore v)) nil))
@@ -298,6 +305,18 @@ and a thumb positioned by POS/MAX over the track between them."
         (loop for r from 1 below (- y1 y0) do (%put-cell x (+ y0 r) #\░ bar))
         (when (and (plusp max) (plusp track))
           (%put-cell x (+ y0 1 (max 0 (min (1- track) (floor (* pos (1- track)) max)))) #\█ thumb))))))
+
+(defun draw-hscroll (y x0 x1 pos max)
+  "Draw a horizontal scrollbar in row Y with arrows at cols X0 (◄) and X1 (►)
+and a thumb positioned by POS/MAX over the track between them."
+  (let ((bar (role :scrollbar)) (thumb (role :scrollbar-thumb)))
+    (when (> x1 x0)
+      (%put-cell x0 y #\◄ thumb)
+      (%put-cell x1 y #\► thumb)
+      (let ((track (- x1 x0 1)))                       ; inner cols x0+1 .. x1-1
+        (loop for c from 1 below (- x1 x0) do (%put-cell (+ x0 c) y #\░ bar))
+        (when (and (plusp max) (plusp track))
+          (%put-cell (+ x0 1 (max 0 (min (1- track) (floor (* pos (1- track)) max)))) y #\█ thumb))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Focus + containers.  FOCUSABLE-P is a protocol GF (default NIL); a container

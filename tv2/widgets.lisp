@@ -27,9 +27,11 @@
     (%text-at (+ x0 (max 1 (floor (- (tvision::rect-width b) (length (window-title w))) 2)))
               y0 (window-title w) frame)
     (dolist (sv (subviews w)) (draw sv))               ; children paint over the interior
-    (when (window-scroll-target w)                     ; scrollbar on the right frame edge
-      (draw-vscroll x1 (1+ y0) (1- y1)
-                    (scroll-pos (window-scroll-target w)) (scroll-max (window-scroll-target w))))
+    (when (window-scroll-target w)                     ; scrollbars on the right + bottom frame edges
+      (let ((tgt (window-scroll-target w)))
+        (draw-vscroll x1 (1+ y0) (1- y1) (scroll-pos tgt) (scroll-max tgt))
+        (when (plusp (scroll-hmax tgt))
+          (draw-hscroll y1 (1+ x0) (1- x1) (scroll-hpos tgt) (scroll-hmax tgt)))))
     (when (window-managed w)                            ; desktop affordances: close box + resize grip
       (%text-at (+ x0 1) y0 "[✕]" frame)
       (%put-cell x1 y1 #\◢ frame))))

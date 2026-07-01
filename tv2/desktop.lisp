@@ -348,7 +348,11 @@ directly, not persisted).  Cascade-positioned, focused on top."
            (:scroll
             (multiple-value-bind (sx sy0 sy1) (window-vscroll-bounds win)
               (declare (ignore sx))
-              (when sy0 (%scroll-from-click (window-scroll-target win) my sy0 sy1)))))
+              (when sy0 (%scroll-from-click (window-scroll-target win) my sy0 sy1))))
+           (:hscroll
+            (multiple-value-bind (sy hx0 hx1) (window-hscroll-bounds win)
+              (declare (ignore sy))
+              (when hx0 (%hscroll-from-click (window-scroll-target win) mx hx0 hx1)))))
          (invalidate dt))))))
 
 (defun dt-window-click (dt win e)
@@ -358,11 +362,16 @@ directly, not persisted).  Cascade-positioned, focused on top."
       ((not (typep e 'mouse-down)) (handle-event win e))            ; wheel etc. -> widgets
       ((and (zerop ly) (<= 1 lx 3)) (dt-close-window dt win))       ; [✕] close box
       ((and (= lx (1- w)) (= ly (1- h))) (setf (dt-drag dt) (list :resize win)))  ; resize grip
-      ((and (= lx (1- w)) (window-scroll-target win) (>= ly 1) (<= ly (- h 2)))   ; frame scrollbar
+      ((and (= lx (1- w)) (window-scroll-target win) (>= ly 1) (<= ly (- h 2)))   ; right (vertical) scrollbar
        (multiple-value-bind (sx sy0 sy1) (window-vscroll-bounds win)
          (declare (ignore sx))
          (%scroll-from-click (window-scroll-target win) (cdr (event-where e)) sy0 sy1))
        (setf (dt-drag dt) (list :scroll win)))
+      ((and (= ly (1- h)) (window-hscroll-bounds win) (<= 1 lx (- w 2)))          ; bottom (horizontal) scrollbar
+       (multiple-value-bind (sy hx0 hx1) (window-hscroll-bounds win)
+         (declare (ignore sy))
+         (%hscroll-from-click (window-scroll-target win) (car (event-where e)) hx0 hx1))
+       (setf (dt-drag dt) (list :hscroll win)))
       ((zerop ly) (setf (dt-drag dt) (list :move win lx ly)))       ; title bar -> move
       (t (handle-event win e)))                                     ; interior -> widgets
     (invalidate dt)))
