@@ -727,6 +727,13 @@ sole candidate, or pop up a chooser when there are several."
 
 ;;; --- the editor window ------------------------------------------------------
 
+;; classic TV's TIndicator: line:col, a modified marker, and INS/OVR, shown on the
+;; window's bottom frame to the left of the horizontal scrollbar (see the WINDOW
+;; DRAW method, which calls FRAME-INDICATOR on its scroll target).
+(defmethod frame-indicator ((te text-edit))
+  (format nil " ~d:~d~:[~; *~] ~a " (1+ (te-cy te)) (1+ (te-cx te))
+          (te-modified te) (if (te-overwrite te) "OVR" "INS")))
+
 (defun %editor-status (win)
   (let ((te (find-view win 'edit)) (st (find-view win 'status)))
     (when (and te st)
@@ -734,11 +741,10 @@ sole candidate, or pop up a chooser when there are several."
             (if (te-isearch te)
                 (format nil " I-search~:[~;-fail~]: ~a▉   Ctrl-S: next · Enter: accept · Esc: cancel "
                         (te-isearch-fail te) (te-isearch te))
-            (format nil " ~a~:[~;*~]   L~d:C~d   ~a~:[~; sel~]~:[~; wrap~]   C-s save · Ins: OVR/INS · Esc quit "
+            ;; line:col + INS/OVR now live on the bottom frame (FRAME-INDICATOR)
+            (format nil " ~a~:[~;*~]~:[~; sel~]~:[~; wrap~]    C-s save · Ins: OVR/INS · Esc quit "
                     (if (te-filename te) (file-namestring (te-filename te)) "scratch")
-                    (te-modified te) (1+ (te-cy te)) (1+ (te-cx te))
-                    (if (te-overwrite te) "OVR" "INS")
-                    (te-selected-string te) (te-wrap te))))
+                    (te-modified te) (te-selected-string te) (te-wrap te))))
       (invalidate st))))
 
 (defun %editor-find (te)

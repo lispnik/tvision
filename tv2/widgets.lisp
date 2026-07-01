@@ -18,6 +18,11 @@
    (saved-bounds :initform nil :accessor window-saved-bounds))  ; bounds to restore on un-zoom
   (:metaclass reactive-class))
 
+(defgeneric frame-indicator (view)
+  (:documentation "A short string a scroll-target view puts on its window's bottom
+frame, left of the horizontal scrollbar (classic TV's TIndicator).  NIL for none.")
+  (:method (view) (declare (ignore view)) nil))
+
 (defmethod draw ((w window))
   (let* ((b (view-bounds w))
          (x0 (tvision::rect-ax b)) (y0 (tvision::rect-ay b))
@@ -31,17 +36,19 @@
               y0 (window-title w) frame)
     (dolist (sv (subviews w)) (draw sv))               ; children paint over the interior
     (when (window-scroll-target w)                     ; scrollbars on the right + bottom frame edges
-      (let ((tgt (window-scroll-target w)) (sb (role :scrollbar)) (hscroll nil))
+      (let* ((tgt (window-scroll-target w)) (sb (role :scrollbar))
+             (ind (frame-indicator tgt))               ; e.g. " 12:5 * INS " for an editor
+             (iw (if ind (length ind) 0)) (hmax (scroll-hmax tgt)))
         (draw-vscroll x1 (1+ y0) (1- y1) (scroll-pos tgt) (scroll-max tgt))
-        (when (plusp (scroll-hmax tgt))
-          (setf hscroll t)
-          (draw-hscroll y1 (1+ x0) (1- x1) (scroll-hpos tgt) (scroll-hmax tgt)))
         ;; classic TV: the scrollbar owns its end cells, drawn as box elbows in
-        ;; the bar colour (not a resize grip) -- ┐ top-right, ┘ bottom-right,
-        ;; └ bottom-left where the horizontal bar meets the frame
+        ;; the bar colour -- ┐ top-right, ┘ bottom-right, └ bottom-left
         (%put-cell x1 y0 #\┐ sb)
         (%put-cell x1 y1 #\┘ sb)
-        (when hscroll (%put-cell x0 y1 #\└ sb))))
+        (when (or ind (plusp hmax)) (%put-cell x0 y1 #\└ sb))
+        ;; the position/insert indicator sits on the bottom frame, LEFT of the bar
+        (when ind (%text-at (+ x0 1) y1 ind frame))
+        (when (plusp hmax)                             ; horizontal bar, to the right of the indicator
+          (draw-hscroll y1 (+ x0 1 iw) (1- x1) (scroll-hpos tgt) hmax))))
     (when (window-managed w)                            ; desktop affordances
       (%text-at (+ x0 1) y0 "[×]" frame)                ; close box
       (when (> (- x1 x0) 7) (%text-at (- x1 4) y0 (if (window-zoomed w) "[↓]" "[↑]") frame))  ; zoom box
