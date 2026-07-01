@@ -639,6 +639,16 @@ sole candidate, or pop up a chooser when there are several."
         (cons (if (te-wrap te) "Wrap:on" "Wrap:off")
               (lambda () (setf (te-wrap te) (not (te-wrap te)) (te-left te) 0) (te-ensure-visible te) (invalidate te))))))
 
+(defmethod context-menu ((te text-edit))   ; right-click menu in the editor
+  (append
+   (list (cons "Cut"   (lambda () (te-cut te) (te-ensure-visible te) (invalidate te)))
+         (cons "Copy"  (lambda () (te-copy te)))
+         (cons "Paste" (lambda () (te-paste te) (te-ensure-visible te) (invalidate te))))
+   (when *editor-eval-fn* (list (cons "Eval" (lambda () (funcall *editor-eval-fn* te)))))
+   (list (cons "Comment region" (lambda () (%comment-region te)))
+         (cons "Undo" (lambda () (te-undo! te)))
+         (cons "Redo" (lambda () (te-redo! te))))))
+
 (defclass editor-window (window) () (:metaclass reactive-class))
 (defmethod draw :before ((w editor-window)) (%editor-status w))   ; keep the status line live each repaint
 

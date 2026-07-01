@@ -406,6 +406,16 @@ directly, not persisted).  Cascade-positioned, focused on top."
   (let* ((w (event-where e)) (x (car w)) (y (cdr w)) (mb (dt-menubar dt)))
     (cond
       ((dt-drag dt) (dt-drag-update dt e))                 ; in a move/resize drag
+      ((and (typep e 'mouse-down) (logtest (event-buttons e) tvision::+mb-right+))  ; right-click -> context menu
+       (let ((win (dt-window-at dt x y)))
+         (when win
+           (dt-raise dt win) (dt-refocus dt)
+           (let ((v (view-at win x y)))                     ; position the cursor/selection, then pop up
+             (when v (handle-event v (make-instance 'mouse-down :where (cons x y)
+                                                     :buttons tvision::+mb-left+)))
+             (let ((items (and v (context-menu v))))
+               (when items (popup-menu items :x x :y (1+ y))))))
+         (invalidate dt)))
       ((menu-hit-p mb x y) (handle-event mb e))
       ((and (typep e 'mouse-down) (= y (tvision::rect-ay (view-bounds (dt-statusbar dt)))))
        (handle-event (dt-statusbar dt) e))                 ; status-bar chips

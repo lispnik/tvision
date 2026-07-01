@@ -111,3 +111,47 @@ finishes; return its result value, or :CANCEL."
                 (container-focus host) ol)        ; focus the outline so the jump is visible
           (ov-scroll-to-focus ol)
           (invalidate ol))))))
+
+;;; --- context / popup menus (right-click) ------------------------------------
+
+(defgeneric context-menu (view)
+  (:documentation "Right-click menu for VIEW: a list of (LABEL . THUNK), or NIL.")
+  (:method (v) (declare (ignore v)) nil))
+
+(defun popup-menu (items &key (x 0) (y 0))
+  "Show a context menu of (LABEL . THUNK) items at screen (X,Y) and run the chosen
+thunk.  Modal: ↑/↓ navigate, Enter/click invokes, Esc / click-outside cancels."
+  (when items
+    (let* ((s tvision:*screen*) (n (length items))
+           (w (+ 2 (reduce #'max items :key (lambda (it) (length (car it))) :initial-value 6)))
+           (sw (tvision:screen-width s)) (sh (tvision:screen-height s))
+           (x (max 0 (min x (- sw w 2)))) (y (max 0 (min y (- sh n 1))))
+           (sel 0) (chosen nil) (done nil))
+      (loop until done do
+        (drain-ui-callbacks)
+        (tvision:hide-cursor s)
+        (when *root* (draw *root*))
+        (%drop-shadow x y (+ x w -1) (+ y n -1))
+        (loop for it in items for r from 0 do
+          (let ((ia (if (= r sel) (role :menu-selected) (role :menu))))
+            (loop for k below w do (%put-cell (+ x k) (+ y r) #\Space ia))
+            (%text-at (+ x 1) (+ y r) (car it) ia)))
+        (tvision:flush-screen s)
+        (tvision::pump-input s 0.05)
+        (let ((tev (tvision::screen-next-event s)))
+          (when tev
+            (let ((ev (translate tev)))
+              (when ev
+                (typecase ev
+                  (key-event (case (event-keysym ev)
+                               (:up   (setf sel (mod (1- sel) n)))
+                               (:down (setf sel (mod (1+ sel) n)))
+                               (:enter (setf chosen (nth sel items) done t))
+                               (:esc  (setf done t))))
+                  (mouse-down
+                   (let ((mx (car (event-where ev))) (my (cdr (event-where ev))))
+                     (if (and (<= x mx (+ x w -1)) (<= y my (+ y n -1)))
+                         (setf chosen (nth (- my y) items) done t)
+                         (setf done t))))))))))    ; click outside cancels
+      (invalidate *root*)
+      (when (and chosen (cdr chosen)) (funcall (cdr chosen))))))

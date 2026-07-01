@@ -295,6 +295,15 @@ so MAKE-PATHNAME won't inherit a type from anything it is merged against."
           (when q (setf (input-text q) name (input-caret q) (length name)) (input-notify q))
           (%pm-echo win (format nil " revealing ~a " name))))))
 
+(defmethod context-menu ((v outline))   ; right-click menu on the project tree
+  (let ((w (view-root v)))
+    (when (typep w 'project-window)
+      (list (cons "Open"     (lambda () (%pm-open-current w)))
+            (cons "Rename…"  (lambda () (%pm-rename-file w)))
+            (cons "Delete…"  (lambda () (%pm-delete-file w)))
+            (cons "New file…" (lambda () (%pm-new-file w)))
+            (cons "Refresh"  (lambda () (%pm-rebuild w)))))))
+
 (defkeymap *proj-keys* (*outline-keys*)
   (:enter proj-open))                    ; override Enter; arrows/Right/Left inherit from *outline-keys*
 
