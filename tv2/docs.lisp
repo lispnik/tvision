@@ -127,6 +127,20 @@
                     (list "Class browser"    (lambda () (dt-open dt :classes)))
                     (list "Function browser" (lambda () (dt-open dt :functions)))
                     (list "Method browser…"  (lambda () (do-method-browser))))   ; nav.lisp
+              (list "SBCL" :submenu                                              ; sbcl.lisp
+                    (list "Type expand…"          (lambda () (do-typexpand)))
+                    (list "Environment info…"     (lambda () (do-env-info)))
+                    :--
+                    (list "Allocation of value…"  (lambda () (do-allocation-info)))
+                    (list "Allocation profile…"   (lambda () (do-aprof)))
+                    :--
+                    (list "GC / heap stats"       (lambda () (do-gc-stats)))
+                    (list "GC now (full)"         (lambda () (do-gc-now)))
+                    (list "Evaluator mode toggle" (lambda () (do-toggle-evaluator-mode)))
+                    :--
+                    (list "Locked packages"       (lambda () (do-package-locks)))
+                    (list "Lock package…"         (lambda () (do-lock-package)))
+                    (list "Unlock package…"       (lambda () (do-unlock-package))))
               :--
               (list "Object *" :submenu                                          ; inspect.lisp
                     (list "Clip last value"  (lambda () (do-clip-last-value)))

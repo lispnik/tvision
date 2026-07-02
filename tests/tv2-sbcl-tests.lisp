@@ -107,5 +107,23 @@
 (check "unwatch removes it" (not (member 'ct-probe *ct-watched*)))
 
 ;;; ===========================================================================
+;;; 5. SBCL feature tools (typexpand, allocation, GC, evaluator mode, locks, cltl2)
+;;; ===========================================================================
+(format t "~%## SBCL feature tools~%")
+(check "typexpand-1 expands a derived type"
+       (equal (multiple-value-list (sb-ext:typexpand-1 '(mod 8))) '((integer 0 7) t)))
+(check "typexpand fully expands to a primitive"
+       (subtypep (sb-ext:typexpand 'sb-impl::index) 'integer))
+(check "generation-of: a heap object has a generation" (integerp (sb-kernel:generation-of (make-array 3))))
+(check "generation-of: a fixnum is immediate (nil)"    (null (sb-kernel:generation-of 5)))
+(check "GC stats text mentions consed + space"
+       (let ((txt (%gc-stats-text))) (and (search "consed" txt) (search "space" txt))))
+(check "aprof availability is a boolean" (member (%aprof-available-p) '(t nil)))
+(check "evaluator mode is :compile or :interpret" (member sb-ext:*evaluator-mode* '(:compile :interpret)))
+(check "package-locked-p: CL is locked" (sb-ext:package-locked-p (find-package :cl)))
+(check "cltl2 function-information: CAR is a function" (eq (sb-cltl2:function-information 'car nil) :function))
+(check "cltl2 declaration-information: OPTIMIZE is an alist" (consp (sb-cltl2:declaration-information 'optimize nil)))
+
+;;; ===========================================================================
 (format t "~%~d passed, ~d failed~%" *pass* *fail*)
 (sb-ext:exit :code (if (zerop *fail*) 0 1))

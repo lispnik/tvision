@@ -47,5 +47,6 @@
                              (:file "nav")
                              (:file "compile")
                              (:file "editing")
+                             (:file "sbcl")
                              (:file "docs")
                              (:file "app")))))
