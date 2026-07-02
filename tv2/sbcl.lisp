@@ -49,8 +49,9 @@ answers the useful part)."
 
 ;;; --- deterministic allocation profiler (sb-aprof; x86-64 only) --------------
 
-(defun %aprof-available-p () (and (find-package "SB-APROF")
-                                  (let ((r (find-symbol "APROF-RUN" "SB-APROF"))) (and r (fboundp r)))))
+(defun %aprof-available-p ()
+  (and (find-package "SB-APROF")
+       (let ((r (find-symbol "APROF-RUN" "SB-APROF"))) (and r (fboundp r) t))))   ; strict boolean
 
 (defun do-aprof ()
   "Profile exactly what a form allocates, per call site (sb-aprof)."
