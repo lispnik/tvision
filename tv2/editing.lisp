@@ -219,6 +219,14 @@ count.  Undoable; keeps the cursor near its original offset."
         (flet ((cur () (%focused-editor))
                (pe (op) (lambda () (%editor-paredit (%focused-editor) op))))
           (list "Edit"
+                (list "Undo"                (lambda () (let ((te (cur))) (when te (te-undo! te)))))
+                (list "Redo"                (lambda () (let ((te (cur))) (when te (te-redo! te)))))
+                :--
+                (list "Cut"                 (lambda () (let ((te (cur))) (when te (te-cut te) (te-ensure-visible te) (invalidate te)))))
+                (list "Copy"                (lambda () (let ((te (cur))) (when te (te-copy te)))))
+                (list "Paste"               (lambda () (let ((te (cur))) (when te (te-paste te) (te-ensure-visible te) (invalidate te)))))
+                (list "Select all"          (lambda () (let ((te (cur))) (when te (te-select-all te) (te-ensure-visible te) (invalidate te)))))
+                :--
                 (list "Comment region"      (lambda () (%comment-region (cur))))
                 (list "Pretty-print region" (lambda () (%pretty-print-selection (cur))))
                 (list "Insert snippet…"     (lambda () (%insert-snippet (cur))))

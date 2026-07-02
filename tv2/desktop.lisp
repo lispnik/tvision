@@ -18,6 +18,10 @@ until Enter/Esc.  Driven from Window ▸ Size/move.")
 
 ;;; --- status bar -------------------------------------------------------------
 
+(defvar *tool-message* ""
+  "Last transient note (from %TOOL-NOTE); shown right-aligned on the status bar so
+tool feedback is visible without raising or refocusing any window.")
+
 (defclass status-bar (view)
   ((provider :initarg :provider :initform nil :accessor stb-provider)  ; thunk -> ((LABEL . THUNK) ...)
    (ranges   :initform '() :accessor stb-ranges))                      ; ((X0 X1 . THUNK) ...) for hit-testing
@@ -25,16 +29,21 @@ until Enter/Esc.  Driven from Window ▸ Size/move.")
 
 (defmethod draw ((b status-bar))
   (let* ((attr (role :status)) (w (r-w (view-bounds b)))
-         (items (and (stb-provider b) (funcall (stb-provider b)))) (x 0))
+         (items (and (stb-provider b) (funcall (stb-provider b))))
+         (msg (and (plusp (length *tool-message*)) (format nil " ~a " *tool-message*)))
+         (limit (if msg (max 0 (- w (length msg))) w))       ; reserve the right for the note
+         (x 0))
     (fill-row b 0 0 w attr)
     (setf (stb-ranges b) '())
     (dolist (it items)
       (let* ((label (format nil " ~a " (car it))) (n (length label)))
-        (when (< (+ x n) w)
+        (when (< (+ x n) limit)
           (draw-text b x 0 label attr)
           (push (list x (+ x n) (cdr it)) (stb-ranges b))
           (incf x n)
-          (when (< (1+ x) w) (draw-text b x 0 "│" attr) (incf x 1)))))))
+          (when (< (1+ x) limit) (draw-text b x 0 "│" attr) (incf x 1)))))
+    (when msg                                                ; right-aligned transient note, always visible
+      (draw-text b (max 0 (- w (length msg))) 0 msg (role :focused)))))
 
 (defmethod handle-event ((b status-bar) (e mouse-down))
   (let ((col (mouse-col b e)))

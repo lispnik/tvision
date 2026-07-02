@@ -37,12 +37,16 @@ WINDOW FOCUS)."
     (dt-refocus *desktop*) (invalidate *desktop*)))
 
 (defun %tool-note (msg)
-  "Echo MSG into the REPL transcript (opening/raising/focusing the REPL)."
-  (let ((r (ensure-repl)))
-    (when r
-      (let ((sb (find-view r 'transcript)))
-        (when sb (scrollback-append sb (format nil "; ~a~%" msg))))
-      (%focus-repl r))))
+  "Show MSG as a transient status-bar note and log it to the REPL transcript,
+WITHOUT raising or refocusing any window (so a tool action never yanks the REPL
+over the editor you're working in)."
+  (setf *tool-message* msg)
+  (when *desktop*
+    (ignore-errors (invalidate (dt-statusbar *desktop*)))
+    (let ((r (%dt-repl *desktop*)))                          ; log to an existing REPL, in place
+      (when r
+        (let ((sb (find-view r 'transcript)))
+          (when sb (scrollback-append sb (format nil "; ~a~%" msg))))))))
 
 (defun do-trace ()
   "TRACE a function, or UNTRACE it when already traced (output appears in REPL)."
