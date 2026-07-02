@@ -27,11 +27,11 @@ jobs:
 
       - name: Install ocicl (pinned)
         env:
-          OCICL_VERSION: v2.16.14
+          OCICL_VERSION: "2.16.14"
         run: |
-          git clone --branch "$OCICL_VERSION" --depth 1 https://github.com/ocicl/ocicl.git /tmp/ocicl
-          make -C /tmp/ocicl
-          sudo make -C /tmp/ocicl install
+          curl -fsSL -o /tmp/ocicl.tgz "https://github.com/ocicl/ocicl/releases/download/v${OCICL_VERSION}/ocicl-${OCICL_VERSION}-linux-amd64.tar.gz"
+          sudo tar -xzf /tmp/ocicl.tgz -C /usr/local/bin ./ocicl
+          ocicl version
           ocicl setup > /dev/null 2>&1 || true
 
       - name: Restore Lisp dependencies
