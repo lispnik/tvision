@@ -14,15 +14,22 @@ jobs:
       - name: Install SBCL
         run: sudo apt-get update && sudo apt-get install -y sbcl make git
 
+      # Warm path: on an exact csv match the deps are reused as-is; otherwise
+      # restore-keys pulls the most recent cache and `ocicl install` fetches only
+      # the delta (also cushions ghcr rate limits / hiccups).
       - name: Cache Lisp dependencies
         uses: actions/cache@v4
         with:
           path: systems
-          key: ocicl-${{ hashFiles('systems.csv') }}
+          key: ocicl-deps-${{ runner.os }}-${{ hashFiles('systems.csv') }}
+          restore-keys: |
+            ocicl-deps-${{ runner.os }}-
 
-      - name: Install ocicl
+      - name: Install ocicl (pinned)
+        env:
+          OCICL_VERSION: v2.16.14
         run: |
-          git clone --depth 1 https://github.com/ocicl/ocicl.git /tmp/ocicl
+          git clone --branch "$OCICL_VERSION" --depth 1 https://github.com/ocicl/ocicl.git /tmp/ocicl
           make -C /tmp/ocicl
           sudo make -C /tmp/ocicl install
           ocicl setup > /dev/null 2>&1 || true
