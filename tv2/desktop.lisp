@@ -21,6 +21,17 @@ until Enter/Esc.  Driven from Window ▸ Size/move.")
 (defvar *tool-message* ""
   "Last transient note (from %TOOL-NOTE); shown right-aligned on the status bar so
 tool feedback is visible without raising or refocusing any window.")
+(defvar *tool-message-time* 0 "INTERNAL-REAL-TIME when *TOOL-MESSAGE* was last set.")
+(defparameter *tool-message-ttl* 4 "Seconds a status-bar note lingers before auto-clearing.")
+
+(defun %expire-tool-message ()
+  "Clear the status-bar note once it has been shown for *TOOL-MESSAGE-TTL* seconds.
+Returns T when it cleared (so the loop can mark the screen dirty)."
+  (when (and (plusp (length *tool-message*))
+             (> (- (get-internal-real-time) *tool-message-time*)
+                (* *tool-message-ttl* internal-time-units-per-second)))
+    (setf *tool-message* "")
+    t))
 
 (defclass status-bar (view)
   ((provider :initarg :provider :initform nil :accessor stb-provider)  ; thunk -> ((LABEL . THUNK) ...)
@@ -795,6 +806,7 @@ Returns on File→Exit."
       (dt-load-layout dt)                                    ; restore the previous session's windows
       (loop until *app-done* do
         (drain-ui-callbacks)
+        (when (%expire-tool-message) (setf *dirty* t))        ; auto-clear the status-bar note
         (when *dirty*
           (tvision:hide-cursor s)
           (draw dt) (tvision:flush-screen s) (setf *dirty* nil))

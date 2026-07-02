@@ -40,7 +40,7 @@ WINDOW FOCUS)."
   "Show MSG as a transient status-bar note and log it to the REPL transcript,
 WITHOUT raising or refocusing any window (so a tool action never yanks the REPL
 over the editor you're working in)."
-  (setf *tool-message* msg)
+  (setf *tool-message* msg *tool-message-time* (get-internal-real-time))
   (when *desktop*
     (ignore-errors (invalidate (dt-statusbar *desktop*)))
     (let ((r (%dt-repl *desktop*)))                          ; log to an existing REPL, in place
