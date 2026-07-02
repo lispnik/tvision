@@ -15,6 +15,7 @@ SBCL ?= sbcl
 # works even without a global ocicl/ASDF config.
 define asdf-load
 $(SBCL) --non-interactive \
+	--eval '(require :asdf)' \
 	--eval '(asdf:initialize-source-registry (list :source-registry (list :tree (uiop:getcwd)) :inherit-configuration))' \
 	--eval '(handler-bind ((warning (function muffle-warning))) $(1))' \
 	--eval '(uiop:quit 0)'
@@ -40,6 +41,7 @@ test-tv2: tv2.asd $(wildcard tv2/*.lisp) tests/tv2-sbcl-tests.lisp tests/tv2-edi
 # Run the headless control test suite (exit non-zero on any failure).
 test-lisp: $(FRAMEWORK) tests/tvision-tests.lisp
 	$(SBCL) --non-interactive \
+		--eval '(require :asdf)' \
 		--eval '(asdf:initialize-source-registry (list :source-registry (list :tree (uiop:getcwd)) :inherit-configuration))' \
 		--eval '(handler-bind ((warning (function muffle-warning))) (asdf:load-system :tvision/tests))' \
 		--eval '(sb-ext:exit :code (if (zerop (tvision-tests:run-tests)) 0 1))'
