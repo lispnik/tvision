@@ -8,7 +8,10 @@
 ;;;; Run from the repo root:  sbcl --script tests/tv2-editor-tests.lisp
 
 (require :asdf)
-(asdf:load-asd (truename "tv2.asd"))
+;; register this dir tree so tv2.asd, tvision.asd and the vendored systems/ deps
+;; all resolve without a global ocicl/ASDF config (works on bare CI too).
+(asdf:initialize-source-registry
+ (list :source-registry (list :tree (uiop:getcwd)) :inherit-configuration))
 (handler-bind ((warning #'muffle-warning)) (asdf:load-system :tv2))
 (in-package #:tv2)
 
