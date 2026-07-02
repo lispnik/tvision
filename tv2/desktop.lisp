@@ -630,8 +630,8 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
 ;;; --- a small window demonstrating the cluster controls ----------------------
 
 (defun make-options ()
-  "A demo window showing checkbox and radio clusters with a live echo."
-  (let* ((win (ui (window (:title " Options (cluster controls) " :keymap *global-keys*)
+  "IDE settings.  The status-note timeout is live — editing it applies at once."
+  (let* ((win (ui (window (:title " Settings " :keymap *global-keys*)
                     (stack
                       (1 (static-text :role :label :text " Features — ↑/↓, Space or click toggles: "))
                       (4 (cluster :name 'features :mode :check
@@ -639,8 +639,13 @@ plus the focused widget's own STATUS-HINTS, plus the always-on globals."
                            :value (list 0)))
                       (1 (static-text :role :label :text " Theme — radio: "))
                       (3 (cluster :name 'theme :mode :radio :items (list "Blue" "Dark" "Light") :value 0))
+                      (1 (row (30 (static-text :role :label :text " Status-note timeout (1–60 s): "))
+                              (:fill (input-line :name 'ttl :text (princ-to-string *tool-message-ttl*)
+                                       :on-change (lambda (il)
+                                                    (let ((n (parse-integer (input-text il) :junk-allowed t)))
+                                                      (when (and n (<= 1 n 60)) (setf *tool-message-ttl* n))))))))
                       (:fill (static-text :name 'echo :role :status :text ""))
-                      (1 (static-text :role :status :text " Space/click toggles · Tab switches groups · Esc closes ")))))))
+                      (1 (static-text :role :status :text " Space/click toggles · type to set the timeout · Tab switches · Esc closes ")))))))
     (values win (find-view win 'features))))
 
 ;;; --- desktop layout persistence (whole-desktop save / restore) --------------
