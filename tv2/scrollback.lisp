@@ -17,19 +17,40 @@
    ;; SLY-style presentations: line-index -> live object, so a printed result can
    ;; be clicked to inspect the actual object (the REPL uses this).
    (presentations :initform (make-hash-table) :accessor sb-presentations)
-   (on-present :initarg :on-present :initform nil :accessor sb-on-present))  ; (object) -> act on a clicked presentation
+   (on-present :initarg :on-present :initform nil :accessor sb-on-present)   ; (object) -> act on a clicked presentation
+   ;; optional inline input line (SLIME/SLY-style: the prompt floats after the
+   ;; output rather than a fixed input row).  When IACTIVE, the last line is a
+   ;; live "IPROMPT INPUT"; new output appends before it, so it drifts down.
+   (iactive :initform nil :accessor sb-iactive)
+   (input   :initform "" :accessor sb-input)
+   (icaret  :initform 0  :accessor sb-icaret)
+   (iprompt :initform "" :accessor sb-iprompt)
+   (on-submit :initarg :on-submit :initform nil :accessor sb-on-submit))   ; (input-string) -> submit
   (:metaclass reactive-class))
 
 (defmethod focusable-p ((sb scrollback)) t)
 
-(defun sb-total (sb)
+(defun sb-input-index (sb)
+  "The line index at which the live input line (when IACTIVE) sits: right after
+the committed output + any pending partial line."
   (+ (length (sb-lines sb)) (if (plusp (length (sb-pending sb))) 1 0)))
 
+(defun sb-total (sb)
+  (+ (sb-input-index sb) (if (sb-iactive sb) 1 0)))
+
 (defun sb-row (sb i)
-  (let ((n (length (sb-lines sb))))
+  (let ((n (length (sb-lines sb))) (pend (plusp (length (sb-pending sb)))))
     (cond ((< i n) (aref (sb-lines sb) i))
-          ((= i n) (sb-pending sb))
+          ((and pend (= i n)) (sb-pending sb))
+          ((and (sb-iactive sb) (= i (sb-input-index sb)))
+           (format nil "~a ~a" (sb-iprompt sb) (sb-input sb)))
           (t ""))))
+
+(defun sb-set-input (sb text)
+  "Replace the live input with TEXT (caret at end); used for history recall."
+  (setf (sb-input sb) (or text "") (sb-icaret sb) (length (or text "")))
+  (when (sb-follow sb) (sb-scroll-end sb))
+  (invalidate sb))
 
 (defun sb-scroll-end (sb)
   "Pin the viewport to the last page (so the newest line is on screen)."
@@ -70,12 +91,26 @@ occupies as a presentation of the live OBJECT, so clicking them fires ON-PRESENT
 
 (defmethod draw ((sb scrollback))
   (let* ((b (view-bounds sb)) (h (r-h b)) (w (r-w b))
-         (attr (role :normal)) (pres (role :label)) (top (sb-top sb)) (total (sb-total sb)))
+         (attr (role :normal)) (pres (role :label)) (top (sb-top sb)) (total (sb-total sb))
+         (iidx (and (sb-iactive sb) (sb-input-index sb))))
     (dotimes (row h)
-      (let* ((i (+ top row))
-             (a (if (nth-value 1 (gethash i (sb-presentations sb))) pres attr)))  ; presentation lines stand out
-        (fill-row sb 0 row w a)
-        (when (< i total) (draw-text sb 0 row (sb-row sb i) a))))))
+      (let ((i (+ top row)))
+        (cond
+          ((eql i iidx)                                ; the live input line: prompt stands out
+           (fill-row sb 0 row w attr)
+           (draw-text sb 0 row (sb-iprompt sb) (role :label))
+           (draw-text sb (1+ (length (sb-iprompt sb))) row (sb-input sb) attr))
+          (t (let ((a (if (nth-value 1 (gethash i (sb-presentations sb))) pres attr)))  ; presentations stand out
+               (fill-row sb 0 row w a)
+               (when (< i total) (draw-text sb 0 row (sb-row sb i) a)))))))
+    (when (and iidx (view-focused-p sb) tvision:*screen*)   ; the text cursor sits in the input
+      (let ((row (- iidx top)))
+        (when (<= 0 row (1- h))
+          (tvision:set-cursor-pos tvision:*screen*
+                                  (+ (tvision::rect-ax b) 1 (length (sb-iprompt sb)) (sb-icaret sb))
+                                  (+ (tvision::rect-ay b) row))
+          (tvision:set-cursor-shape :underline)
+          (tvision:show-cursor tvision:*screen*))))))
 
 (defmethod handle-event ((sb scrollback) (e mouse-down))
   (let ((i (+ (sb-top sb) (mouse-row sb e))))          ; click a presented result -> act on the live object
@@ -86,13 +121,38 @@ occupies as a presentation of the live OBJECT, so clicking them fires ON-PRESENT
 (defmethod handle-event ((sb scrollback) (e wheel-event))
   (sb-scroll sb (* 3 (event-delta e))) (setf (handled-p e) t))
 
+(defun %sb-edit-input (sb ks)
+  "Edit the live input line for keystroke KS; return T when consumed (else the key
+bubbles to the window keymap: Up/Down history, Tab completion, Ctrl-R, Esc quit)."
+  (let ((in (sb-input sb)) (c (sb-icaret sb)))
+    (cond
+      ((and (characterp ks) (graphic-char-p ks))
+       (setf (sb-input sb) (concatenate 'string (subseq in 0 c) (string ks) (subseq in c))
+             (sb-icaret sb) (1+ c))
+       (when (sb-follow sb) (sb-scroll-end sb)) (invalidate sb) t)
+      ((eql ks :back)  (when (plusp c)
+                         (setf (sb-input sb) (concatenate 'string (subseq in 0 (1- c)) (subseq in c))
+                               (sb-icaret sb) (1- c)))
+                       (invalidate sb) t)
+      ((eql ks :del)   (when (< c (length in))
+                         (setf (sb-input sb) (concatenate 'string (subseq in 0 c) (subseq in (1+ c)))))
+                       (invalidate sb) t)
+      ((eql ks :left)  (setf (sb-icaret sb) (max 0 (1- c))) (invalidate sb) t)
+      ((eql ks :right) (setf (sb-icaret sb) (min (length in) (1+ c))) (invalidate sb) t)
+      ((eql ks :home)  (setf (sb-icaret sb) 0) (invalidate sb) t)
+      ((eql ks :end)   (setf (sb-icaret sb) (length in)) (invalidate sb) t)
+      ((eql ks :enter) (when (sb-on-submit sb) (funcall (sb-on-submit sb) in)) t)
+      (t nil))))
+
 (defmethod handle-event ((sb scrollback) (e key-event))
   (let* ((ks (event-keysym e)) (page (max 1 (1- (r-h (view-bounds sb))))))
     (cond
-      ((eql ks :up)   (sb-scroll sb -1)      (setf (handled-p e) t))
-      ((eql ks :down) (sb-scroll sb 1)       (setf (handled-p e) t))
+      ((and (sb-iactive sb) (%sb-edit-input sb ks)) (setf (handled-p e) t))
       ((eql ks :pgup) (sb-scroll sb (- page))(setf (handled-p e) t))
       ((eql ks :pgdn) (sb-scroll sb page)    (setf (handled-p e) t))
-      ((eql ks :home) (setf (sb-top sb) 0 (sb-follow sb) nil) (invalidate sb) (setf (handled-p e) t))
-      ((eql ks :end)  (setf (sb-follow sb) t) (sb-scroll-end sb) (invalidate sb) (setf (handled-p e) t))
-      (t (call-next-method)))))                       ; q / Esc bubble to the window
+      ;; when there is no inline input, plain Up/Down/Home/End scroll the log
+      ((and (not (sb-iactive sb)) (eql ks :up))   (sb-scroll sb -1) (setf (handled-p e) t))
+      ((and (not (sb-iactive sb)) (eql ks :down)) (sb-scroll sb 1)  (setf (handled-p e) t))
+      ((and (not (sb-iactive sb)) (eql ks :home)) (setf (sb-top sb) 0 (sb-follow sb) nil) (invalidate sb) (setf (handled-p e) t))
+      ((and (not (sb-iactive sb)) (eql ks :end))  (setf (sb-follow sb) t) (sb-scroll-end sb) (invalidate sb) (setf (handled-p e) t))
+      (t (call-next-method)))))                       ; Up/Down (history), Tab, Ctrl-R, q/Esc bubble

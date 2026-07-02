@@ -33,7 +33,7 @@ WINDOW FOCUS)."
   "Raise R and focus its input so the user can type the next call immediately."
   (when (and *desktop* r)
     (dt-raise *desktop* r)
-    (setf (container-focus r) (or (find-view r 'input) (container-focus r)))
+    (setf (container-focus r) (or (find-view r 'transcript) (container-focus r)))
     (dt-refocus *desktop*) (invalidate *desktop*)))
 
 (defun %tool-note (msg)

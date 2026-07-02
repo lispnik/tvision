@@ -35,10 +35,10 @@
     (format nil "~a>" (or (first (package-nicknames p)) (package-name p)))))
 
 (defun %repl-update-prompt (win)
-  (let ((v (find-view win 'prompt)))
-    (when v
-      (setf (static-text-text v) (if (repl-busy win) " …eval " (format nil " ~a " (repl-prompt-string win))))
-      (invalidate v))))
+  (let ((sb (find-view win 'transcript)))              ; the prompt is the transcript's inline input prompt
+    (when sb
+      (setf (sb-iprompt sb) (if (repl-busy win) "…eval" (repl-prompt-string win)))
+      (invalidate sb))))
 
 (defun string-blank-p (s)
   (every (lambda (c) (member c '(#\Space #\Tab #\Newline #\Return))) s))
@@ -177,17 +177,18 @@ tv2's evaluator and an embedded backend."
 
 ;;; --- commands (bound on the input-line's keymap) ----------------------------
 
-(define-command repl-enter (v e)
-  (let* ((win (view-root v)) (sb (find-view win 'transcript)) (input (input-text v)))
+(defun %repl-submit (sb input)
+  "ON-SUBMIT for the transcript's inline input: echo + evaluate a complete form,
+prompt again on blank, or keep an incomplete form for more typing."
+  (let ((win (view-root sb)))
     (cond
       ((repl-busy win))                                 ; ignore Enter while evaluating
       ((string-blank-p input)
-       (when sb (scrollback-append sb (format nil "~a~%" (repl-prompt-string win))))
-       (setf (input-text v) "" (input-caret v) 0) (input-notify v))
+       (scrollback-append sb (format nil "~a~%" (repl-prompt-string win)))
+       (sb-set-input sb ""))
       ((not (input-complete-p input))
-       (when sb (scrollback-append sb ";; incomplete form — finish it and press Enter again
-")))                                                    ; keep the text in the field
-      (t (setf (input-text v) "" (input-caret v) 0) (input-notify v)
+       (scrollback-append sb (format nil ";; incomplete form — finish it and press Enter again~%")))  ; keep the text
+      (t (sb-set-input sb "")                           ; clear the live input, then echo + eval
          (repl-submit-string win input)))))
 
 (defun repl-submit-string (win input)
@@ -202,10 +203,9 @@ by the editor's eval-defun / eval-region (programmatic submit)."
     (sb-concurrency:send-message (repl-mailbox win) (cons :eval input))))
 
 (defun %repl-recall (v text pos)
-  (let ((win (view-root v)))
-    (setf (repl-hist-pos win) pos
-          (input-text v) (or text "") (input-caret v) (length (or text "")))
-    (input-scroll-fix v) (input-notify v)))
+  (let ((win (view-root v)))                            ; V is the transcript scrollback
+    (setf (repl-hist-pos win) pos)
+    (sb-set-input v (or text ""))))
 
 (define-command repl-hist-prev (v e)
   (let* ((win (view-root v)) (h (repl-history win)) (n (length h)))
@@ -224,7 +224,7 @@ by the editor's eval-defun / eval-region (programmatic submit)."
 recalls the chosen line into the input."
   (let* ((win (view-root v)) (hist (repl-history win)))
     (if (null hist)
-        (input-notify v)                                ; nothing to search yet
+        (invalidate v)                                  ; nothing to search yet
         (let ((d (ui (dialog (:title " History search "
                               :keymap *dialog-keys*
                               :value-fn (lambda (d) (let ((lb (find-view d 'lb)))
@@ -246,8 +246,7 @@ recalls the chosen line into the input."
 
 (define-command repl-hist-search (v e) (%repl-history-search v))
 
-(defkeymap *repl-input-keys* (*global-keys*)            ; Esc/q (when blank) still quit via the parent
-  (:enter repl-enter)
+(defkeymap *repl-input-keys* (*global-keys*)            ; Enter is handled inline by the scrollback (ON-SUBMIT)
   (:up    repl-hist-prev)
   (:down  repl-hist-next)
   ((code-char 18) repl-hist-search))                    ; Ctrl-R: reverse-i-search over history
@@ -269,19 +268,23 @@ stops the per-listener worker thread when the window closes."
                               :title " tv2 — Lisp REPL (a real tvlisp window, ported) "
                               :keymap *global-keys*
                               :package (or (find-package package) (find-package :cl-user))))
+         ;; the transcript carries the inline prompt/input (SLIME-style): output
+         ;; appends before it, so the prompt floats after the output
          (body (ui (stack
-                     (:fill (scrollback :name 'transcript :on-present #'%repl-present-inspect))
-                     (1 (row (12 (static-text :name 'prompt :role :label :text " CL-USER> "))
-                             (:fill (input-line :name 'input :keymap *repl-input-keys*))))
+                     (:fill (scrollback :name 'transcript :keymap *repl-input-keys*
+                              :on-present #'%repl-present-inspect))
                      (1 (static-text :role :status
-                          :text " Enter: eval (on a worker thread) · ↑/↓: history · Tab: scroll transcript · Esc: close "))))))
+                          :text " Enter: eval (on a worker thread) · ↑/↓: history · Ctrl-R: history search · Esc: close "))))))
     (add-subview win body)
-    (scrollback-append (find-view win 'transcript)
-                       (format nil "tv2 REPL — ~a ~a~%evaluation runs on a background worker; the UI stays live (output streams in).~%~%"
-                               (lisp-implementation-type) (lisp-implementation-version)))
+    (let ((tr (find-view win 'transcript)))
+      (scrollback-append tr
+                         (format nil "tv2 REPL — ~a ~a~%evaluation runs on a background worker; the UI stays live (output streams in).~%~%"
+                                 (lisp-implementation-type) (lisp-implementation-version)))
+      (setf (sb-iactive tr) t                            ; enable the floating inline input
+            (sb-on-submit tr) (lambda (text) (%repl-submit tr text))))
     (%repl-update-prompt win)
     (setf (window-scroll-target win) (find-view win 'transcript) (window-help win) :repl)
-    (values win (find-view win 'input)
+    (values win (find-view win 'transcript)
             (lambda (s) (declare (ignore s))
               (lambda () (when (and (repl-worker win) (sb-thread:thread-alive-p (repl-worker win)))
                            (sb-concurrency:send-message (repl-mailbox win) (cons :quit nil))))))))
