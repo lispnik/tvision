@@ -17,9 +17,30 @@
                 (when (char= c #\Newline) (incf n)))))))
       1))
 
+(defvar *location-stack* '()
+  "Stack of (PATH . LINE) editor locations, pushed on each go-to-definition / xref
+jump so Pop back (M-,) can return to where you were.")
+
+(defun %current-location ()
+  "The focused editor's (PATH . LINE), or NIL when no file-backed editor is focused."
+  (let ((te (ignore-errors (%focused-editor))))
+    (when (and te (te-filename te))
+      (cons (namestring (te-filename te)) (1+ (te-cy te))))))
+
 (defun open-source-at (path line)
-  "Open PATH in an editor at LINE, reusing an already-open editor for that file."
+  "Open PATH in an editor at LINE, reusing an already-open editor for that file.
+Records the current editor location first so Pop back can return to it."
+  (let ((here (%current-location)))
+    (when (and here (not (equal here (car *location-stack*))))
+      (push here *location-stack*)))
   (%open-file-at path line))
+
+(defun do-pop-back ()
+  "Return to the location saved before the last go-to-definition / xref jump."
+  (if (null *location-stack*)
+      (%tool-note "location stack is empty — nothing to pop back to")
+      (let ((loc (pop *location-stack*)))
+        (%open-file-at (car loc) (cdr loc)))))
 
 (defun %show-locations (title rows)
   "ROWS = list of (LABEL PATH LINE); a table window whose Enter opens the source."

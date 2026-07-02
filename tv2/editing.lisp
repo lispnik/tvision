@@ -165,6 +165,53 @@ open editor buffers (calls via apply/funcall/#' and the definition are untouched
                                                 name (mapcar (lambda (k) (nth k names)) perm) total)
                                         (format nil "No direct calls to ~a found in open buffers." name)))))))))))))
 
+;;; --- rename symbol (buffer-local, whole-token textual rename) ---------------
+
+(defun %token-delim-p (c)
+  (or (member c '(#\Space #\Tab #\Newline #\Return #\( #\) #\" #\' #\` #\,  #\;))
+      (char= c (code-char 0))))
+
+(defun %symbol-at-point (te)
+  "The whole symbol token under/just-before the cursor in TE, or NIL."
+  (let* ((line (te-cur te)) (n (length line)) (cx (min (te-cx te) n))
+         (start cx) (end cx))
+    (loop while (and (> start 0) (not (%token-delim-p (char line (1- start))))) do (decf start))
+    (loop while (and (< end n) (not (%token-delim-p (char line end)))) do (incf end))
+    (when (> end start) (subseq line start end))))
+
+(defun %rename-token (te old new)
+  "Replace every whole-token occurrence of OLD with NEW in TE's buffer; return the
+count.  Undoable; keeps the cursor near its original offset."
+  (let* ((text (te-text te)) (n (length text)) (out (make-string-output-stream)) (i 0) (count 0))
+    (loop while (< i n) do
+      (if (%token-delim-p (char text i))
+          (progn (write-char (char text i) out) (incf i))
+          (let ((start i))
+            (loop while (and (< i n) (not (%token-delim-p (char text i)))) do (incf i))
+            (let ((tok (subseq text start i)))
+              (if (string= tok old) (progn (write-string new out) (incf count))
+                  (write-string tok out))))))
+    (when (plusp count)
+      (let ((off (te-offset te (te-cy te) (te-cx te))))
+        (te-save-undo te) (te-set-text te (get-output-stream-string out))
+        (multiple-value-bind (l c) (te-pos-at-offset te (min off (length (te-text te))))
+          (setf (te-cy te) l (te-cx te) c))
+        (te-clamp te) (te-ensure-visible te) (invalidate te)))
+    count))
+
+(defun do-rename-symbol ()
+  "Rename the symbol at point throughout the focused buffer (textual, whole-token)."
+  (let ((te (%focused-editor)))
+    (if (null te)
+        (%tool-note "no editor focused")
+        (let ((old (%symbol-at-point te)))
+          (if (null old)
+              (%tool-note "place the cursor on a symbol to rename")
+              (let ((new (prompt-string " Rename symbol " (format nil "Rename ~a to:" old))))
+                (when (and new (plusp (length (setf new (string-trim " " new)))) (string/= new old))
+                  (let ((count (%rename-token te old new)))
+                    (%tool-note (format nil "renamed ~d occurrence~:p of ~a → ~a" count old new))))))))))
+
 ;;; --- an Edit menu -----------------------------------------------------------
 
 (push (lambda (dt)
@@ -179,6 +226,7 @@ open editor buffers (calls via apply/funcall/#' and the definition are untouched
                 (list "Incremental search"  (lambda () (let ((te (cur))) (when te (te-isearch-start te)))))
                 (list "Go to line…"         (lambda () (%editor-goto-line (cur))))
                 (list "Reorder args…"       (lambda () (do-reorder-args)))
+                (list "Rename symbol…"      (lambda () (do-rename-symbol)))
                 :--
                 (list "Structure" :submenu                 ; paredit (from paredit.lisp)
                       (list "Slurp forward →"   (pe :slurp))

@@ -246,6 +246,32 @@ recalls the chosen line into the input."
 
 (define-command repl-hist-search (v e) (%repl-history-search v))
 
+;;; --- clear / save transcript / save session as a script ---------------------
+
+(defun %repl-clear (win)
+  "Clear the transcript, keeping the live prompt + input."
+  (let ((sb (find-view win 'transcript)))
+    (when sb (scrollback-clear sb) (%repl-update-prompt win))))
+
+(defun %repl-save-transcript (win path)
+  "Write the visible transcript (all lines + any pending partial line) to PATH."
+  (let ((sb (find-view win 'transcript)))
+    (when sb
+      (with-open-file (s path :direction :output :if-exists :supersede
+                                :if-does-not-exist :create :external-format :utf-8)
+        (loop for line across (sb-lines sb) do (write-line line s))
+        (when (plusp (length (sb-pending sb))) (write-line (sb-pending sb) s)))
+      t)))
+
+(defun %repl-save-script (win path)
+  "Write the input history (chronological) to PATH as a loadable Lisp script."
+  (with-open-file (s path :direction :output :if-exists :supersede
+                            :if-does-not-exist :create :external-format :utf-8)
+    (format s ";;;; tvlisp REPL session script~%~%")
+    (dolist (form (reverse (repl-history win)))
+      (write-string form s) (terpri s) (terpri s)))
+  t)
+
 ;;; --- Tab completion of the symbol at the caret ------------------------------
 ;;; Set by an embedding app (tvlisp-tv2): (TOKEN PACKAGE) -> list of completions.
 (defvar *repl-completions-fn* nil)

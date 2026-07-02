@@ -12,6 +12,9 @@
 
 (defvar *app-done* nil "Set by File→Exit to leave the desktop loop.")
 (defvar *desktop* nil "The running desktop instance (for cross-window actions like eval-in-REPL).")
+(defvar *sizemove-win* nil
+  "When set, the desktop routes arrow keys to move (Shift: resize) this window
+until Enter/Esc.  Driven from Window ▸ Size/move.")
 
 ;;; --- status bar -------------------------------------------------------------
 
@@ -342,10 +345,127 @@ directly, not persisted).  Cascade-positioned, focused on top."
   (let ((topic (if (dt-top dt) (window-help (dt-top dt)) :general)))
     (dt-open dt (lambda () (make-help topic)))))
 
+(defun dt-prev (dt)                                         ; cycle focus backwards
+  (when (dt-windows dt)
+    (setf (dt-windows dt) (append (cdr (dt-windows dt)) (list (car (dt-windows dt)))))
+    (invalidate dt)))
+
+(defun %sizemove-step (dt win ks resize)
+  "Move (or, when RESIZE, resize) WIN one cell for arrow key KS, clamped to the
+desktop content area."
+  (let* ((b (view-bounds win)) (c (dt-content dt))
+         (ax (tvision::rect-ax b)) (ay (tvision::rect-ay b))
+         (bx (tvision::rect-bx b)) (by (tvision::rect-by b))
+         (cax (tvision::rect-ax c)) (cay (tvision::rect-ay c))
+         (cbx (tvision::rect-bx c)) (cby (tvision::rect-by c)))
+    (multiple-value-bind (dx dy)
+        (case ks (:left (values -1 0)) (:right (values 1 0)) (:up (values 0 -1)) (:down (values 0 1)) (t (values 0 0)))
+      (if resize
+          (layout win (rect ax ay (max (+ ax 24) (min (+ bx dx) cbx)) (max (+ ay 5) (min (+ by dy) cby))))
+          (let* ((ww (r-w b)) (hh (r-h b))
+                 (nax (max cax (min (+ ax dx) (- cbx ww))))
+                 (nay (max cay (min (+ ay dy) (- cby hh)))))
+            (layout win (rect nax nay (+ nax ww) (+ nay hh)))))
+      (invalidate dt))))
+
+(defun %dt-window-list (dt)
+  "A modal picker over the open windows; Enter raises + focuses the chosen one."
+  (let ((wins (reverse (dt-windows dt))))                   ; top-first
+    (if (null wins)
+        (%tool-note "no windows open")
+        (let* ((titles (loop for w in wins for i from 1
+                             collect (format nil "~d. ~a" i (string-trim " " (window-title w)))))
+               (d (ui (dialog (:title " Windows " :keymap *dialog-keys*
+                               :value-fn (lambda (dd) (list-selected (find-view dd 'lst))))
+                        (stack
+                          (:fill (list-box :name 'lst :items titles))
+                          (1 (static-text :role :status :text " ↑↓ choose · Enter: focus · Esc: cancel ")))))))
+          (let ((r (exec-view d :width 54 :height (min 20 (+ 4 (length wins))))))
+            (when (and (integerp r) (nth r wins))
+              (dt-raise dt (nth r wins)) (dt-refocus dt) (invalidate dt)))))))
+
+;;; --- File-menu actions on editors / the REPL --------------------------------
+
+(defun %focused-te (dt)
+  "The text-edit of the focused window, when it is an editor."
+  (let ((top (dt-top dt))) (and (typep top 'editor-window) (find-view top 'edit))))
+
+(defun %dt-repl (dt)
+  (find-if (lambda (w) (typep w 'repl-window)) (reverse (dt-windows dt))))
+
+(defun %dt-save-as (dt)
+  (let ((te (%focused-te dt)))
+    (when te
+      (let ((p (make-file-dialog :dir *project-dir* :title " Save as ")))
+        (when p (setf (te-filename te) p) (te-save te)
+              (%tool-note (format nil "saved ~a" (file-namestring p))))))))
+
+(defun %dt-save (dt)
+  (let ((te (%focused-te dt)))
+    (cond ((null te) (%tool-note "no editor focused"))
+          ((te-filename te) (te-save te) (%tool-note (format nil "saved ~a" (file-namestring (te-filename te)))))
+          (t (%dt-save-as dt)))))                           ; unnamed buffer -> prompt for a name
+
+(defun %dt-save-all (dt)
+  (let ((n 0))
+    (dolist (w (dt-windows dt))
+      (when (typep w 'editor-window)
+        (let ((te (find-view w 'edit)))
+          (when (and te (te-filename te) (te-modified te)) (te-save te) (incf n)))))
+    (%tool-note (format nil "saved ~d modified buffer~:p" n))))
+
+(defun %dt-reload (dt)
+  (let ((te (%focused-te dt)))
+    (cond ((or (null te) (null (te-filename te))) (%tool-note "no file to reload"))
+          (t (te-load te (te-filename te)) (invalidate te) (%tool-note "reloaded from disk")))))
+
+(defun %dt-save-transcript (dt)
+  (let ((r (%dt-repl dt)))
+    (if (null r) (%tool-note "no REPL open")
+        (let ((p (make-file-dialog :dir *project-dir* :title " Save transcript ")))
+          (when p (%repl-save-transcript r p) (%tool-note (format nil "transcript → ~a" (file-namestring p))))))))
+
+(defun %dt-save-script (dt)
+  (let ((r (%dt-repl dt)))
+    (if (null r) (%tool-note "no REPL open")
+        (let ((p (make-file-dialog :dir *project-dir* :title " Save Lisp script ")))
+          (when p (%repl-save-script r p) (%tool-note (format nil "script → ~a" (file-namestring p))))))))
+
+(defun %dt-clear-repl (dt)
+  (let ((r (%dt-repl dt))) (if r (%repl-clear r) (%tool-note "no REPL open"))))
+
+;;; --- colour themes ----------------------------------------------------------
+
+(defparameter *theme-classic* (copy-list *theme*))
+(defparameter *theme-dark*
+  (list :normal          (tvision:make-attr 7 0)     :focused         (tvision:make-attr 15 4)
+        :frame           (tvision:make-attr 15 0)    :frame-inactive  (tvision:make-attr 8 0)
+        :menu-bar        (tvision:make-attr 0 7)     :menu            (tvision:make-attr 0 7)
+        :menu-selected   (tvision:make-attr 15 4)    :menu-hotkey     (tvision:make-attr 4 7)
+        :menu-disabled   (tvision:make-attr 8 7)     :status          (tvision:make-attr 15 8)
+        :button          (tvision:make-attr 0 7)     :button-focused  (tvision:make-attr 15 4)
+        :label           (tvision:make-attr 14 0)    :input           (tvision:make-attr 15 8)
+        :input-focused   (tvision:make-attr 15 0)    :error           (tvision:make-attr 15 4)
+        :desktop         (tvision:make-attr 8 0)     :scrollbar       (tvision:make-attr 7 8)
+        :scrollbar-thumb (tvision:make-attr 15 8)))
+(defparameter *themes* (list (cons "Classic blue" *theme-classic*) (cons "Dark" *theme-dark*)))
+(defvar *theme-index* 0)
+
+(defun cycle-theme (dt)
+  (setf *theme-index* (mod (1+ *theme-index*) (length *themes*)))
+  (destructuring-bind (name . palette) (nth *theme-index* *themes*)
+    (setf *theme* palette)
+    (invalidate dt)
+    (%tool-note (format nil "colour theme: ~a" name))))
+
 (defmethod handle-event ((dt desktop) (e key-event))
   (let* ((mb (dt-menubar dt)) (top (dt-top dt)) (ks (event-keysym e))
          (alt (logtest (event-modifiers e) tvision::+md-alt+)))
     (cond
+      (*sizemove-win*                                        ; interactive keyboard size/move mode
+       (cond ((member ks '(:enter :esc)) (setf *sizemove-win* nil) (%tool-note "size/move done"))
+             ((member ks '(:up :down :left :right))
+              (%sizemove-step dt *sizemove-win* ks (logtest (event-modifiers e) tvision::+md-shift+)))))
       ((and alt (characterp ks) (digit-char-p ks) (char/= ks #\0))   ; Alt-1..9 selects that window
        (dt-select-number dt (digit-char-p ks)))
       ((and alt (characterp ks) (menu-hotkey-index mb ks))   ; Alt-<hotkey> opens that menu
@@ -591,6 +711,15 @@ editor buffer text."
              (list "Change dir…"    (lambda () (let ((p (make-file-dialog :dir *project-dir* :dirs-only t :title " Change dir ")))
                                                  (when p (setf *project-dir* (uiop:ensure-directory-pathname p))))))
              :--
+             (list "Save"           (lambda () (%dt-save dt)) (ctrl #\s) (any-win))
+             (list "Save as…"       (lambda () (%dt-save-as dt)) nil (any-win))
+             (list "Save all"       (lambda () (%dt-save-all dt)) nil (any-win))
+             (list "Reload file"    (lambda () (%dt-reload dt)) nil (any-win))
+             :--
+             (list "Save transcript…"  (lambda () (%dt-save-transcript dt)))
+             (list "Save Lisp script…" (lambda () (%dt-save-script dt)))
+             (list "Clear REPL"        (lambda () (%dt-clear-repl dt)))
+             :--
              (list "Save layout"    (lambda () (dt-save-layout dt)))
              (list "Restore layout" (lambda () (mapc (lambda (w) (dt-close-window dt w)) (copy-list (dt-windows dt)))
                                       (dt-load-layout dt)) nil (lambda () t))
@@ -606,14 +735,20 @@ editor buffer text."
              (list "HTML browser"    (lambda () (dt-open dt :html)))
              (list "Package table"   (lambda () (dt-open dt :ptable)))
              :--
+             (list "Size/move"       (lambda () (let ((top (dt-top dt)))
+                                                  (when top (setf *sizemove-win* top)
+                                                        (%tool-note "Size/move: arrows move · Shift+arrows resize · Enter/Esc done")))) nil (any-win))
              (list "Zoom"            (lambda () (let ((top (dt-top dt))) (when top (dt-zoom dt top)))) :f5 (any-win))
              (list "Next"            (lambda () (dt-next dt) (dt-refocus dt)) nil (any-win))
+             (list "Previous"        (lambda () (dt-prev dt) (dt-refocus dt)) nil (any-win))
              (list "Tile"            (lambda () (dt-tile dt) (dt-refocus dt)) nil (any-win))
              (list "Cascade"         (lambda () (dt-cascade dt) (dt-refocus dt)) nil (any-win))
+             (list "List…"           (lambda () (%dt-window-list dt)) nil (any-win))
              (list "Close"           (lambda () (let ((top (dt-top dt))) (when top (dt-close-window dt top)))) nil (any-win)))
        (list "Options"
              (list "Settings…"       (lambda () (dt-open dt :options)))
              (list "Colours…"        (lambda () (make-color-dialog)))
+             (list "Colour theme"    (lambda () (cycle-theme dt)))
              (list "Validators…"     (lambda () (%validators-dialog)))
              (list "Eval timing"     (lambda () (setf *repl-time* (not *repl-time*))
                                        (%tool-note (if *repl-time* "eval timing ON" "eval timing OFF")))))

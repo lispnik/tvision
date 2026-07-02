@@ -57,6 +57,14 @@ the committed output + any pending partial line."
   (let ((b (view-bounds sb)))
     (when b (setf (sb-top sb) (max 0 (- (sb-total sb) (r-h b)))))))
 
+(defun scrollback-clear (sb)
+  "Empty the transcript (lines, pending text, presentations); keep any inline input."
+  (setf (fill-pointer (sb-lines sb)) 0
+        (sb-pending sb) ""
+        (sb-top sb) 0)
+  (clrhash (sb-presentations sb))
+  (invalidate sb))
+
 (defun scrollback-append (sb text)
   "Append TEXT (which may contain newlines and need not end in one) to the
 transcript, holding any trailing partial line in PENDING for the next chunk."

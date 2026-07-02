@@ -93,6 +93,7 @@
               :--
               (list "Navigate" :submenu                                          ; nav.lisp
                     (list "Go to definition…" (lambda () (do-goto-definition)))
+                    (list "Pop back"          (lambda () (do-pop-back)))
                     :--
                     (list "Who calls…"        (lambda () (do-xref :calls "calls")))
                     (list "Who references…"   (lambda () (do-xref :references "references")))
