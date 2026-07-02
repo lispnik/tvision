@@ -246,6 +246,33 @@ recalls the chosen line into the input."
 
 (define-command repl-hist-search (v e) (%repl-history-search v))
 
+;;; --- Tab completion of the symbol at the caret ------------------------------
+;;; Set by an embedding app (tvlisp-tv2): (TOKEN PACKAGE) -> list of completions.
+(defvar *repl-completions-fn* nil)
+
+(defun %repl-token-before (sb)
+  "Return (values TOKEN START) for the Lisp symbol prefix ending at the caret."
+  (let* ((in (sb-input sb)) (c (min (sb-icaret sb) (length in))) (start c))
+    (loop while (and (plusp start) (%lisp-token-char-p (char in (1- start)))) do (decf start))
+    (values (subseq in start c) start)))
+
+(defun %repl-complete (sb)
+  "Complete the symbol prefix at the caret via *REPL-COMPLETIONS-FN* (resolved in
+the listener's package): insert the sole candidate, or pop up a chooser."
+  (when *repl-completions-fn*
+    (multiple-value-bind (token start) (%repl-token-before sb)
+      (when (plusp (length token))
+        (let* ((win (view-root sb))
+               (cands (ignore-errors (funcall *repl-completions-fn* token (repl-package win))))
+               (chosen (cond ((null cands) nil)
+                             ((null (cdr cands)) (first cands))
+                             (t (popup-choose cands :title " Complete ")))))
+          (when chosen
+            (let ((in (sb-input sb)) (c (sb-icaret sb)))
+              (setf (sb-input sb) (concatenate 'string (subseq in 0 start) chosen (subseq in c))
+                    (sb-icaret sb) (+ start (length chosen))))
+            (invalidate sb)))))))
+
 (defkeymap *repl-input-keys* (*global-keys*)            ; Enter is handled inline by the scrollback (ON-SUBMIT)
   (:up    repl-hist-prev)
   (:down  repl-hist-next)
@@ -274,7 +301,7 @@ stops the per-listener worker thread when the window closes."
                      (:fill (scrollback :name 'transcript :keymap *repl-input-keys*
                               :on-present #'%repl-present-inspect))
                      (1 (static-text :role :status
-                          :text " Enter: eval (on a worker thread) · ↑/↓: history · Ctrl-R: history search · Esc: close "))))))
+                          :text " Enter: eval · Tab: complete · ↑/↓: history · Ctrl-R: search · Esc: close "))))))
     (add-subview win body)
     (let ((tr (find-view win 'transcript)))
       (scrollback-append tr
@@ -288,6 +315,14 @@ stops the per-listener worker thread when the window closes."
             (lambda (s) (declare (ignore s))
               (lambda () (when (and (repl-worker win) (sb-thread:thread-alive-p (repl-worker win)))
                            (sb-concurrency:send-message (repl-mailbox win) (cons :quit nil))))))))
+
+;; The container would otherwise grab Tab for focus-next; intercept it here so
+;; Tab completes the symbol at the caret (like the editor).
+(defmethod handle-event ((w repl-window) (e key-event))
+  (let ((tr (find-view w 'transcript)))
+    (if (and (eql (event-keysym e) :tab) *repl-completions-fn* tr (view-focused-p tr))
+        (progn (%repl-complete tr) (setf (handled-p e) t))
+        (call-next-method))))
 
 (defun run-repl (&optional (package :cl-user))
   "Run the ported Lisp REPL full-screen until Esc."
